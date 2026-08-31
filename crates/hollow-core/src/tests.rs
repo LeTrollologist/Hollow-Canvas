@@ -244,4 +244,63 @@ mod tests {
         assert_eq!(doc.width, 80);
         assert_eq!(doc.height, 80);
     }
+
+    #[test]
+    fn test_layer_alpha_lock() {
+        let mut doc = Document::new(30, 30);
+        // Paint a red square at (15, 15)
+        if let Some(l) = doc.get_layer_mut(1) {
+            l.set_pixel(15, 15, [255, 0, 0, 255]);
+            l.alpha_locked = true;
+        }
+
+        let brush = BrushSettings {
+            tool: ToolType::Brush,
+            size: 10.0,
+            opacity: 1.0,
+            hardness: 1.0,
+            primary_color: Color::new(0.0, 1.0, 0.0, 1.0), // Green
+            ..Default::default()
+        };
+
+        // Paint over the area
+        StrokeRasterizer::paint_dot(
+            &mut doc,
+            BrushPoint::new(Vec2::new(15.0, 15.0), 1.0),
+            &brush,
+            &SymmetryConfig::default(),
+            None,
+        );
+
+        let layer = doc.active_layer().unwrap();
+        // The previously painted pixel (15, 15) must now be green
+        assert_eq!(layer.get_pixel(15, 15).unwrap(), [0, 255, 0, 255]);
+        // The previously transparent surrounding pixels (e.g. 10, 10) must still remain fully transparent (alpha 0)
+        assert_eq!(layer.get_pixel(10, 10).unwrap(), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_layer_clipping_mask() {
+        let mut doc = Document::new(20, 20);
+        // Base layer: draw circle / pixel at (10, 10)
+        if let Some(l1) = doc.get_layer_mut(1) {
+            l1.set_pixel(10, 10, [255, 0, 0, 255]);
+        }
+
+        // Top layer: filled with blue, but clipping mask = true
+        let id2 = doc.add_layer(Some("Clipped Layer".to_string()));
+        if let Some(l2) = doc.get_layer_mut(id2) {
+            l2.clipping_mask = true;
+            l2.pixels.chunks_exact_mut(4).for_each(|px| px.copy_from_slice(&[0, 0, 255, 255]));
+        }
+
+        let flat = doc.composite_layers(false);
+        let idx_10_10 = ((10 * 20 + 10) * 4) as usize;
+        let idx_0_0 = 0;
+
+        // (10, 10) had base layer alpha > 0, so the blue clipped layer is visible
+        assert_eq!(&flat[idx_10_10..idx_10_10 + 4], &[0, 0, 255, 255]);
+        // (0, 0) had base layer alpha == 0, so it is masked out to transparent
+        assert_eq!(&flat[idx_0_0..idx_0_0 + 4], &[0, 0, 0, 0]);
+    }
 }

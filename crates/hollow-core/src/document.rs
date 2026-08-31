@@ -319,10 +319,17 @@ impl Document {
             out[..total_bytes].fill(0);
         }
 
-        for layer in &self.layers {
+        for (layer_idx, layer) in self.layers.iter().enumerate() {
             if !layer.visible {
                 continue;
             }
+
+            let prev_layer = if layer.clipping_mask && layer_idx > 0 {
+                Some(&self.layers[layer_idx - 1])
+            } else {
+                None
+            };
+
             for y in 0..self.height {
                 for x in 0..self.width {
                     let dst_idx = ((y * self.width + x) * 4) as usize;
@@ -341,7 +348,23 @@ impl Document {
                         [0, 0, 0, 0]
                     };
 
-                    let blended = layer.blend_mode.composite_pixel(dst_px, src_px, layer.opacity);
+                    let mut opacity = layer.opacity;
+                    if let Some(base) = prev_layer {
+                        let bx = x as i32 - base.offset_x;
+                        let by = y as i32 - base.offset_y;
+                        let base_a = if bx >= 0 && bx < self.width as i32 && by >= 0 && by < self.height as i32 {
+                            base.get_pixel(bx as u32, by as u32).map(|p| p[3] as f32 / 255.0).unwrap_or(0.0)
+                        } else {
+                            0.0
+                        };
+                        opacity *= base_a;
+                    }
+
+                    if opacity <= 0.001 {
+                        continue;
+                    }
+
+                    let blended = layer.blend_mode.composite_pixel(dst_px, src_px, opacity);
                     out[dst_idx] = blended[0];
                     out[dst_idx + 1] = blended[1];
                     out[dst_idx + 2] = blended[2];

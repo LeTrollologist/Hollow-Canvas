@@ -183,12 +183,14 @@ def stage_publish(version: str, tag_dir: Path, assets: list, draft: bool = False
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
-### ✨ What's New in v0.3.0
-* **⊞ Mathematically Uniform Grid** — Re-engineered canvas-space coordinate line projection guarantees 100% uniform grid cells with zero jitter or scaling distortion.
-* **✦ Universal Crisp Typography Tool Glyphs** — Replaced unsupported emojis with universal glyphs (`✦ Brush`, `✎ Pencil`, `≋ Water`, `░ Chalk`, `⁕ Spray`, `≈ Smudge`, `▨ Gradient`, `★ Wand`, `⌫ Eraser`, `⯀ Fill`, `╱ Line`, `▭ Rect`, `○ Oval`, `⬟ Poly`, `▢ Select`, `✛ Move`, `⛶ Crop`, `◉ Pick`), eliminating missing font tofu boxes.
-* **🖥️ Professional Studio Menu Bar** — Slick DAW/Photoshop style menu bar (`File`, `Edit`, `Select`, `Canvas`, `View`, `Window`) with streamlined access to all commands and modals.
-* **🖼️ Interactive Reference Viewer with Lightbox** — Uploads loaded reference images directly to egui GPU texture handles, supporting interactive zoom, panning, and High-Contrast White Lightbox & Checkerboard backlights.
-* **Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
+### ✨ What's New in {version}
+* **👁️ Zen / Full Canvas Mode (`Tab`)** — One-key toggle to hide/show all studio docks and toolbars for distraction-free illustration, featuring a floating restore button when hidden.
+* **🛡️ Native Application & Taskbar Icon** — Custom crafted studio logo icon rendered to SVG, PNG, and multi-res `.ico`, embedded into Win32 `WM_SETICON` for the window title bar and Windows taskbar.
+* **🔒 Layer Alpha Lock (🔒α)** — Lock layer transparency so brush and tool strokes only affect existing pixels (essential for shading, highlighting, and textures).
+* **⮑ Layer Clipping Masks** — Clip layer visibility directly to the alpha boundaries of the layer beneath it.
+* **📐 Header Layout Overflow Fix** — Refined top studio header bar with responsive layout bounds and compact icon action pills, ensuring zero overflow on any window size.
+* **ℹ️ About Hollow Canvas Dialog** — Modal with build metadata, GPLv3 license, offline privacy guarantee, and shortcut reference.
+* **📦 Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
 
 ### 📦 Downloads & Assets
 | Asset | Format | Description |

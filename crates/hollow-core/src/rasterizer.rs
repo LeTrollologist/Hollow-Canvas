@@ -26,6 +26,7 @@ impl StrokeRasterizer {
         radius: f32,
         brush: &BrushSettings,
         blend_mode: BlendMode,
+        alpha_locked: bool,
         bg_color: Color,
         step_index: usize,
     ) {
@@ -58,11 +59,18 @@ impl StrokeRasterizer {
                         }
                     }
 
-                    let p_alpha = (0.25 + 0.75 * hash21(i as u32, 3, seed)) * opacity * 0.45;
                     let idx = ((uiy * doc_w + uix) * 4) as usize;
                     let dst = [pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]];
+                    if alpha_locked && dst[3] == 0 {
+                        continue;
+                    }
+
+                    let p_alpha = (0.25 + 0.75 * hash21(i as u32, 3, seed)) * opacity * 0.45;
                     let src = color.to_rgba8();
-                    let blended = blend_mode.composite_pixel(dst, src, p_alpha);
+                    let mut blended = blend_mode.composite_pixel(dst, src, p_alpha);
+                    if alpha_locked {
+                        blended[3] = dst[3];
+                    }
                     pixels[idx..idx + 4].copy_from_slice(&blended);
                 }
             }
@@ -159,6 +167,10 @@ impl StrokeRasterizer {
                     let idx = ((y * doc_w + x) * 4) as usize;
                     let dst = [pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]];
 
+                    if alpha_locked && dst[3] == 0 {
+                        continue;
+                    }
+
                     let src = match tool {
                         ToolType::Eraser => {
                             if bg_color.a > 0.0 {
@@ -213,17 +225,26 @@ impl StrokeRasterizer {
                                     let new_a = (current_a * (1.0 - alpha)).clamp(0.0, 1.0);
                                     pixels[idx + 3] = (new_a * 255.0).round() as u8;
                                 } else {
-                                    let blended = blend_mode.composite_pixel(dst, src, alpha);
+                                    let mut blended = blend_mode.composite_pixel(dst, src, alpha);
+                                    if alpha_locked {
+                                        blended[3] = dst[3];
+                                    }
                                     pixels[idx..idx + 4].copy_from_slice(&blended);
                                 }
                             }
                         }
                     } else if tool == ToolType::Smudge {
                         let strength = brush.smudge_strength.clamp(0.1, 1.0);
-                        let blended = blend_mode.composite_pixel(dst, src, alpha * strength);
+                        let mut blended = blend_mode.composite_pixel(dst, src, alpha * strength);
+                        if alpha_locked {
+                            blended[3] = dst[3];
+                        }
                         pixels[idx..idx + 4].copy_from_slice(&blended);
                     } else {
-                        let blended = blend_mode.composite_pixel(dst, src, alpha);
+                        let mut blended = blend_mode.composite_pixel(dst, src, alpha);
+                        if alpha_locked {
+                            blended[3] = dst[3];
+                        }
                         pixels[idx..idx + 4].copy_from_slice(&blended);
                     }
                 }
@@ -253,6 +274,7 @@ impl StrokeRasterizer {
         let radius = brush.effective_size(point.pressure) * 0.5;
         let points = symmetry.transform_points(point.position, doc_w as f32, doc_h as f32);
         let layer_offset = Vec2::new(layer.offset_x as f32, layer.offset_y as f32);
+        let alpha_locked = layer.alpha_locked;
 
         for (i, p) in points.into_iter().enumerate() {
             let local_p = p - layer_offset;
@@ -266,6 +288,7 @@ impl StrokeRasterizer {
                 radius,
                 brush,
                 layer.blend_mode,
+                alpha_locked,
                 if brush.eraser_to_background { bg_col } else { Color::TRANSPARENT },
                 i,
             );
@@ -293,6 +316,7 @@ impl StrokeRasterizer {
         };
 
         let layer_offset = Vec2::new(layer.offset_x as f32, layer.offset_y as f32);
+        let alpha_locked = layer.alpha_locked;
         let dist = p0.position.distance(p1.position);
         let avg_size = (brush.effective_size(p0.pressure) + brush.effective_size(p1.pressure)) * 0.5;
         let spacing = (avg_size * brush.spacing).max(0.5);
@@ -326,6 +350,7 @@ impl StrokeRasterizer {
                     radius,
                     brush,
                     layer.blend_mode,
+                    alpha_locked,
                     if brush.eraser_to_background { bg_col } else { Color::TRANSPARENT },
                     i.wrapping_add(s_idx * 1000),
                 );

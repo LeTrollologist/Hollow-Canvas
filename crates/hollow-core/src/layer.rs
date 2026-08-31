@@ -12,6 +12,10 @@ pub struct Layer {
     pub visible: bool,
     pub locked: bool,
     #[serde(default)]
+    pub alpha_locked: bool,
+    #[serde(default)]
+    pub clipping_mask: bool,
+    #[serde(default)]
     pub is_reference: bool,
     pub opacity: f32,
     pub blend_mode: BlendMode,
@@ -31,6 +35,8 @@ impl Layer {
             height,
             visible: true,
             locked: false,
+            alpha_locked: false,
+            clipping_mask: false,
             is_reference: false,
             opacity: 1.0,
             blend_mode: BlendMode::Normal,
@@ -54,6 +60,8 @@ impl Layer {
             height,
             visible: true,
             locked: false,
+            alpha_locked: false,
+            clipping_mask: false,
             is_reference: false,
             opacity: 1.0,
             blend_mode: BlendMode::Normal,
@@ -126,6 +134,8 @@ impl Layer {
             height: self.height,
             visible: self.visible,
             locked: false,
+            alpha_locked: self.alpha_locked,
+            clipping_mask: self.clipping_mask,
             is_reference: self.is_reference,
             opacity: self.opacity,
             blend_mode: self.blend_mode,

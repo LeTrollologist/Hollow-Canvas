@@ -23,6 +23,8 @@
 
 - ⚡ **High-Frequency Painting Engine**: Cubic Catmull-Rom spline interpolation eliminates angular chord artifacts, ensuring fluid and continuous curves at any stroke speed.
 - 🎨 **Modern Studio Toolset**: Brush, Pencil, Watercolor (wet edge/falloff simulation), Chalk (grain dispersion), Spray (stochastic scatter), Smudge (directional velocity smear), Linear & Radial Gradients, Magic Wand fuzzy selection, Eraser modes (Soft, Hard 1-Bit, Color-Target), Dual-Color Vector Shapes, and Reference-layer Flood Fill.
+- 🔒 **Layer Alpha Lock & Clipping Masks**: Protect layer transparency (`Alpha Lock`) or clip layers directly to underlying art bounds (`Clipping Mask`).
+- 👁 **Zen / Full Canvas Mode**: Toggle all UI docks and toolbars with <kbd>Tab</kbd> for pure, distraction-free illustration with floating restore controls.
 - ✦ **New Canvas Studio**: Pre-loaded potentials (1K/2K/4K Square, 1080p/4K Displays, A4/A5 Print @ 300 DPI, Social Media Banners, Pixel Art) and custom dimensions with aspect-ratio locking.
 - 📐 **Symmetry & Grid Overlays**: Real-time Horizontal, Vertical, Quad, and multi-segment Radial/Mandala symmetry, with toggleable pixel grids (8px–128px) and dynamic viewport rulers.
 - 💡 **Reference Lightbox**: Floating reference image dock with toggleable high-contrast white lightbox and checkerboard backlight modes.
@@ -37,35 +39,14 @@ The workspace is organized into modular, decoupled Rust crates:
 
 ```text
 Hollow Canvas/
+├── assets/           # Application icons (SVG, ICO, PNG) and banner art
 ├── crates/
-│   ├── hollow-core/      # Core data models, blend modes, symmetry, layer stack, and rasterizers
-│   ├── hollow-render/    # Software raster renderer, texture caching, grid/ruler overlays, and UI primitive composition
-│   ├── hollow-io/        # Binary HCV project serialization, PNG export, and file parsing
-│   ├── hollow-ui/        # Modern egui-based dock panels, tools shelf, color palettes, and modals
-│   └── hollow-app/       # Native Win32 desktop application orchestrator and message loop
+│   ├── hollow-core/  # Core data models, blend modes, symmetry, layer stack, and rasterizers
+│   ├── hollow-render/# Software raster renderer, texture caching, grid/ruler overlays, and UI primitive composition
+│   ├── hollow-io/    # Binary HCV project serialization, PNG export, and file parsing
+│   ├── hollow-ui/    # Modern egui-based dock panels, tools shelf, color palettes, and modals
+│   └── hollow-app/   # Native Win32 desktop application orchestrator and message loop
 ```
-
-### Module Responsibilities
-
-1. **`hollow-core`**:
-   - **Blend Modes**: Normal, Multiply, Screen, Overlay, Darken, Lighten, Color Dodge, Color Burn, Hard Light, Soft Light, Difference, Exclusion.
-   - **Rasterizer**: High-precision `blend_stamp` rasterizer, Catmull-Rom spline curve generator, Linear & Radial Gradients, Magic Wand flood selection, Dual-color Shapes (Outline, Fill, Both), and Flood Fill with tolerance matching and reference layer awareness.
-   - **History**: Linear and non-destructive undo/redo command stack.
-
-2. **`hollow-render`**:
-   - Software framebuffer rendering with zero heap allocation per-frame.
-   - Dynamic top & left viewport rulers, customizable pixel grid overlays, and live gradient/shape drag reticles.
-
-3. **`hollow-io`**:
-   - Non-blocking `.hcv` binary project saving and loading with header checksums.
-   - PNG export with transparency channels.
-
-4. **`hollow-ui`**:
-   - Modern studio interface with custom theme accents (Deep Mist, Moonlit, Ember Glow).
-   - Interactive docks: Tools, Tool Dynamics, Symmetry & Grid, Layers, Color History & Palette, Canvas Operations, Reference Lightbox Viewer, and New Canvas / Resize Modals.
-
-5. **`hollow-app`**:
-   - Low-latency native Win32 message loop processing mouse, tablet, and keyboard input.
 
 ---
 
@@ -77,18 +58,18 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 [**VPack Archiver**](https://github.com/LeTrollologist/vpack-archiver) is the high-performance universal archive manager for `.vpack` packages.
 
-1. Download [`hollow-canvas-v0.3.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v0.4.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the package with `vpack`:
    ```bash
    # Extract all files
-   vpack extract hollow-canvas-v0.3.0-windows-x86_64.vpack
+   vpack extract hollow-canvas-v0.4.0-windows-x86_64.vpack
 
    # Or extract to a custom directory
-   vpack extract hollow-canvas-v0.3.0-windows-x86_64.vpack -o ./HollowCanvas/
+   vpack extract hollow-canvas-v0.4.0-windows-x86_64.vpack -o ./HollowCanvas/
    ```
 3. *(Optional)* Verify CRC-32 integrity:
    ```bash
-   vpack test hollow-canvas-v0.3.0-windows-x86_64.vpack
+   vpack test hollow-canvas-v0.4.0-windows-x86_64.vpack
    ```
 4. Run `hollow-canvas.exe`.
 
@@ -98,10 +79,10 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 No additional archive tools required — works with standard Windows extraction:
 
-1. Download [`hollow-canvas-v0.3.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v0.4.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the zip file using PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\hollow-canvas-v0.3.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
+   Expand-Archive -Path .\hollow-canvas-v0.4.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
    ```
 3. Double-click `HollowCanvas\hollow-canvas.exe` to launch immediately.
 
@@ -137,6 +118,7 @@ If you prefer building from source with full compiler optimizations:
 
 | Action | Shortcut |
 | :--- | :--- |
+| **Zen / Full Canvas Mode** | <kbd>Tab</kbd> |
 | **Brush Tool** | <kbd>B</kbd> |
 | **Pencil Tool** | <kbd>P</kbd> |
 | **Magic Wand Tool** | <kbd>W</kbd> |
@@ -145,7 +127,6 @@ If you prefer building from source with full compiler optimizations:
 | **Eyedropper (Pick Color)** | <kbd>I</kbd> or <kbd>Alt</kbd> + Click |
 | **Marquee Select** | <kbd>M</kbd> |
 | **Move / Pan View** | <kbd>V</kbd> (Drag) |
-| **Translate Layer Content** | <kbd>Ctrl</kbd> + <kbd>V</kbd> (Drag) |
 | **Viewport Pan** | <kbd>Space</kbd> + Drag or Middle Mouse Drag |
 | **Viewport Zoom** | <kbd>Mouse Wheel</kbd> |
 | **Swap Primary/Secondary Color** | <kbd>X</kbd> |

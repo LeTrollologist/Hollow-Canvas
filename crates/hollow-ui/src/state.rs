@@ -64,6 +64,8 @@ pub struct AppState {
     pub status_message: String,
     pub cursor_canvas_pos: Vec2,
     pub show_help: bool,
+    pub show_about_dialog: bool,
+    pub show_ui_panels: bool, // Zen Mode / Full Canvas toggle
     pub show_gallery: bool,
 
     // Overlay Toggles
@@ -138,6 +140,8 @@ impl AppState {
             status_message: "Ready".to_string(),
             cursor_canvas_pos: Vec2::ZERO,
             show_help: false,
+            show_about_dialog: false,
+            show_ui_panels: true,
             show_gallery: false,
 
             show_grid: false,

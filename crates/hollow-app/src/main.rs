@@ -119,6 +119,16 @@ extern "system" {
     fn PostQuitMessage(nExitCode: i32);
     fn GetModuleHandleW(lpModuleName: *const u16) -> HMODULE;
     fn LoadCursorW(hInstance: HMODULE, lpCursorName: *const u16) -> HCURSOR;
+    fn CreateIconFromResourceEx(
+        pbIconBits: *const u8,
+        cbIconBits: u32,
+        fIcon: i32,
+        dwVersion: u32,
+        cxDesired: i32,
+        cyDesired: i32,
+        flags: u32,
+    ) -> HICON;
+    fn SendMessageW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
     fn GetClientRect(hWnd: HWND, lpRect: *mut RECT) -> i32;
     fn BeginPaint(hWnd: HWND, lpPaint: *mut PAINTSTRUCT) -> HDC;
     fn EndPaint(hWnd: HWND, lpPaint: *const PAINTSTRUCT) -> i32;
@@ -335,12 +345,18 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
             let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0; // VK_MENU (Alt)
 
-            let is_over_ui = raw_y < 42.0
-                || raw_y > (app.win_h as f32 - 28.0)
-                || raw_x < 205.0
-                || raw_x > (app.win_w as f32 - 235.0)
-                || ((app.state.show_ref_window || app.state.show_help || app.state.show_gallery)
-                    && app.egui_ctx.is_pointer_over_area());
+            let is_over_ui = if app.state.show_ui_panels {
+                raw_y < 38.0
+                    || raw_y > (app.win_h as f32 - 28.0)
+                    || raw_x < 218.0
+                    || raw_x > (app.win_w as f32 - 240.0)
+                    || ((app.state.show_ref_window || app.state.show_help || app.state.show_about_dialog || app.state.show_new_canvas_dialog || app.state.show_resize_canvas_dialog)
+                        && app.egui_ctx.is_pointer_over_area())
+            } else {
+                (raw_x < 250.0 && raw_y < 50.0)
+                    || ((app.state.show_ref_window || app.state.show_help || app.state.show_about_dialog || app.state.show_new_canvas_dialog || app.state.show_resize_canvas_dialog)
+                        && app.egui_ctx.is_pointer_over_area())
+            };
 
             if !is_over_ui {
                 let tool = app.state.brush.tool;
@@ -590,6 +606,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             let is_shift = (GetKeyState(0x10) as i32 & 0x8000) != 0; // VK_SHIFT
 
             match wparam {
+                0x09 => { // Tab (Toggle Zen / Full Canvas mode)
+                    app.state.show_ui_panels = !app.state.show_ui_panels;
+                }
                 0x20 => { // Space
                     if !app.is_space_down {
                         app.is_space_down = true;
@@ -1050,6 +1069,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if hwnd.is_null() {
             eprintln!("Failed to create Win32 window.");
             return Ok(());
+        }
+
+        // Load and set custom Application & Taskbar Icon
+        const APP_ICON_BYTES: &[u8] = include_bytes!("../../../assets/icon.png");
+        let h_icon_big = CreateIconFromResourceEx(
+            APP_ICON_BYTES.as_ptr(),
+            APP_ICON_BYTES.len() as u32,
+            1, // TRUE: Icon
+            0x00030000,
+            64,
+            64,
+            0,
+        );
+        let h_icon_small = CreateIconFromResourceEx(
+            APP_ICON_BYTES.as_ptr(),
+            APP_ICON_BYTES.len() as u32,
+            1, // TRUE: Icon
+            0x00030000,
+            32,
+            32,
+            0,
+        );
+        if !h_icon_big.is_null() {
+            SendMessageW(hwnd, 0x0080 /* WM_SETICON */, 1 /* ICON_BIG */, h_icon_big as isize);
+        }
+        if !h_icon_small.is_null() {
+            SendMessageW(hwnd, 0x0080 /* WM_SETICON */, 0 /* ICON_SMALL */, h_icon_small as isize);
         }
 
         ShowWindow(hwnd, 5); // SW_SHOW
