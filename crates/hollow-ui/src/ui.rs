@@ -90,11 +90,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     // ── 1. TOP STUDIO MENU BAR & HEADER ──
     if state.show_ui_panels {
         egui::TopBottomPanel::top("header_panel")
-            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(8, 12, 24, 250)).inner_margin(4.0))
+            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(8, 12, 24, 252)).inner_margin(egui::Margin::symmetric(8.0, 3.5)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("HOLLOW CANVAS").size(13.0).strong().color(Color32::from_rgb(230, 238, 255)));
-                    ui.label(RichText::new("v0.4.1").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    // Left Brand & Version
+                    ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
+                    ui.label(RichText::new("v0.4.2").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -220,9 +221,35 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         });
                     });
 
-                    // Active Tool Badge
-                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        ui.add_space(4.0);
+                    // Right-aligned ultra-compact quick action icon bar (Never Overflows)
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.button("ℹ").on_hover_text("About Hollow Canvas").clicked() {
+                            state.show_about_dialog = true;
+                        }
+
+                        if ui.button("?").on_hover_text("Shortcuts & Help (?)").clicked() {
+                            state.show_help = !state.show_help;
+                        }
+
+                        if ui.selectable_label(!state.show_ui_panels, "👁").on_hover_text("Toggle Full Canvas / Zen Mode (Tab)").clicked() {
+                            state.show_ui_panels = !state.show_ui_panels;
+                        }
+
+                        if ui.selectable_label(state.show_ref_window, "🖼").on_hover_text("Reference Image Viewer Lightbox").clicked() {
+                            state.show_ref_window = !state.show_ref_window;
+                        }
+
+                        if ui.selectable_label(state.show_rulers, "📏").on_hover_text("Toggle Viewport Rulers (Ctrl+R)").clicked() {
+                            state.show_rulers = !state.show_rulers;
+                        }
+
+                        if ui.selectable_label(state.show_grid, "⊞").on_hover_text("Toggle Canvas Grid (Ctrl+')").clicked() {
+                            state.show_grid = !state.show_grid;
+                        }
+
+                        ui.separator();
+
+                        // Centered Active Tool Badge in remaining space
                         let tool_label = format!("{} · {}px", state.brush.tool.label(), state.brush.size as u32);
                         egui::Frame::none()
                             .fill(accent_dim_c32)
@@ -230,38 +257,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             .rounding(4.0)
                             .inner_margin(egui::vec2(8.0, 2.5))
                             .show(ui, |ui| {
-                                ui.label(RichText::new(tool_label).size(10.5).strong().color(accent_c32));
+                                ui.label(RichText::new(tool_label).size(10.0).strong().color(accent_c32));
                             });
-                    });
-
-                    // Compact Top-Right Action Controls (Never Run Off Screen)
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("ℹ").on_hover_text("About Hollow Canvas").clicked() {
-                            state.show_about_dialog = true;
-                        }
-
-                        if ui.button("?").on_hover_text("Shortcuts & Help").clicked() {
-                            state.show_help = !state.show_help;
-                        }
-
-                        if ui.selectable_label(!state.show_ui_panels, "👁 Zen").on_hover_text("Full Canvas / Hide Docks (Tab)").clicked() {
-                            state.show_ui_panels = !state.show_ui_panels;
-                        }
-
-                        let ref_label = if state.show_ref_window { "🖼 Ref [ON]" } else { "🖼 Ref" };
-                        if ui.selectable_label(state.show_ref_window, ref_label).on_hover_text("Toggle Reference Viewer").clicked() {
-                            state.show_ref_window = !state.show_ref_window;
-                        }
-
-                        let ruler_label = if state.show_rulers { "📏 Rulers [ON]" } else { "📏 Rulers" };
-                        if ui.selectable_label(state.show_rulers, ruler_label).on_hover_text("Toggle Rulers (Ctrl+R)").clicked() {
-                            state.show_rulers = !state.show_rulers;
-                        }
-
-                        let grid_label = if state.show_grid { "⊞ Grid [ON]" } else { "⊞ Grid" };
-                        if ui.selectable_label(state.show_grid, grid_label).on_hover_text("Toggle Grid (Ctrl+')").clicked() {
-                            state.show_grid = !state.show_grid;
-                        }
                     });
                 });
             });
@@ -977,7 +974,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.4.1 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.4.2 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);

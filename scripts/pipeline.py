@@ -179,15 +179,15 @@ def stage_publish(version: str, tag_dir: Path, assets: list, draft: bool = False
     checksums_file = tag_dir / "SHA256SUMS.txt"
     upload_files = [str(a) for a in assets] + [str(checksums_file)]
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Vector Icons & Polish Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Header & Layout Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
 ### ✨ What's New in {version}
-* **✦ Crisp Vector Tool Icons (No `□` Tofu Glyphs)** — All 18 tools now render dedicated vector-drawn icons via `egui::Painter` (Brush, Pencil, Water, Chalk, Spray, Smudge, Gradient, Magic Wand, Eraser, Fill, Line, Rect, Oval, Poly, Select, Move, Crop, Eyedropper). Never relies on OS font glyphs and will never render missing glyph square boxes.
-* **📐 Complete Header Layout Overflow Prevention** — Cleaned up header controls with responsive bounds and compact quick-action pills, guaranteeing zero runoff or clipping at any window size.
+* **📐 Complete Header Layout Redesign & Overflow Prevention** — Refactored the top studio header bar into an ultra-compact, responsive layout with icon-only action pills (`⊞ Grid`, `📏 Rulers`, `🖼 Ref`, `👁 Zen`, `? Help`, `ℹ About`). Eliminates any horizontal clipping or runoff on all monitor sizes.
+* **✦ Crisp Vector Tool Icons (No `□` Tofu Glyphs)** — All 18 tools render dedicated vector-drawn icons via `egui::Painter` (Brush, Pencil, Water, Chalk, Spray, Smudge, Gradient, Magic Wand, Eraser, Fill, Line, Rect, Oval, Poly, Select, Move, Crop, Eyedropper).
 * **✏️ Renameable / Custom Named Layers** — Click or double-click any layer card to edit and customize layer names inline in real time.
-* **✨ Glossy Studio Face Lift** — Refined dark obsidian theme, smooth 4px rounded pill buttons, subtle glass highlight edges, glowing hover outlines, and illuminated active states.
+* **✨ Glossy Studio Theme** — Deep dark obsidian styling with glowing neon borders, glass highlights, and responsive feedback.
 * **📦 Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
 
 ### 📦 Downloads & Assets
