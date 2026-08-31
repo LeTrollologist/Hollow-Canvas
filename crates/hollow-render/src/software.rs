@@ -173,6 +173,187 @@ impl SoftwareRenderer {
         }
     }
 
+    pub fn render_grid(
+        &self,
+        buffer: &mut [u32],
+        win_w: usize,
+        win_h: usize,
+        doc: &Document,
+        pan: Vec2,
+        zoom: f32,
+        grid_size: u32,
+        grid_opacity: f32,
+    ) {
+        if win_w == 0 || win_h == 0 || grid_size == 0 || grid_opacity <= 0.001 {
+            return;
+        }
+
+        let doc_w = doc.width as f32;
+        let doc_h = doc.height as f32;
+        let center_x = (win_w as f32) * 0.5 + pan.x;
+        let center_y = (win_h as f32) * 0.5 + pan.y;
+
+        let canvas_w = doc_w * zoom;
+        let canvas_h = doc_h * zoom;
+
+        let x0 = (center_x - canvas_w * 0.5).max(0.0).min(win_w as f32) as usize;
+        let x1 = (center_x + canvas_w * 0.5).max(0.0).min(win_w as f32) as usize;
+        let y0 = (center_y - canvas_h * 0.5).max(0.0).min(win_h as f32) as usize;
+        let y1 = (center_y + canvas_h * 0.5).max(0.0).min(win_h as f32) as usize;
+
+        let grid_f = grid_size as f32;
+        let inv_zoom = 1.0 / zoom;
+        let alpha = grid_opacity.clamp(0.0, 1.0);
+        let grid_col = 0x00A89FD8; // Light purple grid lines
+
+        for screen_y in y0..y1 {
+            let doc_yf = (screen_y as f32 - center_y) * inv_zoom + doc_h * 0.5;
+            let is_h_line = (doc_yf % grid_f).abs() < (inv_zoom * 0.65).max(0.75);
+
+            let row_offset = screen_y * win_w;
+            for screen_x in x0..x1 {
+                let doc_xf = (screen_x as f32 - center_x) * inv_zoom + doc_w * 0.5;
+                let is_v_line = (doc_xf % grid_f).abs() < (inv_zoom * 0.65).max(0.75);
+
+                if is_h_line || is_v_line {
+                    let pixel_idx = row_offset + screen_x;
+                    if pixel_idx < buffer.len() {
+                        let cur = buffer[pixel_idx];
+                        let cr = (cur >> 16) & 0xFF;
+                        let cg = (cur >> 8) & 0xFF;
+                        let cb = cur & 0xFF;
+
+                        let gr = (grid_col >> 16) & 0xFF;
+                        let gg = (grid_col >> 8) & 0xFF;
+                        let gb = grid_col & 0xFF;
+
+                        let nr = ((cr as f32 * (1.0 - alpha)) + (gr as f32 * alpha)).round() as u32;
+                        let ng = ((cg as f32 * (1.0 - alpha)) + (gg as f32 * alpha)).round() as u32;
+                        let nb = ((cb as f32 * (1.0 - alpha)) + (gb as f32 * alpha)).round() as u32;
+
+                        buffer[pixel_idx] = 0xFF000000 | (nr << 16) | (ng << 8) | nb;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn render_rulers(
+        &self,
+        buffer: &mut [u32],
+        win_w: usize,
+        win_h: usize,
+        doc: &Document,
+        pan: Vec2,
+        zoom: f32,
+        cursor_pos: Vec2,
+    ) {
+        if win_w < 250 || win_h < 150 {
+            return;
+        }
+
+        let ruler_bg = 0xFF080D1D;
+        let ruler_border = 0xFF24335C;
+        let ruler_tick = 0xFF5C72A0;
+        let ruler_marker = 0xFF5CE0D8;
+
+        let top_ruler_h = 16usize;
+        let left_ruler_w = 16usize;
+        let top_y_start = 42usize; // Under header dock
+        let left_x_start = 200usize; // Beside tool dock
+
+        let doc_w = doc.width as f32;
+        let doc_h = doc.height as f32;
+        let center_x = (win_w as f32) * 0.5 + pan.x;
+        let center_y = (win_h as f32) * 0.5 + pan.y;
+
+        // 1. Render Top Horizontal Ruler
+        for ry in 0..top_ruler_h {
+            let y = top_y_start + ry;
+            if y >= win_h {
+                continue;
+            }
+            let row = y * win_w;
+            for x in left_x_start..win_w.saturating_sub(230) {
+                let pixel_idx = row + x;
+                if pixel_idx < buffer.len() {
+                    buffer[pixel_idx] = if ry == top_ruler_h - 1 { ruler_border } else { ruler_bg };
+                }
+            }
+        }
+
+        // Ticks for top ruler
+        let step = if zoom > 4.0 { 10.0 } else if zoom > 1.5 { 50.0 } else if zoom > 0.5 { 100.0 } else { 500.0 };
+        let mut cur_tick = 0.0_f32;
+        while cur_tick <= doc_w {
+            let sx = ((cur_tick - doc_w * 0.5) * zoom + center_x).round() as isize;
+            if sx >= left_x_start as isize && sx < (win_w - 230) as isize {
+                let tick_len = if (cur_tick % (step * 2.0)).abs() < 0.1 { 10 } else { 5 };
+                for ty in (top_ruler_h - tick_len)..top_ruler_h {
+                    let y = top_y_start + ty;
+                    let idx = y * win_w + sx as usize;
+                    if idx < buffer.len() {
+                        buffer[idx] = ruler_tick;
+                    }
+                }
+            }
+            cur_tick += step;
+        }
+
+        // Top Cursor Marker
+        let cursor_sx = ((cursor_pos.x - doc_w * 0.5) * zoom + center_x).round() as isize;
+        if cursor_sx >= left_x_start as isize && cursor_sx < (win_w - 230) as isize {
+            for ty in 0..top_ruler_h {
+                let y = top_y_start + ty;
+                let idx = y * win_w + cursor_sx as usize;
+                if idx < buffer.len() {
+                    buffer[idx] = ruler_marker;
+                }
+            }
+        }
+
+        // 2. Render Left Vertical Ruler
+        for y in (top_y_start + top_ruler_h)..win_h.saturating_sub(28) {
+            let row = y * win_w;
+            for rx in 0..left_ruler_w {
+                let x = left_x_start + rx;
+                let pixel_idx = row + x;
+                if pixel_idx < buffer.len() {
+                    buffer[pixel_idx] = if rx == left_ruler_w - 1 { ruler_border } else { ruler_bg };
+                }
+            }
+        }
+
+        // Ticks for left ruler
+        let mut cur_tick_y = 0.0_f32;
+        while cur_tick_y <= doc_h {
+            let sy = ((cur_tick_y - doc_h * 0.5) * zoom + center_y).round() as isize;
+            if sy >= (top_y_start + top_ruler_h) as isize && sy < (win_h - 28) as isize {
+                let tick_len = if (cur_tick_y % (step * 2.0)).abs() < 0.1 { 10 } else { 5 };
+                for tx in (left_ruler_w - tick_len)..left_ruler_w {
+                    let x = left_x_start + tx;
+                    let idx = sy as usize * win_w + x;
+                    if idx < buffer.len() {
+                        buffer[idx] = ruler_tick;
+                    }
+                }
+            }
+            cur_tick_y += step;
+        }
+
+        // Left Cursor Marker
+        let cursor_sy = ((cursor_pos.y - doc_h * 0.5) * zoom + center_y).round() as isize;
+        if cursor_sy >= (top_y_start + top_ruler_h) as isize && cursor_sy < (win_h - 28) as isize {
+            for tx in 0..left_ruler_w {
+                let x = left_x_start + tx;
+                let idx = cursor_sy as usize * win_w + x;
+                if idx < buffer.len() {
+                    buffer[idx] = ruler_marker;
+                }
+            }
+        }
+    }
+
     pub fn render_egui_primitives(
         &self,
         buffer: &mut [u32],

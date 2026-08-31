@@ -66,8 +66,22 @@ impl SelectionMask {
         sm
     }
 
+    pub fn from_mask_vec(width: u32, height: u32, mask: Vec<u8>) -> Self {
+        Self { width, height, mask }
+    }
+
     pub fn has_selection(&self) -> bool {
         self.mask.iter().any(|&v| v > 8)
+    }
+
+    pub fn invert(&mut self) {
+        for v in &mut self.mask {
+            *v = 255 - *v;
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.mask.fill(0);
     }
 
     #[inline]

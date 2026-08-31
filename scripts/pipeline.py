@@ -179,17 +179,21 @@ def stage_publish(version: str, tag_dir: Path, assets: list, draft: bool = False
     checksums_file = tag_dir / "SHA256SUMS.txt"
     upload_files = [str(a) for a in assets] + [str(checksums_file)]
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Official Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
-### ✨ What's Included
-* **Ultra-Smooth Brush Engine** — Cubic Catmull-Rom spline interpolation eliminates polygonal chord artifacts at high drawing speeds
-* **Zero-Allocation Compositor** — Pre-allocated composite buffers for silky smooth 60+ FPS viewport rendering and panning
-* **Versatile Toolset** — Brush, Pencil, Watercolor, Chalk, Spray, Smudge, Clone Stamp, Shapes, and Reference Layer Flood Fill
-* **Multi-Axis Symmetry** — Real-time Horizontal, Vertical, Quad, and Radial/Mandala symmetry
-* **Local-First & Private** — 100% offline, zero telemetry, zero trackers, and compressed binary `.hcv` project archives
-* **Universal VPack Distribution** — Bundled in `.zip` and ultra-compact `.vpack` archive formats
+### ✨ What's New in v0.2.0
+* **🎨 Modern Studio UI Overhaul** — Sleek iconography, refined contrast, tabbed docks, and unified tool properties.
+* **🪄 Magic Wand Tool** — Contiguous and global fuzzy color-matching selection creating active selection masks.
+* **✦ New Canvas Studio** — Pre-loaded presets (Digital Art 1K/2K/4K, 1080p/4K Display, Print A4/A5 @ 300 DPI, Social Media Banners, Pixel Art) plus custom aspect-ratio locked dimensions.
+* **🌈 Linear & Radial Gradients** — Interactive two-point drag gradient tool with live viewport previews and dithering.
+* **▭ Shapes Engine** — Outline, Solid Fill, and Dual-Color (Primary Outline + Secondary Fill) for Rectangles, Ellipses, and Polygons.
+* **▱ Advanced Eraser Modes** — Smooth Soft Alpha, Strict 1-Bit Hard Pixel, and Secondary Color-Targeted Erase.
+* **⊞ Toggleable Grid & 📏 Dynamic Rulers** — Customizable pixel grid overlay (8px–128px) and coordinate rulers tracking zoom, pan, and cursor position.
+* **💡 Reference Viewer Lightbox Backlight** — Toggleable high-contrast white lightbox and checkerboard backgrounds for inspecting transparent lineart.
+* **✥ Real-Time Canvas Operations** — Live canvas crop/extend, bilinear image resampling, horizontal/vertical flips, and 90°/180° rotation.
+* **Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
 
 ### 📦 Downloads & Assets
 | Asset | Format | Description |

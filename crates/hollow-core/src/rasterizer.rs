@@ -1,5 +1,5 @@
 use crate::blend::BlendMode;
-use crate::brush::{BrushPoint, BrushSettings, ShapeFillMode, ToolType};
+use crate::brush::{BrushPoint, BrushSettings, EraserMode, GradientType, ShapeFillMode, ToolType};
 use crate::color::Color;
 use crate::document::Document;
 use crate::selection::SelectionMask;
@@ -8,24 +8,21 @@ use glam::Vec2;
 
 #[inline]
 fn hash21(x: u32, y: u32, seed: u32) -> f32 {
-    let mut n = x.wrapping_mul(374761393) ^ y.wrapping_mul(668265263) ^ seed.wrapping_mul(1274126177);
-    n = (n ^ (n >> 13)).wrapping_mul(1274126177);
-    (n & 0x00FFFFFF) as f32 / 16777215.0
+    let mut h = seed ^ (x.wrapping_mul(374761393) ^ y.wrapping_mul(668265263));
+    h = (h ^ (h >> 13)).wrapping_mul(1274126177);
+    (h as f32) / (u32::MAX as f32)
 }
 
 pub struct StrokeRasterizer;
 
 impl StrokeRasterizer {
-    #[inline]
     fn blend_stamp(
         doc_w: u32,
         doc_h: u32,
         pixels: &mut [u8],
-        clone_src_pixels: Option<&[u8]>,
         selection: Option<&SelectionMask>,
         stamp_center: Vec2,
         prev_center: Option<Vec2>,
-        clone_offset: Option<Vec2>,
         radius: f32,
         brush: &BrushSettings,
         blend_mode: BlendMode,
@@ -119,6 +116,24 @@ impl StrokeRasterizer {
                                 0.0
                             }
                         }
+                        ToolType::Eraser => match brush.eraser_mode {
+                            EraserMode::HardPixel => {
+                                if d <= radius {
+                                    opacity
+                                } else {
+                                    0.0
+                                }
+                            }
+                            _ => {
+                                let base_alpha = if d_sq <= inner_radius_sq {
+                                    1.0
+                                } else {
+                                    let inner_r = radius * clamped_hardness;
+                                    (1.0 - (d - inner_r) / (radius - inner_r)).clamp(0.0, 1.0)
+                                };
+                                base_alpha * opacity
+                            }
+                        },
                         _ => {
                             let base_alpha = if d_sq <= inner_radius_sq {
                                 1.0
@@ -166,31 +181,43 @@ impl StrokeRasterizer {
                                 dst
                             }
                         }
-                        ToolType::Clone => {
-                            if let (Some(src_buf), Some(offset)) = (clone_src_pixels, clone_offset) {
-                                let sx = (x as f32 + offset.x).round() as i32;
-                                let sy = (y as f32 + offset.y).round() as i32;
-                                if sx >= 0 && sx < doc_w as i32 && sy >= 0 && sy < doc_h as i32 {
-                                    let s_idx = ((sy as u32 * doc_w + sx as u32) * 4) as usize;
-                                    if s_idx + 3 < src_buf.len() {
-                                        [src_buf[s_idx], src_buf[s_idx + 1], src_buf[s_idx + 2], src_buf[s_idx + 3]]
-                                    } else {
-                                        color.to_rgba8()
-                                    }
-                                } else {
-                                    [0, 0, 0, 0]
-                                }
-                            } else {
-                                color.to_rgba8()
-                            }
-                        }
                         _ => color.to_rgba8(),
                     };
 
-                    if tool == ToolType::Eraser && bg_color.a <= 0.0 {
-                        let current_a = pixels[idx + 3] as f32 / 255.0;
-                        let new_a = (current_a * (1.0 - alpha)).clamp(0.0, 1.0);
-                        pixels[idx + 3] = (new_a * 255.0).round() as u8;
+                    if tool == ToolType::Eraser {
+                        match brush.eraser_mode {
+                            EraserMode::HardPixel => {
+                                if alpha >= 0.5 {
+                                    if bg_color.a > 0.0 {
+                                        pixels[idx..idx + 4].copy_from_slice(&bg_color.to_rgba8());
+                                    } else {
+                                        pixels[idx..idx + 4].copy_from_slice(&[0, 0, 0, 0]);
+                                    }
+                                }
+                            }
+                            EraserMode::ColorErase => {
+                                let target = brush.secondary_color.to_rgba8();
+                                let tol = brush.color_erase_tolerance as i32;
+                                let matches = (dst[0] as i32 - target[0] as i32).abs() <= tol
+                                    && (dst[1] as i32 - target[1] as i32).abs() <= tol
+                                    && (dst[2] as i32 - target[2] as i32).abs() <= tol;
+                                if matches {
+                                    let current_a = pixels[idx + 3] as f32 / 255.0;
+                                    let new_a = (current_a * (1.0 - alpha)).clamp(0.0, 1.0);
+                                    pixels[idx + 3] = (new_a * 255.0).round() as u8;
+                                }
+                            }
+                            EraserMode::Soft => {
+                                if bg_color.a <= 0.0 {
+                                    let current_a = pixels[idx + 3] as f32 / 255.0;
+                                    let new_a = (current_a * (1.0 - alpha)).clamp(0.0, 1.0);
+                                    pixels[idx + 3] = (new_a * 255.0).round() as u8;
+                                } else {
+                                    let blended = blend_mode.composite_pixel(dst, src, alpha);
+                                    pixels[idx..idx + 4].copy_from_slice(&blended);
+                                }
+                            }
+                        }
                     } else if tool == ToolType::Smudge {
                         let strength = brush.smudge_strength.clamp(0.1, 1.0);
                         let blended = blend_mode.composite_pixel(dst, src, alpha * strength);
@@ -218,14 +245,6 @@ impl StrokeRasterizer {
             doc.background_color(),
         );
 
-        let clone_src = if brush.tool == ToolType::Clone {
-            doc.active_layer().map(|l| l.pixels.clone())
-        } else {
-            None
-        };
-
-        let clone_offset = brush.clone_source.map(|src| src - point.position);
-
         let layer = match doc.get_layer_mut(active_id) {
             Some(l) if !l.locked => l,
             _ => return,
@@ -241,11 +260,9 @@ impl StrokeRasterizer {
                 doc_w,
                 doc_h,
                 &mut layer.pixels,
-                clone_src.as_deref(),
                 selection,
                 local_p,
                 None,
-                clone_offset,
                 radius,
                 brush,
                 layer.blend_mode,
@@ -269,14 +286,6 @@ impl StrokeRasterizer {
             doc.active_layer_id,
             doc.background_color(),
         );
-
-        let clone_src = if brush.tool == ToolType::Clone {
-            doc.active_layer().map(|l| l.pixels.clone())
-        } else {
-            None
-        };
-
-        let clone_offset = brush.clone_source.map(|src| src - p1.position);
 
         let layer = match doc.get_layer_mut(active_id) {
             Some(l) if !l.locked => l,
@@ -302,39 +311,40 @@ impl StrokeRasterizer {
             let radius = brush.effective_size(pressure) * 0.5;
 
             let sym_points = symmetry.transform_points(pos, doc_w as f32, doc_h as f32);
-            for (sym_idx, p) in sym_points.into_iter().enumerate() {
-                let local_p = p - layer_offset;
-                let local_prev = prev_pos.map(|pr| pr - layer_offset);
+            let prev_sym_points = prev_pos.map(|pp| symmetry.transform_points(pp, doc_w as f32, doc_h as f32));
+
+            for (s_idx, sp) in sym_points.into_iter().enumerate() {
+                let prev_sp = prev_sym_points.as_ref().map(|psp| psp[s_idx] - layer_offset);
+                let local_sp = sp - layer_offset;
                 Self::blend_stamp(
                     doc_w,
                     doc_h,
                     &mut layer.pixels,
-                    clone_src.as_deref(),
                     selection,
-                    local_p,
-                    local_prev,
-                    clone_offset,
+                    local_sp,
+                    prev_sp,
                     radius,
                     brush,
                     layer.blend_mode,
                     if brush.eraser_to_background { bg_col } else { Color::TRANSPARENT },
-                    i * 10 + sym_idx,
+                    i.wrapping_add(s_idx * 1000),
                 );
             }
         }
     }
 
     #[inline]
-    pub fn catmull_rom_eval(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32) -> Vec2 {
+    fn catmull_rom_eval(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32) -> Vec2 {
         let t2 = t * t;
         let t3 = t2 * t;
-        0.5 * ((2.0 * p1)
-            + (-p0 + p2) * t
-            + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
-            + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
+        0.5 * (
+            (2.0 * p1)
+                + (-p0 + p2) * t
+                + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+                + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3
+        )
     }
 
-    /// Paint a continuous cubic Catmull-Rom spline segment between p1 and p2 using tangents from p0 and p3
     pub fn paint_spline(
         doc: &mut Document,
         p0: BrushPoint,
@@ -345,69 +355,20 @@ impl StrokeRasterizer {
         symmetry: &SymmetryConfig,
         selection: Option<&SelectionMask>,
     ) {
-        let (doc_w, doc_h, active_id, bg_col) = (
-            doc.width,
-            doc.height,
-            doc.active_layer_id,
-            doc.background_color(),
-        );
-
-        let clone_src = if brush.tool == ToolType::Clone {
-            doc.active_layer().map(|l| l.pixels.clone())
-        } else {
-            None
-        };
-
-        let clone_offset = brush.clone_source.map(|src| src - p2.position);
-
-        let layer = match doc.get_layer_mut(active_id) {
-            Some(l) if !l.locked => l,
-            _ => return,
-        };
-
-        let layer_offset = Vec2::new(layer.offset_x as f32, layer.offset_y as f32);
-
-        // Subdivide Catmull-Rom curve dynamically based on curvature
-        let chord_dist = p1.position.distance(p2.position);
-        let mid_pt = Self::catmull_rom_eval(p0.position, p1.position, p2.position, p3.position, 0.5);
-        let approx_arc_len = p1.position.distance(mid_pt) + mid_pt.distance(p2.position);
-        let arc_len = approx_arc_len.max(chord_dist);
-
+        let approx_len = p1.position.distance(p2.position);
         let avg_size = (brush.effective_size(p1.pressure) + brush.effective_size(p2.pressure)) * 0.5;
         let spacing = (avg_size * brush.spacing).max(0.5);
-        let steps = (arc_len / spacing).ceil().max(1.0) as usize;
+        let steps = (approx_len / spacing).ceil().max(2.0) as usize;
 
-        let mut last_stamp_pos = p1.position;
-
+        let mut prev_pt = p1;
         for i in 1..=steps {
             let t = i as f32 / steps as f32;
             let pos = Self::catmull_rom_eval(p0.position, p1.position, p2.position, p3.position, t);
-            let prev_pos = Some(last_stamp_pos);
-            last_stamp_pos = pos;
-
             let pressure = p1.pressure + (p2.pressure - p1.pressure) * t;
-            let radius = brush.effective_size(pressure) * 0.5;
+            let cur_pt = BrushPoint::new(pos, pressure);
 
-            let sym_points = symmetry.transform_points(pos, doc_w as f32, doc_h as f32);
-            for (sym_idx, p) in sym_points.into_iter().enumerate() {
-                let local_p = p - layer_offset;
-                let local_prev = prev_pos.map(|pr| pr - layer_offset);
-                Self::blend_stamp(
-                    doc_w,
-                    doc_h,
-                    &mut layer.pixels,
-                    clone_src.as_deref(),
-                    selection,
-                    local_p,
-                    local_prev,
-                    clone_offset,
-                    radius,
-                    brush,
-                    layer.blend_mode,
-                    if brush.eraser_to_background { bg_col } else { Color::TRANSPARENT },
-                    i * 10 + sym_idx,
-                );
-            }
+            Self::paint_segment(doc, prev_pt, cur_pt, brush, symmetry, selection);
+            prev_pt = cur_pt;
         }
     }
 
@@ -625,6 +586,160 @@ impl StrokeRasterizer {
         }
     }
 
+    pub fn rasterize_gradient(
+        doc: &mut Document,
+        start: Vec2,
+        end: Vec2,
+        brush: &BrushSettings,
+        selection: Option<&SelectionMask>,
+    ) {
+        let (doc_w, doc_h, active_id) = (doc.width, doc.height, doc.active_layer_id);
+        let layer = match doc.get_layer_mut(active_id) {
+            Some(l) if !l.locked => l,
+            _ => return,
+        };
+
+        let col0 = brush.primary_color;
+        let col1 = brush.secondary_color;
+        let diff = end - start;
+        let length_sq = diff.length_squared().max(1.0);
+        let length = length_sq.sqrt();
+        let grad_type = brush.gradient_type;
+        let dither = brush.gradient_dither;
+
+        for y in 0..doc_h {
+            for x in 0..doc_w {
+                if let Some(mask) = selection {
+                    if mask.has_selection() && mask.get_value(x, y) < 8 {
+                        continue;
+                    }
+                }
+
+                let cur = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                let mut t = match grad_type {
+                    GradientType::Linear => {
+                        let to_cur = cur - start;
+                        (to_cur.dot(diff) / length_sq).clamp(0.0, 1.0)
+                    }
+                    GradientType::Radial => {
+                        (cur.distance(start) / length).clamp(0.0, 1.0)
+                    }
+                };
+
+                if dither {
+                    let noise = (hash21(x, y, 987654) - 0.5) * (1.0 / 255.0);
+                    t = (t + noise).clamp(0.0, 1.0);
+                }
+
+                let color = col0.lerp(col1, t);
+                let idx = ((y * doc_w + x) * 4) as usize;
+                let dst = [layer.pixels[idx], layer.pixels[idx + 1], layer.pixels[idx + 2], layer.pixels[idx + 3]];
+                let blended = layer.blend_mode.composite_pixel(dst, color.to_rgba8(), brush.opacity);
+                layer.pixels[idx..idx + 4].copy_from_slice(&blended);
+            }
+        }
+    }
+
+    pub fn rasterize_magic_wand(
+        doc: &Document,
+        start_x: u32,
+        start_y: u32,
+        tolerance: u8,
+        contiguous: bool,
+        sample_all_layers: bool,
+    ) -> SelectionMask {
+        let (doc_w, doc_h) = (doc.width, doc.height);
+        let mut mask = SelectionMask::new(doc_w, doc_h);
+        if start_x >= doc_w || start_y >= doc_h {
+            return mask;
+        }
+
+        let source_buffer = if sample_all_layers {
+            doc.composite_layers(false)
+        } else if let Some(ref_layer) = doc.reference_layer() {
+            ref_layer.pixels.clone()
+        } else if let Some(layer) = doc.active_layer() {
+            layer.pixels.clone()
+        } else {
+            return mask;
+        };
+
+        let start_idx = ((start_y * doc_w + start_x) * 4) as usize;
+        let target_px = [
+            source_buffer[start_idx],
+            source_buffer[start_idx + 1],
+            source_buffer[start_idx + 2],
+            source_buffer[start_idx + 3],
+        ];
+
+        let tol = tolerance as i32;
+        let matches_target = |px: [u8; 4]| -> bool {
+            (px[0] as i32 - target_px[0] as i32).abs() <= tol
+                && (px[1] as i32 - target_px[1] as i32).abs() <= tol
+                && (px[2] as i32 - target_px[2] as i32).abs() <= tol
+                && (px[3] as i32 - target_px[3] as i32).abs() <= tol
+        };
+
+        if !contiguous {
+            // Global color selection across entire image
+            for y in 0..doc_h {
+                for x in 0..doc_w {
+                    let idx = ((y * doc_w + x) * 4) as usize;
+                    let current = [
+                        source_buffer[idx],
+                        source_buffer[idx + 1],
+                        source_buffer[idx + 2],
+                        source_buffer[idx + 3],
+                    ];
+                    if matches_target(current) {
+                        let m_idx = (y * doc_w + x) as usize;
+                        mask.mask[m_idx] = 255;
+                    }
+                }
+            }
+        } else {
+            // Connected component flood fill
+            let mut queue = Vec::with_capacity(4096);
+            queue.push((start_x, start_y));
+            let mut visited = vec![false; (doc_w * doc_h) as usize];
+
+            while let Some((x, y)) = queue.pop() {
+                let pos = (y * doc_w + x) as usize;
+                if visited[pos] {
+                    continue;
+                }
+                visited[pos] = true;
+
+                let idx = pos * 4;
+                let current = [
+                    source_buffer[idx],
+                    source_buffer[idx + 1],
+                    source_buffer[idx + 2],
+                    source_buffer[idx + 3],
+                ];
+
+                if matches_target(current) {
+                    mask.mask[pos] = 255;
+
+                    if x > 0 {
+                        queue.push((x - 1, y));
+                    }
+                    if x + 1 < doc_w {
+                        queue.push((x + 1, y));
+                    }
+                    if y > 0 {
+                        queue.push((x, y - 1));
+                    }
+                    if y + 1 < doc_h {
+                        queue.push((x, y + 1));
+                    }
+                }
+            }
+        }
+
+        mask
+    }
+
     pub fn flood_fill(
         doc: &mut Document,
         start_x: u32,
@@ -638,7 +753,6 @@ impl StrokeRasterizer {
             return;
         }
 
-        // Check if there is an active reference layer for boundary detection
         let ref_pixels = doc.reference_layer().map(|l| l.pixels.clone());
 
         let layer = match doc.get_layer_mut(active_id) {

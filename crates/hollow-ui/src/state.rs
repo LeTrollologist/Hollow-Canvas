@@ -6,47 +6,40 @@ use hollow_core::history::HistoryStack;
 use hollow_core::selection::SelectionMask;
 use hollow_core::symmetry::SymmetryConfig;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResolutionPreset {
-    WindowSize,
-    Fhd1080p,
-    Square1080,
-    Portrait1080x1350,
-    Qhd1440p,
-    Uhd4k,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CanvasPreset {
+    pub category: &'static str,
+    pub name: &'static str,
+    pub width: u32,
+    pub height: u32,
 }
 
-impl ResolutionPreset {
+impl CanvasPreset {
     pub const ALL: &'static [Self] = &[
-        Self::WindowSize,
-        Self::Fhd1080p,
-        Self::Square1080,
-        Self::Portrait1080x1350,
-        Self::Qhd1440p,
-        Self::Uhd4k,
+        // Digital Art
+        Self { category: "Digital Art", name: "1:1 Square (1024 × 1024)", width: 1024, height: 1024 },
+        Self { category: "Digital Art", name: "2K Square (2048 × 2048)", width: 2048, height: 2048 },
+        Self { category: "Digital Art", name: "4K Master (4096 × 4096)", width: 4096, height: 4096 },
+        // Screen & Display
+        Self { category: "Screen & Video", name: "1080p FHD (1920 × 1080)", width: 1920, height: 1080 },
+        Self { category: "Screen & Video", name: "1440p QHD (2560 × 1440)", width: 2560, height: 1440 },
+        Self { category: "Screen & Video", name: "4K UHD (3840 × 2160)", width: 3840, height: 2160 },
+        Self { category: "Screen & Video", name: "Ultrawide (3440 × 1440)", width: 3440, height: 1440 },
+        // Social Media
+        Self { category: "Social Media", name: "Twitter / X Banner (1500 × 500)", width: 1500, height: 500 },
+        Self { category: "Social Media", name: "YouTube Thumb (1280 × 720)", width: 1280, height: 720 },
+        Self { category: "Social Media", name: "Mobile Story (1080 × 1920)", width: 1080, height: 1920 },
+        Self { category: "Social Media", name: "Instagram Portrait (1080 × 1350)", width: 1080, height: 1350 },
+        // Print Documents
+        Self { category: "Print", name: "A4 @ 300 DPI (2480 × 3508)", width: 2480, height: 3508 },
+        Self { category: "Print", name: "A5 @ 300 DPI (1748 × 2480)", width: 1748, height: 2480 },
+        Self { category: "Print", name: "Photo 4×6 (1200 × 1800)", width: 1200, height: 1800 },
+        // Pixel Art
+        Self { category: "Pixel Art", name: "Sprite (32 × 32)", width: 32, height: 32 },
+        Self { category: "Pixel Art", name: "Icon (64 × 64)", width: 64, height: 64 },
+        Self { category: "Pixel Art", name: "Scene (128 × 128)", width: 128, height: 128 },
+        Self { category: "Pixel Art", name: "Retro (256 × 256)", width: 256, height: 256 },
     ];
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::WindowSize => "Window Size",
-            Self::Fhd1080p => "1080p (1920×1080)",
-            Self::Square1080 => "Square (1080×1080)",
-            Self::Portrait1080x1350 => "Portrait (1080×1350)",
-            Self::Qhd1440p => "1440p (2560×1440)",
-            Self::Uhd4k => "4K (3840×2160)",
-        }
-    }
-
-    pub fn dimensions(&self, window_w: u32, window_h: u32) -> (u32, u32) {
-        match self {
-            Self::WindowSize => (window_w.max(200), window_h.max(200)),
-            Self::Fhd1080p => (1920, 1080),
-            Self::Square1080 => (1080, 1080),
-            Self::Portrait1080x1350 => (1080, 1350),
-            Self::Qhd1440p => (2560, 1440),
-            Self::Uhd4k => (3840, 2160),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +48,7 @@ pub enum PendingFileAction {
     OpenProject,
     ExportPng,
     OpenReferenceImage,
+    NewCanvas(u32, u32, u8), // w, h, bg_mode (0: dark, 1: white, 2: transparent)
 }
 
 pub struct AppState {
@@ -71,7 +65,44 @@ pub struct AppState {
     pub cursor_canvas_pos: Vec2,
     pub show_help: bool,
     pub show_gallery: bool,
-    pub resolution_preset: ResolutionPreset,
+
+    // Overlay Toggles
+    pub show_grid: bool,
+    pub grid_size: u32,
+    pub grid_opacity: f32,
+    pub show_rulers: bool,
+
+    // New Canvas Modal
+    pub show_new_canvas_dialog: bool,
+    pub new_canvas_preset_idx: usize,
+    pub new_canvas_w: u32,
+    pub new_canvas_h: u32,
+    pub new_canvas_lock_aspect: bool,
+    pub new_canvas_aspect_ratio: f32,
+    pub new_canvas_bg_mode: u8, // 0: Dark, 1: Pure White, 2: Transparent
+
+    // Resize / Scale Modal
+    pub show_resize_canvas_dialog: bool,
+    pub resize_canvas_w: u32,
+    pub resize_canvas_h: u32,
+    pub resize_scale_mode: bool, // false: crop/extend, true: resample scale
+    pub resize_bilinear: bool,
+    pub resize_anchor_center: bool,
+
+    // Wand Tool Settings
+    pub wand_tolerance: u8,
+    pub wand_contiguous: bool,
+    pub wand_sample_all_layers: bool,
+
+    // Reference Dock & Backlight
+    pub reference_image: Option<(u32, u32, Vec<u8>)>,
+    pub show_ref_window: bool,
+    pub ref_zoom: f32,
+    pub ref_pan: Vec2,
+    pub ref_backlight: bool,
+    pub ref_backlight_mode: u8, // 0: Dark, 1: Lightbox Pure White, 2: Checkerboard
+
+    // Painting state
     pub is_painting: bool,
     pub last_paint_pos: Option<Vec2>,
     pub stroke_pixels_backup: Option<Vec<u8>>,
@@ -81,10 +112,6 @@ pub struct AppState {
     pub drag_start_canvas_pos: Option<Vec2>,
     pub polygon_points: Vec<Vec2>,
     pub crop_box: Option<(Vec2, Vec2)>,
-    pub reference_image: Option<(u32, u32, Vec<u8>)>,
-    pub show_ref_window: bool,
-    pub ref_zoom: f32,
-    pub ref_pan: Vec2,
 }
 
 impl AppState {
@@ -111,7 +138,38 @@ impl AppState {
             cursor_canvas_pos: Vec2::ZERO,
             show_help: false,
             show_gallery: false,
-            resolution_preset: ResolutionPreset::WindowSize,
+
+            show_grid: false,
+            grid_size: 32,
+            grid_opacity: 0.25,
+            show_rulers: true,
+
+            show_new_canvas_dialog: false,
+            new_canvas_preset_idx: 0,
+            new_canvas_w: 1920,
+            new_canvas_h: 1080,
+            new_canvas_lock_aspect: false,
+            new_canvas_aspect_ratio: 1920.0 / 1080.0,
+            new_canvas_bg_mode: 0,
+
+            show_resize_canvas_dialog: false,
+            resize_canvas_w: width,
+            resize_canvas_h: height,
+            resize_scale_mode: false,
+            resize_bilinear: true,
+            resize_anchor_center: true,
+
+            wand_tolerance: 24,
+            wand_contiguous: true,
+            wand_sample_all_layers: false,
+
+            reference_image: None,
+            show_ref_window: false,
+            ref_zoom: 1.0,
+            ref_pan: Vec2::ZERO,
+            ref_backlight: false,
+            ref_backlight_mode: 0,
+
             is_painting: false,
             last_paint_pos: None,
             stroke_pixels_backup: None,
@@ -121,10 +179,6 @@ impl AppState {
             drag_start_canvas_pos: None,
             polygon_points: Vec::new(),
             crop_box: None,
-            reference_image: None,
-            show_ref_window: false,
-            ref_zoom: 1.0,
-            ref_pan: Vec2::ZERO,
         }
     }
 
@@ -196,11 +250,7 @@ impl AppState {
     }
 
     pub fn theme_accent_color(&self) -> Color {
-        match self.document.theme {
-            hollow_core::color::ThemeMode::DeepMist => Color::new(0.66, 0.62, 0.85, 1.0),
-            hollow_core::color::ThemeMode::Moonlit => Color::new(0.48, 0.69, 0.94, 1.0),
-            hollow_core::color::ThemeMode::EmberGlow => Color::new(0.96, 0.64, 0.38, 1.0),
-        }
+        self.document.theme.accent_color()
     }
 
     pub fn push_color_history(&mut self, color: Color) {
@@ -217,4 +267,3 @@ impl Default for AppState {
         Self::new(1280, 720)
     }
 }
-

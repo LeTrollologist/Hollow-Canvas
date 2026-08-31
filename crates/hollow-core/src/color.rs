@@ -11,8 +11,21 @@ pub struct Color {
 impl Color {
     pub const WHITE: Self = Self::new(1.0, 1.0, 1.0, 1.0);
     pub const BLACK: Self = Self::new(0.0, 0.0, 0.0, 1.0);
+    pub const RED: Self = Self::new(1.0, 0.0, 0.0, 1.0);
+    pub const GREEN: Self = Self::new(0.0, 1.0, 0.0, 1.0);
+    pub const BLUE: Self = Self::new(0.0, 0.0, 1.0, 1.0);
     pub const TRANSPARENT: Self = Self::new(0.0, 0.0, 0.0, 0.0);
     pub const HOLLOW_PURPLE: Self = Self::new(0.6588, 0.6235, 0.8471, 1.0); // #a89fd8
+
+    pub fn lerp(&self, other: Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        Self::new(
+            self.r + (other.r - self.r) * t,
+            self.g + (other.g - self.g) * t,
+            self.b + (other.b - self.b) * t,
+            self.a + (other.a - self.a) * t,
+        )
+    }
 
     pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { r, g, b, a }

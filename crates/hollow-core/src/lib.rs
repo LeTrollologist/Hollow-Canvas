@@ -9,7 +9,7 @@ pub mod selection;
 pub mod symmetry;
 
 pub use blend::BlendMode;
-pub use brush::{BrushPoint, BrushSettings, ShapeFillMode, ToolType};
+pub use brush::{BrushPoint, BrushSettings, EraserMode, GradientType, ShapeFillMode, ToolType};
 pub use color::{Color, ThemeMode, DEFAULT_PALETTE};
 pub use document::Document;
 pub use history::{Command, HistoryStack, LayerPixelsSnapshotCommand};

@@ -345,9 +345,32 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             if !is_over_ui {
                 let tool = app.state.brush.tool;
 
-                if is_alt || (tool == ToolType::Clone && is_alt) {
-                    app.state.brush.clone_source = Some(canvas_pos);
-                    app.state.set_status(format!("Clone source set to ({}, {})", canvas_pos.x as i32, canvas_pos.y as i32));
+                if is_alt {
+                    let flat = app.state.document.composite_layers(false);
+                    let cx = canvas_pos.x as i32;
+                    let cy = canvas_pos.y as i32;
+                    if cx >= 0 && cx < app.state.document.width as i32 && cy >= 0 && cy < app.state.document.height as i32 {
+                        let idx = ((cy * app.state.document.width as i32 + cx) * 4) as usize;
+                        if idx + 3 < flat.len() {
+                            let picked = hollow_core::color::Color::from_rgba8(flat[idx], flat[idx + 1], flat[idx + 2], flat[idx + 3]);
+                            app.state.brush.primary_color = picked;
+                            app.state.push_color_history(picked);
+                            app.state.set_status(format!("Sampled color: {}", picked.to_hex()));
+                        }
+                    }
+                } else if tool == ToolType::Wand {
+                    if canvas_pos.x >= 0.0 && canvas_pos.y >= 0.0 {
+                        let mask = StrokeRasterizer::rasterize_magic_wand(
+                            &app.state.document,
+                            canvas_pos.x as u32,
+                            canvas_pos.y as u32,
+                            app.state.wand_tolerance,
+                            app.state.wand_contiguous,
+                            app.state.wand_sample_all_layers,
+                        );
+                        app.state.selection = Some(mask);
+                        app.state.set_status("Magic Wand selection active");
+                    }
                 } else if tool == ToolType::Fill {
                     if let Some(layer) = app.state.document.active_layer() {
                         app.before_stroke_pixels = layer.pixels.clone();
@@ -361,9 +384,15 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             canvas_pos.y as u32,
                             app.state.brush.primary_color,
                             sel,
-                            28,
+                            app.state.wand_tolerance,
                         );
                     }
+                } else if tool == ToolType::Gradient {
+                    if let Some(layer) = app.state.document.active_layer() {
+                        app.before_stroke_pixels = layer.pixels.clone();
+                        app.active_snapshot_taken = true;
+                    }
+                    app.state.drag_start_canvas_pos = Some(canvas_pos);
                 } else if tool == ToolType::Eyedropper {
                     let flat = app.state.document.composite_layers(false);
                     let cx = canvas_pos.x as i32;
@@ -447,6 +476,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     }
                     ToolType::Ellipse => {
                         StrokeRasterizer::rasterize_ellipse(&mut app.state.document, start, canvas_pos, &app.state.brush, &app.state.symmetry, sel);
+                    }
+                    ToolType::Gradient => {
+                        StrokeRasterizer::rasterize_gradient(&mut app.state.document, start, canvas_pos, &app.state.brush, sel);
+                        app.state.set_status("Gradient applied");
                     }
                     ToolType::Marquee => {
                         let mask = SelectionMask::from_rect(app.state.document.width, app.state.document.height, start, canvas_pos);
@@ -563,6 +596,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.last_canvas_pos = None;
                     }
                 }
+                0x4E if is_ctrl => { // Ctrl+N (New Canvas)
+                    app.state.show_new_canvas_dialog = true;
+                }
                 0x5A if is_ctrl => { // Ctrl+Z
                     if is_shift {
                         if let Some(action) = app.state.history.redo(&mut app.state.document) {
@@ -592,10 +628,18 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.state.selection = None;
                     app.state.set_status("Deselected");
                 }
+                0x52 if is_ctrl => { // Ctrl+R (Toggle Rulers)
+                    app.state.show_rulers = !app.state.show_rulers;
+                }
+                0xDE if is_ctrl => { // Ctrl+' (Toggle Grid)
+                    app.state.show_grid = !app.state.show_grid;
+                }
                 0x58 => app.state.swap_colors(),                     // X (Swap colors)
                 0x42 => app.state.brush.tool = ToolType::Brush,      // B
+                0x50 => app.state.brush.tool = ToolType::Pencil,     // P
+                0x57 => app.state.brush.tool = ToolType::Wand,       // W
+                0x47 => app.state.brush.tool = ToolType::Gradient,   // G
                 0x45 => app.state.brush.tool = ToolType::Eraser,     // E
-                0x47 => app.state.brush.tool = ToolType::Fill,       // G
                 0x49 => app.state.brush.tool = ToolType::Eyedropper, // I
                 0x4D => app.state.brush.tool = ToolType::Marquee,    // M
                 0x56 => app.state.brush.tool = ToolType::Move,       // V
@@ -644,7 +688,21 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 // 1. Render canvas layer composite
                 app.renderer.render_canvas(&mut app.buffer, app.win_w, app.win_h, &app.state.document, app.state.pan, app.state.zoom);
 
-                // 2. Render live shape / tool drag preview overlays
+                // 2. Render toggleable grid
+                if app.state.show_grid {
+                    app.renderer.render_grid(
+                        &mut app.buffer,
+                        app.win_w,
+                        app.win_h,
+                        &app.state.document,
+                        app.state.pan,
+                        app.state.zoom,
+                        app.state.grid_size,
+                        app.state.grid_opacity,
+                    );
+                }
+
+                // 3. Render live shape / tool drag preview overlays
                 let accent_color = 0xFF5CE0D8; // Bright cyan overlay
                 if let Some(start) = app.state.drag_start_canvas_pos {
                     let cur = app.state.cursor_canvas_pos;
@@ -652,7 +710,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     let p1 = app.state.canvas_to_screen(cur, app.win_w as f32, app.win_h as f32);
 
                     match app.state.brush.tool {
-                        ToolType::Line => {
+                        ToolType::Line | ToolType::Gradient => {
                             app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, p0, p1, accent_color, true);
                         }
                         ToolType::Rect | ToolType::Marquee | ToolType::Crop => {
@@ -672,14 +730,6 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.renderer.draw_screen_rect(&mut app.buffer, app.win_w, app.win_h, p0, p1, 0xFFFFAA00, false);
                 }
 
-                // Render clone stamp source reticle
-                if app.state.brush.tool == ToolType::Clone {
-                    if let Some(src) = app.state.brush.clone_source {
-                        let sp = app.state.canvas_to_screen(src, app.win_w as f32, app.win_h as f32);
-                        app.renderer.draw_screen_crosshair(&mut app.buffer, app.win_w, app.win_h, sp, 0xFFFFCC00);
-                    }
-                }
-
                 // Render polygon vertices and line to cursor
                 if !app.state.polygon_points.is_empty() {
                     for i in 0..app.state.polygon_points.len() - 1 {
@@ -694,7 +744,20 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     }
                 }
 
-                // 3. Prepare egui RawInput
+                // 4. Render Dynamic Rulers if enabled
+                if app.state.show_rulers {
+                    app.renderer.render_rulers(
+                        &mut app.buffer,
+                        app.win_w,
+                        app.win_h,
+                        &app.state.document,
+                        app.state.pan,
+                        app.state.zoom,
+                        app.state.cursor_canvas_pos,
+                    );
+                }
+
+                // 5. Prepare egui RawInput
                 let mut raw_input = egui::RawInput::default();
                 raw_input.screen_rect = Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -703,17 +766,17 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 raw_input.time = Some(app.start_time.elapsed().as_secs_f64());
                 raw_input.events = std::mem::take(&mut app.events);
 
-                // 4. Run egui UI layout
+                // 6. Run egui UI layout
                 let full_output = app.egui_ctx.run(raw_input, |ctx| {
                     render_ui(ctx, &mut app.state);
                 });
 
-                // 5. Render egui UI primitives on top
+                // 7. Render egui UI primitives on top
                 app.renderer.update_textures(&full_output.textures_delta);
                 let clipped_primitives = app.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
                 app.renderer.render_egui_primitives(&mut app.buffer, app.win_w, app.win_h, &clipped_primitives);
 
-                // 6. Blit to Win32 window surface via GDI
+                // 8. Blit to Win32 window surface via GDI
                 let bmi = BITMAPINFO {
                     bmi_header: BITMAPINFOHEADER {
                         bi_size: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -749,9 +812,30 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
             EndPaint(hwnd, &ps);
 
-            // 7. Handle pending file actions SAFELY OUTSIDE OF EGUI FRAME
+            // 9. Handle pending file actions SAFELY OUTSIDE OF EGUI FRAME
             if let Some(action) = app.state.pending_file_action.take() {
                 match action {
+                    PendingFileAction::NewCanvas(w, h, bg_mode) => {
+                        let mut doc = hollow_core::document::Document::new(w, h);
+                        match bg_mode {
+                            1 => { // Pure white
+                                doc.is_transparent = false;
+                                doc.background_value = 255;
+                            }
+                            2 => { // Transparent
+                                doc.is_transparent = true;
+                            }
+                            _ => { // Dark studio
+                                doc.is_transparent = false;
+                                doc.background_value = 13;
+                            }
+                        }
+                        app.state.document = doc;
+                        app.state.history.clear();
+                        app.state.selection = None;
+                        app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
+                        app.state.set_status(format!("New canvas created: {} × {} px", w, h));
+                    }
                     PendingFileAction::SaveProject => {
                         if let Some(path) = hollow_ui::save_project_dialog() {
                             match save_project_file(&app.state.document, &path) {

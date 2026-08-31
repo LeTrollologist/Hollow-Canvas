@@ -22,8 +22,10 @@
 ### Key Highlights
 
 - ⚡ **High-Frequency Painting Engine**: Cubic Catmull-Rom spline interpolation eliminates angular chord artifacts, ensuring fluid and continuous curves at any stroke speed.
-- 🎨 **Versatile Toolset**: Includes Brush, Pencil, Watercolor (wet edge/falloff simulation), Chalk (grain dispersion), Spray (stochastic scatter), Smudge (directional velocity smear), Clone Stamp, Vector Shapes, Flood Fill with Reference-layer line art detection, and Marquee selection.
-- 📐 **Symmetry Engine**: Real-time Horizontal, Vertical, Quad, and multi-segment Radial/Mandala symmetry.
+- 🎨 **Modern Studio Toolset**: Brush, Pencil, Watercolor (wet edge/falloff simulation), Chalk (grain dispersion), Spray (stochastic scatter), Smudge (directional velocity smear), Linear & Radial Gradients, Magic Wand fuzzy selection, Eraser modes (Soft, Hard 1-Bit, Color-Target), Dual-Color Vector Shapes, and Reference-layer Flood Fill.
+- ✦ **New Canvas Studio**: Pre-loaded potentials (1K/2K/4K Square, 1080p/4K Displays, A4/A5 Print @ 300 DPI, Social Media Banners, Pixel Art) and custom dimensions with aspect-ratio locking.
+- 📐 **Symmetry & Grid Overlays**: Real-time Horizontal, Vertical, Quad, and multi-segment Radial/Mandala symmetry, with toggleable pixel grids (8px–128px) and dynamic viewport rulers.
+- 💡 **Reference Lightbox**: Floating reference image dock with toggleable high-contrast white lightbox and checkerboard backlight modes.
 - 🛡️ **Zero-Allocation Rendering**: Highly optimized software rendering pipeline with reusable composite buffers for silky smooth 60+ FPS viewport navigation and drawing.
 - 🔒 **Local-First & Private**: Completely offline, zero telemetries, no trackers, and local project serialization via binary compressed archives (`.hcv`).
 
@@ -31,15 +33,15 @@
 
 ## 🏗️ Architecture
 
-The workspace is organized into four modular, decoupled Rust crates:
+The workspace is organized into modular, decoupled Rust crates:
 
 ```text
 Hollow Canvas/
 ├── crates/
 │   ├── hollow-core/      # Core data models, blend modes, symmetry, layer stack, and rasterizers
-│   ├── hollow-render/    # Software raster renderer, texture caching, and UI primitive composition
+│   ├── hollow-render/    # Software raster renderer, texture caching, grid/ruler overlays, and UI primitive composition
 │   ├── hollow-io/        # Binary HCV project serialization, PNG export, and file parsing
-│   ├── hollow-ui/        # Egui-based dock panels, tools shelf, color palettes, and modals
+│   ├── hollow-ui/        # Modern egui-based dock panels, tools shelf, color palettes, and modals
 │   └── hollow-app/       # Native Win32 desktop application orchestrator and message loop
 ```
 
@@ -47,20 +49,20 @@ Hollow Canvas/
 
 1. **`hollow-core`**:
    - **Blend Modes**: Normal, Multiply, Screen, Overlay, Darken, Lighten, Color Dodge, Color Burn, Hard Light, Soft Light, Difference, Exclusion.
-   - **Rasterizer**: High-precision `blend_stamp` rasterizer, Catmull-Rom spline curve generator, Bresenham shape algorithms, and flood fill with tolerance matching and reference layer awareness.
+   - **Rasterizer**: High-precision `blend_stamp` rasterizer, Catmull-Rom spline curve generator, Linear & Radial Gradients, Magic Wand flood selection, Dual-color Shapes (Outline, Fill, Both), and Flood Fill with tolerance matching and reference layer awareness.
    - **History**: Linear and non-destructive undo/redo command stack.
 
 2. **`hollow-render`**:
    - Software framebuffer rendering with zero heap allocation per-frame.
-   - Nearest-neighbor and bilinear canvas viewport scaling with pan/zoom math.
+   - Dynamic top & left viewport rulers, customizable pixel grid overlays, and live gradient/shape drag reticles.
 
 3. **`hollow-io`**:
    - Non-blocking `.hcv` binary project saving and loading with header checksums.
    - PNG export with transparency channels.
 
 4. **`hollow-ui`**:
-   - Modular themeable interface (Deep Mist, Moonlit, Ember Glow).
-   - Interactive docks: Tools, Symmetry, Brush Dynamics, Layers, Color History & Palette, Canvas Settings, Reference Image Viewer, and Help dialog.
+   - Modern studio interface with custom theme accents (Deep Mist, Moonlit, Ember Glow).
+   - Interactive docks: Tools, Tool Dynamics, Symmetry & Grid, Layers, Color History & Palette, Canvas Operations, Reference Lightbox Viewer, and New Canvas / Resize Modals.
 
 5. **`hollow-app`**:
    - Low-latency native Win32 message loop processing mouse, tablet, and keyboard input.
@@ -75,18 +77,18 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 [**VPack Archiver**](https://github.com/LeTrollologist/vpack-archiver) is the high-performance universal archive manager for `.vpack` packages.
 
-1. Download [`hollow-canvas-v0.1.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v0.2.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the package with `vpack`:
    ```bash
    # Extract all files
-   vpack extract hollow-canvas-v0.1.0-windows-x86_64.vpack
+   vpack extract hollow-canvas-v0.2.0-windows-x86_64.vpack
 
    # Or extract to a custom directory
-   vpack extract hollow-canvas-v0.1.0-windows-x86_64.vpack -o ./HollowCanvas/
+   vpack extract hollow-canvas-v0.2.0-windows-x86_64.vpack -o ./HollowCanvas/
    ```
 3. *(Optional)* Verify CRC-32 integrity:
    ```bash
-   vpack test hollow-canvas-v0.1.0-windows-x86_64.vpack
+   vpack test hollow-canvas-v0.2.0-windows-x86_64.vpack
    ```
 4. Run `hollow-canvas.exe`.
 
@@ -96,10 +98,10 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 No additional archive tools required — works with standard Windows extraction:
 
-1. Download [`hollow-canvas-v0.1.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v0.2.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the zip file using PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\hollow-canvas-v0.1.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
+   Expand-Archive -Path .\hollow-canvas-v0.2.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
    ```
 3. Double-click `HollowCanvas\hollow-canvas.exe` to launch immediately.
 
@@ -136,18 +138,22 @@ If you prefer building from source with full compiler optimizations:
 | Action | Shortcut |
 | :--- | :--- |
 | **Brush Tool** | <kbd>B</kbd> |
+| **Pencil Tool** | <kbd>P</kbd> |
+| **Magic Wand Tool** | <kbd>W</kbd> |
+| **Gradient Tool** | <kbd>G</kbd> |
 | **Eraser Tool** | <kbd>E</kbd> |
-| **Flood Fill** | <kbd>G</kbd> |
-| **Eyedropper (Pick)** | <kbd>I</kbd> |
+| **Eyedropper (Pick Color)** | <kbd>I</kbd> or <kbd>Alt</kbd> + Click |
 | **Marquee Select** | <kbd>M</kbd> |
 | **Move / Pan View** | <kbd>V</kbd> (Drag) |
 | **Translate Layer Content** | <kbd>Ctrl</kbd> + <kbd>V</kbd> (Drag) |
 | **Viewport Pan** | <kbd>Space</kbd> + Drag or Middle Mouse Drag |
 | **Viewport Zoom** | <kbd>Mouse Wheel</kbd> |
 | **Swap Primary/Secondary Color** | <kbd>X</kbd> |
-| **Set Clone Source** | <kbd>Alt</kbd> + Click (with Clone tool) |
+| **Create New Canvas** | <kbd>Ctrl</kbd> + <kbd>N</kbd> |
+| **Toggle Canvas Grid** | <kbd>Ctrl</kbd> + <kbd>'</kbd> |
+| **Toggle Canvas Rulers** | <kbd>Ctrl</kbd> + <kbd>R</kbd> |
 | **Commit Polygon / Crop** | <kbd>Enter</kbd> |
-| **Cancel Polygon / Selection** | <kbd>Esc</kbd> or <kbd>Ctrl</kbd> + <kbd>D</kbd> |
+| **Cancel Polygon / Deselect** | <kbd>Esc</kbd> or <kbd>Ctrl</kbd> + <kbd>D</kbd> |
 | **Undo** | <kbd>Ctrl</kbd> + <kbd>Z</kbd> |
 | **Redo** | <kbd>Ctrl</kbd> + <kbd>Y</kbd> or <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> |
 | **Save Project** | <kbd>Ctrl</kbd> + <kbd>S</kbd> |

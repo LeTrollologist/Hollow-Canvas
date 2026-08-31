@@ -180,4 +180,68 @@ mod tests {
         let outside_px = active_layer.get_pixel(5, 5).unwrap();
         assert_eq!(outside_px[3], 0);
     }
+
+    #[test]
+    fn test_magic_wand_flood_selection() {
+        let mut doc = Document::new(50, 50);
+        // Paint a 20x20 red square in the center
+        let rect_brush = BrushSettings {
+            primary_color: Color::RED,
+            secondary_color: Color::RED,
+            shape_fill_mode: crate::brush::ShapeFillMode::Fill,
+            ..Default::default()
+        };
+        StrokeRasterizer::rasterize_rect(&mut doc, Vec2::new(15.0, 15.0), Vec2::new(35.0, 35.0), &rect_brush, &SymmetryConfig::default(), None);
+
+        // Wand selection at (25, 25)
+        let mask = StrokeRasterizer::rasterize_magic_wand(&doc, 25, 25, 10, true, false);
+        assert!(mask.has_selection());
+        assert_eq!(mask.get_value(25, 25), 255);
+        assert_eq!(mask.get_value(5, 5), 0);
+    }
+
+    #[test]
+    fn test_rasterize_gradient() {
+        let mut doc = Document::new(50, 50);
+        let brush = BrushSettings {
+            primary_color: Color::BLACK,
+            secondary_color: Color::WHITE,
+            gradient_type: crate::brush::GradientType::Linear,
+            gradient_dither: false,
+            opacity: 1.0,
+            ..Default::default()
+        };
+
+        StrokeRasterizer::rasterize_gradient(&mut doc, Vec2::new(0.0, 25.0), Vec2::new(50.0, 25.0), &brush, None);
+
+        let layer = doc.active_layer().unwrap();
+        let left_px = layer.get_pixel(0, 25).unwrap();
+        let right_px = layer.get_pixel(49, 25).unwrap();
+        assert!(left_px[0] < 50); // Near black
+        assert!(right_px[0] > 200); // Near white
+    }
+
+    #[test]
+    fn test_document_resize_and_scale() {
+        let mut doc = Document::new(20, 20);
+        if let Some(l) = doc.get_layer_mut(1) {
+            l.set_pixel(5, 5, [255, 0, 0, 255]);
+        }
+
+        // Resize canvas to 40x40
+        doc.resize_canvas(40, 40, 0, 0);
+        assert_eq!(doc.width, 40);
+        assert_eq!(doc.height, 40);
+        assert_eq!(doc.layers[0].get_pixel(5, 5).unwrap(), [255, 0, 0, 255]);
+
+        // Scale canvas to 80x80
+        doc.scale_canvas(80, 80, false);
+        assert_eq!(doc.width, 80);
+        assert_eq!(doc.height, 80);
+
+        // Rotate 180
+        doc.rotate_180();
+        assert_eq!(doc.width, 80);
+        assert_eq!(doc.height, 80);
+    }
 }

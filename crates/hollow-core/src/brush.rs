@@ -11,7 +11,6 @@ pub enum ToolType {
     Chalk,
     Spray,
     Smudge,
-    Clone,
     Line,
     Fill,
     Gradient,
@@ -37,7 +36,6 @@ impl ToolType {
             Self::Chalk => "Chalk",
             Self::Spray => "Spray",
             Self::Smudge => "Smudge",
-            Self::Clone => "Clone",
             Self::Line => "Line",
             Self::Fill => "Fill",
             Self::Gradient => "Gradient",
@@ -55,6 +53,31 @@ impl ToolType {
         }
     }
 
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Self::Brush => "🎨",
+            Self::Pencil => "✏",
+            Self::Watercolor => "💧",
+            Self::Chalk => "▧",
+            Self::Spray => "✧",
+            Self::Smudge => "〰",
+            Self::Line => "╱",
+            Self::Fill => "◈",
+            Self::Gradient => "🌈",
+            Self::Eraser => "▱",
+            Self::Rect => "▭",
+            Self::Ellipse => "○",
+            Self::Polygon => "⬠",
+            Self::Text => "T",
+            Self::Marquee => "▢",
+            Self::Lasso => "➰",
+            Self::Wand => "🪄",
+            Self::Move => "✥",
+            Self::Crop => "⛶",
+            Self::Eyedropper => "🔍",
+        }
+    }
+
     pub fn is_freehand_stroke_tool(&self) -> bool {
         matches!(
             self,
@@ -64,7 +87,6 @@ impl ToolType {
                 | Self::Chalk
                 | Self::Spray
                 | Self::Smudge
-                | Self::Clone
                 | Self::Eraser
         )
     }
@@ -84,7 +106,7 @@ impl ToolType {
     }
 
     pub fn is_painting_tool(&self) -> bool {
-        self.is_freehand_stroke_tool() || self.is_shape_tool() || *self == Self::Polygon || *self == Self::Fill
+        self.is_freehand_stroke_tool() || self.is_shape_tool() || *self == Self::Polygon || *self == Self::Fill || *self == Self::Gradient
     }
 }
 
@@ -94,6 +116,42 @@ pub enum ShapeFillMode {
     Stroke,
     Fill,
     Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum EraserMode {
+    #[default]
+    Soft,
+    HardPixel,
+    ColorErase,
+}
+
+impl EraserMode {
+    pub const ALL: &'static [Self] = &[Self::Soft, Self::HardPixel, Self::ColorErase];
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Soft => "Soft Alpha",
+            Self::HardPixel => "Hard 1-Bit Pixel",
+            Self::ColorErase => "Color Target",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum GradientType {
+    #[default]
+    Linear,
+    Radial,
+}
+
+impl GradientType {
+    pub const ALL: &'static [Self] = &[Self::Linear, Self::Radial];
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Linear => "Linear",
+            Self::Radial => "Radial",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -121,10 +179,12 @@ pub struct BrushSettings {
     pub spacing: f32,
     pub primary_color: Color,
     pub secondary_color: Color,
+    pub eraser_mode: EraserMode,
+    pub color_erase_tolerance: u8,
     pub eraser_to_background: bool,
-    pub clone_aligned: bool,
-    pub clone_source: Option<Vec2>,
     pub shape_fill_mode: ShapeFillMode,
+    pub gradient_type: GradientType,
+    pub gradient_dither: bool,
     pub corner_radius: f32,
     pub spray_density: f32,
     pub watercolor_wetness: f32,
@@ -143,10 +203,12 @@ impl Default for BrushSettings {
             spacing: 0.25,
             primary_color: Color::HOLLOW_PURPLE,
             secondary_color: Color::from_hex("#130f30").unwrap_or(Color::BLACK),
+            eraser_mode: EraserMode::Soft,
+            color_erase_tolerance: 32,
             eraser_to_background: false,
-            clone_aligned: true,
-            clone_source: None,
             shape_fill_mode: ShapeFillMode::Stroke,
+            gradient_type: GradientType::Linear,
+            gradient_dither: true,
             corner_radius: 0.0,
             spray_density: 0.5,
             watercolor_wetness: 0.65,
@@ -160,7 +222,13 @@ impl BrushSettings {
     pub fn effective_size(&self, pressure: f32) -> f32 {
         match self.tool {
             ToolType::Pencil => (self.size * 0.5 * (0.3 + pressure * 0.9)).max(1.0),
-            ToolType::Eraser => self.size * (0.75 + pressure * 0.6),
+            ToolType::Eraser => {
+                if self.eraser_mode == EraserMode::HardPixel {
+                    self.size.max(1.0)
+                } else {
+                    self.size * (0.75 + pressure * 0.6)
+                }
+            }
             ToolType::Spray => self.size * 1.5,
             ToolType::Watercolor => self.size * (0.7 + pressure * 0.6),
             _ => self.size * (0.5 + pressure * 0.9),
