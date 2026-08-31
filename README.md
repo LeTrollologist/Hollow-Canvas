@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Hollow Canvas Banner](https://raw.githubusercontent.com/LeTrollologist/Hollow-Canvas/main/assets/banner.png)
+<img src="assets/banner.svg" alt="Hollow Canvas Banner" width="100%" />
 
 **A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.**
 
