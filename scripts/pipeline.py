@@ -198,6 +198,22 @@ A modern, high-performance, local-first digital painting and graphics studio bui
 | `hollow-canvas-{version}-windows-x86_64.vpack` | VPack Archive | Universal compact archive (inspectable via `vpack`) |
 | `SHA256SUMS.txt` | SHA-256 | Cryptographic integrity verification |
 
+### 🚀 Installation Instructions
+
+#### Option 1: Install with VPack Archiver (Recommended)
+```bash
+# Extract all files
+vpack extract hollow-canvas-{version}-windows-x86_64.vpack
+
+# Or extract to a custom directory
+vpack extract hollow-canvas-{version}-windows-x86_64.vpack -o ./HollowCanvas/
+```
+
+#### Option 2: Install with Native Zip
+```powershell
+Expand-Archive -Path .\\hollow-canvas-{version}-windows-x86_64.zip -DestinationPath .\\HollowCanvas
+```
+
 ### 🔒 Cryptographic Verification
 Verify all assets against `SHA256SUMS.txt`:
 ```bash

@@ -67,18 +67,55 @@ Hollow Canvas/
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Installation & Getting Started
 
-### Prerequisites
+Hollow Canvas can be installed as a portable native binary, via the **VPack Archiver** ecosystem, or compiled directly from source.
 
+### Option 1: Install with VPack (Recommended)
+
+[**VPack Archiver**](https://github.com/LeTrollologist/vpack-archiver) is the high-performance universal archive manager for `.vpack` packages.
+
+1. Download [`hollow-canvas-v0.1.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+2. Extract the package with `vpack`:
+   ```bash
+   # Extract all files
+   vpack extract hollow-canvas-v0.1.0-windows-x86_64.vpack
+
+   # Or extract to a custom directory
+   vpack extract hollow-canvas-v0.1.0-windows-x86_64.vpack -o ./HollowCanvas/
+   ```
+3. *(Optional)* Verify CRC-32 integrity:
+   ```bash
+   vpack test hollow-canvas-v0.1.0-windows-x86_64.vpack
+   ```
+4. Run `hollow-canvas.exe`.
+
+---
+
+### Option 2: Install with Native Portable Zip
+
+No additional archive tools required — works with standard Windows extraction:
+
+1. Download [`hollow-canvas-v0.1.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+2. Extract the zip file using PowerShell or Windows Explorer:
+   ```powershell
+   Expand-Archive -Path .\hollow-canvas-v0.1.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
+   ```
+3. Double-click `HollowCanvas\hollow-canvas.exe` to launch immediately.
+
+---
+
+### Option 3: Compile from Source (Pure Rust)
+
+If you prefer building from source with full compiler optimizations:
+
+**Prerequisites:**
 - [Rust Toolchain](https://www.rust-lang.org/tools/install) (1.75+ recommended)
 - Windows 10 / 11 (64-bit)
 
-### Installation & Build
-
 1. Clone the repository:
    ```bash
-   git clone git@github.com:LeTrollologist/Hollow-Canvas.git
+   git clone https://github.com/LeTrollologist/Hollow-Canvas.git
    cd Hollow-Canvas
    ```
 
@@ -87,7 +124,7 @@ Hollow Canvas/
    cargo test --workspace
    ```
 
-3. Launch Hollow Canvas:
+3. Build and launch:
    ```bash
    cargo run --release -p hollow-app
    ```

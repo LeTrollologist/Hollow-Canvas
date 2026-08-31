@@ -75,3 +75,21 @@ certutil -hashfile hollow-canvas-v0.1.0-windows-x86_64.zip SHA256
 # Verify VPACK integrity and CRC-32
 vpack test hollow-canvas-v0.1.0-windows-x86_64.vpack
 ```
+
+---
+
+## 6. Installation & Extraction
+
+### Option A: Via VPack Archiver
+```bash
+# Extract all contents
+vpack extract hollow-canvas-v0.1.0-windows-x86_64.vpack
+
+# Or extract to a specific folder
+vpack extract hollow-canvas-v0.1.0-windows-x86_64.vpack -o ./HollowCanvas/
+```
+
+### Option B: Via Native Windows Zip
+```powershell
+Expand-Archive -Path .\hollow-canvas-v0.1.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
+```
