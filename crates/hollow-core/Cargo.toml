@@ -1,0 +1,12 @@
+[package]
+name = "hollow-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core graphics domain model, layers, rasterizer, blend modes, and history engine for Hollow Canvas"
+
+[dependencies]
+glam = { workspace = true }
+image = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }

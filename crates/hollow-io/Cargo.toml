@@ -1,0 +1,11 @@
+[package]
+name = "hollow-io"
+version = "0.1.0"
+edition = "2021"
+description = "Native binary .hcv project format and flat image exporter"
+
+[dependencies]
+hollow-core = { path = "../hollow-core" }
+image = { workspace = true }
+flate2 = "1.0"
+thiserror = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "hollow-ui"
+version = "0.1.0"
+edition = "2021"
+description = "Native egui user interface panels, controls, and dialogs for Hollow Canvas"
+
+[lib]
+test = false
+
+[dependencies]
+hollow-core = { path = "../hollow-core" }
+hollow-io = { path = "../hollow-io" }
+egui = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }

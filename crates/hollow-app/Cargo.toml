@@ -1,0 +1,21 @@
+[package]
+name = "hollow-app"
+version = "0.1.0"
+edition = "2021"
+description = "Pure native Windows graphics studio application executable"
+
+[[bin]]
+name = "hollow-app"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+hollow-core = { path = "../hollow-core" }
+hollow-io = { path = "../hollow-io" }
+hollow-ui = { path = "../hollow-ui" }
+hollow-render = { path = "../hollow-render" }
+egui = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+image = { workspace = true }
