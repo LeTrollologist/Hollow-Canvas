@@ -179,15 +179,16 @@ def stage_publish(version: str, tag_dir: Path, assets: list, draft: bool = False
     checksums_file = tag_dir / "SHA256SUMS.txt"
     upload_files = [str(a) for a in assets] + [str(checksums_file)]
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Header & Layout Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Instant Real-Time Render Pipeline Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
 ### ✨ What's New in {version}
-* **📐 Complete Header Layout Redesign & Overflow Prevention** — Refactored the top studio header bar into an ultra-compact, responsive layout with icon-only action pills (`⊞ Grid`, `📏 Rulers`, `🖼 Ref`, `👁 Zen`, `? Help`, `ℹ About`). Eliminates any horizontal clipping or runoff on all monitor sizes.
-* **✦ Crisp Vector Tool Icons (No `□` Tofu Glyphs)** — All 18 tools render dedicated vector-drawn icons via `egui::Painter` (Brush, Pencil, Water, Chalk, Spray, Smudge, Gradient, Magic Wand, Eraser, Fill, Line, Rect, Oval, Poly, Select, Move, Crop, Eyedropper).
-* **✏️ Renameable / Custom Named Layers** — Click or double-click any layer card to edit and customize layer names inline in real time.
-* **✨ Glossy Studio Theme** — Deep dark obsidian styling with glowing neon borders, glass highlights, and responsive feedback.
+* **⚡ Instant Frame Synchronization (Zero-Lag UI)** — Reordered the frame pipeline so egui UI interaction executes first in the rendering cycle. Clicks on Grid, Rulers, Zen mode, layer opacity, color pickers, and tool selectors now apply instantly to the canvas in the exact same millisecond and frame without requiring secondary mouse movement.
+* **🚀 Fast Fixed-Point SIMD-style Grid Rendering** — Optimized dynamic grid lines using integer fixed-point arithmetic, delivering buttery smooth rendering performance.
+* **📐 Clean Responsive Header Bar** — Streamlined top studio header bar with responsive bounds and compact icon quick-action pills.
+* **✦ Crisp Vector Tool Icons (No `□` Tofu Glyphs)** — All 18 tools render dedicated vector-drawn icons via `egui::Painter`.
+* **✏️ Renameable Layers & Glossy Theme** — Real-time editable layer names with dark obsidian styling.
 * **📦 Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
 
 ### 📦 Downloads & Assets

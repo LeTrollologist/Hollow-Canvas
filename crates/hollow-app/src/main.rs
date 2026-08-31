@@ -704,10 +704,27 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             }
 
             if app.win_w > 0 && app.win_h > 0 && app.buffer.len() >= app.win_w * app.win_h {
-                // 1. Render canvas layer composite
+                // 1. Process and Run egui UI layout FIRST so state mutations (grid, rulers, layers, tools) apply immediately
+                let mut raw_input = egui::RawInput::default();
+                raw_input.screen_rect = Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(app.win_w as f32, app.win_h as f32),
+                ));
+                raw_input.time = Some(app.start_time.elapsed().as_secs_f64());
+                raw_input.events = std::mem::take(&mut app.events);
+
+                let full_output = app.egui_ctx.run(raw_input, |ctx| {
+                    render_ui(ctx, &mut app.state);
+                });
+
+                let needs_repaint = full_output.viewport_output.get(&egui::ViewportId::ROOT)
+                    .map(|v| v.repaint_delay.is_zero())
+                    .unwrap_or(false);
+
+                // 2. Render canvas layer composite with up-to-date state
                 app.renderer.render_canvas(&mut app.buffer, app.win_w, app.win_h, &app.state.document, app.state.pan, app.state.zoom);
 
-                // 2. Render toggleable grid
+                // 3. Render toggleable grid with up-to-date state
                 if app.state.show_grid {
                     app.renderer.render_grid(
                         &mut app.buffer,
@@ -721,7 +738,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     );
                 }
 
-                // 3. Render live shape / tool drag preview overlays
+                // 4. Render live shape / tool drag preview overlays
                 let accent_color = 0xFF5CE0D8; // Bright cyan overlay
                 if let Some(start) = app.state.drag_start_canvas_pos {
                     let cur = app.state.cursor_canvas_pos;
@@ -763,7 +780,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     }
                 }
 
-                // 4. Render Dynamic Rulers if enabled
+                // 5. Render Dynamic Rulers if enabled
                 if app.state.show_rulers {
                     app.renderer.render_rulers(
                         &mut app.buffer,
@@ -776,26 +793,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     );
                 }
 
-                // 5. Prepare egui RawInput
-                let mut raw_input = egui::RawInput::default();
-                raw_input.screen_rect = Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(app.win_w as f32, app.win_h as f32),
-                ));
-                raw_input.time = Some(app.start_time.elapsed().as_secs_f64());
-                raw_input.events = std::mem::take(&mut app.events);
-
-                // 6. Run egui UI layout
-                let full_output = app.egui_ctx.run(raw_input, |ctx| {
-                    render_ui(ctx, &mut app.state);
-                });
-
-                // 7. Render egui UI primitives on top
+                // 6. Render egui UI primitives on top
                 app.renderer.update_textures(&full_output.textures_delta);
                 let clipped_primitives = app.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
                 app.renderer.render_egui_primitives(&mut app.buffer, app.win_w, app.win_h, &clipped_primitives);
 
-                // 8. Blit to Win32 window surface via GDI
+                // 7. Blit to Win32 window surface via GDI
                 let bmi = BITMAPINFO {
                     bmi_header: BITMAPINFOHEADER {
                         bi_size: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -827,6 +830,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     &bmi,
                     0,
                 );
+
+                if needs_repaint {
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                }
             }
 
             EndPaint(hwnd, &ps);

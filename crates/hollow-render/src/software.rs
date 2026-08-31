@@ -204,6 +204,8 @@ impl SoftwareRenderer {
         }
 
         let alpha = grid_opacity.clamp(0.0, 1.0);
+        let alpha_u = (alpha * 256.0) as u32;
+        let inv_alpha_u = 256 - alpha_u;
         let gr = 168u32;
         let gg = 159u32;
         let gb = 216u32;
@@ -222,9 +224,9 @@ impl SoftwareRenderer {
                         let cg = (cur >> 8) & 0xFF;
                         let cb = cur & 0xFF;
 
-                        let nr = ((cr as f32 * (1.0 - alpha)) + (gr as f32 * alpha)).round() as u32;
-                        let ng = ((cg as f32 * (1.0 - alpha)) + (gg as f32 * alpha)).round() as u32;
-                        let nb = ((cb as f32 * (1.0 - alpha)) + (gb as f32 * alpha)).round() as u32;
+                        let nr = (cr * inv_alpha_u + gr * alpha_u) >> 8;
+                        let ng = (cg * inv_alpha_u + gg * alpha_u) >> 8;
+                        let nb = (cb * inv_alpha_u + gb * alpha_u) >> 8;
 
                         buffer[pixel_idx] = 0xFF000000 | (nr << 16) | (ng << 8) | nb;
                     }
@@ -248,9 +250,9 @@ impl SoftwareRenderer {
                         let cg = (cur >> 8) & 0xFF;
                         let cb = cur & 0xFF;
 
-                        let nr = ((cr as f32 * (1.0 - alpha)) + (gr as f32 * alpha)).round() as u32;
-                        let ng = ((cg as f32 * (1.0 - alpha)) + (gg as f32 * alpha)).round() as u32;
-                        let nb = ((cb as f32 * (1.0 - alpha)) + (gb as f32 * alpha)).round() as u32;
+                        let nr = (cr * inv_alpha_u + gr * alpha_u) >> 8;
+                        let ng = (cg * inv_alpha_u + gg * alpha_u) >> 8;
+                        let nb = (cb * inv_alpha_u + gb * alpha_u) >> 8;
 
                         buffer[pixel_idx] = 0xFF000000 | (nr << 16) | (ng << 8) | nb;
                     }
