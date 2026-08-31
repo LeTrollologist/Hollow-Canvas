@@ -93,6 +93,11 @@ impl SelectionMask {
         }
     }
 
+    #[inline]
+    pub fn is_selected(&self, x: u32, y: u32) -> bool {
+        self.get_value(x, y) > 8
+    }
+
     pub fn feather(&mut self, radius: u32) {
         if radius == 0 || !self.has_selection() {
             return;

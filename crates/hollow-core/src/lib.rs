@@ -2,6 +2,7 @@ pub mod blend;
 pub mod brush;
 pub mod color;
 pub mod document;
+pub mod filter;
 pub mod history;
 pub mod layer;
 pub mod rasterizer;

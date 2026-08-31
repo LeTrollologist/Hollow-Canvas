@@ -303,4 +303,46 @@ mod tests {
         // (0, 0) had base layer alpha == 0, so it is masked out to transparent
         assert_eq!(&flat[idx_0_0..idx_0_0 + 4], &[0, 0, 0, 0]);
     }
+
+    #[test]
+    fn test_filter_adjust_hsl_and_invert() {
+        let mut pixels = vec![255, 0, 0, 255]; // Pure Red
+        crate::filter::adjust_hsl(&mut pixels, 1, 1, 120.0, 1.0, 0.0, None); // Shift +120 deg (Red -> Green)
+        assert_eq!(pixels[0], 0);
+        assert_eq!(pixels[1], 255);
+        assert_eq!(pixels[2], 0);
+
+        crate::filter::filter_invert(&mut pixels, 1, 1, None); // Invert Green -> Magenta
+        assert_eq!(pixels[0], 255);
+        assert_eq!(pixels[1], 0);
+        assert_eq!(pixels[2], 255);
+    }
+
+    #[test]
+    fn test_filter_brightness_contrast_and_grayscale() {
+        let mut pixels = vec![100, 150, 200, 255];
+        crate::filter::filter_grayscale(&mut pixels, 1, 1, None);
+        assert_eq!(pixels[0], pixels[1]);
+        assert_eq!(pixels[1], pixels[2]);
+
+        let gray = pixels[0];
+        crate::filter::adjust_brightness_contrast(&mut pixels, 1, 1, 20.0, 0.0, None);
+        assert!(pixels[0] > gray);
+    }
+
+    #[test]
+    fn test_filter_gaussian_blur_and_sharpen() {
+        let mut pixels = vec![0u8; 10 * 10 * 4];
+        // Center pixel white
+        let center_idx = (5 * 10 + 5) * 4;
+        pixels[center_idx] = 255;
+        pixels[center_idx + 1] = 255;
+        pixels[center_idx + 2] = 255;
+        pixels[center_idx + 3] = 255;
+
+        crate::filter::filter_gaussian_blur(&mut pixels, 10, 10, 2.0, None);
+        // Adjacent pixel should now have received blurred energy
+        let adj_idx = (5 * 10 + 6) * 4;
+        assert!(pixels[adj_idx] > 0);
+    }
 }

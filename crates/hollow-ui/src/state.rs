@@ -51,6 +51,19 @@ pub enum PendingFileAction {
     NewCanvas(u32, u32, u8), // w, h, bg_mode (0: dark, 1: white, 2: transparent)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveFilterModal {
+    None,
+    Hsl,
+    BrightnessContrast,
+    ColorBalance,
+    PosterizeThreshold,
+    GaussianBlur,
+    SharpenUnsharp,
+    FilmGrain,
+    VignetteChromatic,
+}
+
 pub struct AppState {
     pub document: Document,
     pub history: HistoryStack,
@@ -115,6 +128,41 @@ pub struct AppState {
     pub drag_start_canvas_pos: Option<Vec2>,
     pub polygon_points: Vec<Vec2>,
     pub crop_box: Option<(Vec2, Vec2)>,
+
+    // ── Filters & Adjustments State ──
+    pub active_filter_modal: ActiveFilterModal,
+    pub filter_original_pixels: Option<Vec<u8>>,
+    pub filter_preview_active: bool,
+
+    pub filter_hue_shift: f32,
+    pub filter_saturation_scale: f32,
+    pub filter_lightness_shift: f32,
+
+    pub filter_brightness: f32,
+    pub filter_contrast: f32,
+
+    pub filter_cyan_red: f32,
+    pub filter_magenta_green: f32,
+    pub filter_yellow_blue: f32,
+
+    pub filter_posterize_levels: u32,
+    pub filter_threshold_val: u8,
+
+    pub filter_blur_radius: f32,
+    pub filter_sharpen_amount: f32,
+    pub filter_unsharp_radius: f32,
+    pub filter_unsharp_amount: f32,
+    pub filter_unsharp_threshold: f32,
+
+    pub filter_noise_intensity: f32,
+    pub filter_noise_colored: bool,
+
+    pub filter_vignette_radius: f32,
+    pub filter_vignette_softness: f32,
+    pub filter_vignette_darkness: f32,
+
+    pub filter_chromatic_shift: f32,
+    pub filter_chromatic_angle: f32,
 }
 
 impl AppState {
@@ -185,91 +233,143 @@ impl AppState {
             drag_start_canvas_pos: None,
             polygon_points: Vec::new(),
             crop_box: None,
+
+            // Filter defaults
+            active_filter_modal: ActiveFilterModal::None,
+            filter_original_pixels: None,
+            filter_preview_active: true,
+
+            filter_hue_shift: 0.0,
+            filter_saturation_scale: 1.0,
+            filter_lightness_shift: 0.0,
+
+            filter_brightness: 0.0,
+            filter_contrast: 0.0,
+
+            filter_cyan_red: 0.0,
+            filter_magenta_green: 0.0,
+            filter_yellow_blue: 0.0,
+
+            filter_posterize_levels: 6,
+            filter_threshold_val: 128,
+
+            filter_blur_radius: 4.0,
+            filter_sharpen_amount: 1.0,
+            filter_unsharp_radius: 2.5,
+            filter_unsharp_amount: 1.2,
+            filter_unsharp_threshold: 3.0,
+
+            filter_noise_intensity: 0.25,
+            filter_noise_colored: false,
+
+            filter_vignette_radius: 0.8,
+            filter_vignette_softness: 0.6,
+            filter_vignette_darkness: 0.75,
+
+            filter_chromatic_shift: 4.0,
+            filter_chromatic_angle: 0.0,
         }
     }
 
-    pub fn set_status(&mut self, msg: impl Into<String>) {
-        self.status_message = msg.into();
+    pub fn from_document(doc: Document) -> Self {
+        let (w, h) = (doc.width, doc.height);
+        let mut s = Self::new(w, h);
+        s.document = doc;
+        s
     }
 
     pub fn reset_view(&mut self) {
         self.pan = Vec2::ZERO;
         self.zoom = 1.0;
-        for layer in &mut self.document.layers {
-            layer.offset_x = 0;
-            layer.offset_y = 0;
-        }
-        self.set_status("View reset to center (100%)");
+        self.set_status("View reset to 100%");
     }
 
     pub fn reset_view_centered(&mut self, win_w: f32, win_h: f32) {
-        let left_panel_w = 200.0_f32;
-        let right_panel_w = 230.0_f32;
-        let top_panel_h = 40.0_f32;
-        let bottom_panel_h = 24.0_f32;
-
-        let avail_center_x = (left_panel_w + (win_w - right_panel_w)) * 0.5;
-        let avail_center_y = (top_panel_h + (win_h - bottom_panel_h)) * 0.5;
-
-        self.pan = Vec2::new(avail_center_x - win_w * 0.5, avail_center_y - win_h * 0.5);
-
-        let avail_w = (win_w - left_panel_w - right_panel_w - 40.0).max(100.0);
-        let avail_h = (win_h - top_panel_h - bottom_panel_h - 40.0).max(100.0);
-        let fit_zoom = (avail_w / self.document.width as f32).min(avail_h / self.document.height as f32).min(1.0).max(0.1);
-        self.zoom = fit_zoom;
-        for layer in &mut self.document.layers {
-            layer.offset_x = 0;
-            layer.offset_y = 0;
-        }
-        self.set_status(format!("Canvas centered · Zoom: {}%", (self.zoom * 100.0).round() as u32));
-    }
-
-    pub fn swap_colors(&mut self) {
-        let temp = self.brush.primary_color;
-        self.brush.primary_color = self.brush.secondary_color;
-        self.brush.secondary_color = temp;
-    }
-
-    pub fn from_document(doc: Document) -> Self {
-        let mut s = Self::new(doc.width, doc.height);
-        s.document = doc;
-        s
-    }
-
-    pub fn screen_to_canvas(&self, screen_pos: Vec2, win_w: f32, win_h: f32) -> Vec2 {
-        let center_x = win_w * 0.5 + self.pan.x;
-        let center_y = win_h * 0.5 + self.pan.y;
-        let local_x = (screen_pos.x - center_x) / self.zoom;
-        let local_y = (screen_pos.y - center_y) / self.zoom;
-        Vec2::new(
-            local_x + self.document.width as f32 * 0.5,
-            local_y + self.document.height as f32 * 0.5,
-        )
-    }
-
-    pub fn canvas_to_screen(&self, canvas_pos: Vec2, win_w: f32, win_h: f32) -> Vec2 {
-        let center_x = win_w * 0.5 + self.pan.x;
-        let center_y = win_h * 0.5 + self.pan.y;
-        let local_x = (canvas_pos.x - self.document.width as f32 * 0.5) * self.zoom;
-        let local_y = (canvas_pos.y - self.document.height as f32 * 0.5) * self.zoom;
-        Vec2::new(center_x + local_x, center_y + local_y)
+        self.pan = Vec2::ZERO;
+        let scale_x = (win_w - 480.0).max(200.0) / self.document.width as f32;
+        let scale_y = (win_h - 100.0).max(200.0) / self.document.height as f32;
+        self.zoom = scale_x.min(scale_y).clamp(0.1, 1.0);
     }
 
     pub fn theme_accent_color(&self) -> Color {
         self.document.theme.accent_color()
     }
 
+    pub fn set_status(&mut self, msg: impl Into<String>) {
+        self.status_message = msg.into();
+    }
+
+    pub fn swap_colors(&mut self) {
+        std::mem::swap(&mut self.brush.primary_color, &mut self.brush.secondary_color);
+        self.set_status("Swapped primary and secondary colors");
+    }
+
     pub fn push_color_history(&mut self, color: Color) {
-        self.color_history.retain(|&c| c.to_hex() != color.to_hex());
-        self.color_history.insert(0, color);
-        if self.color_history.len() > 14 {
-            self.color_history.truncate(14);
+        if self.color_history.first() == Some(&color) {
+            return;
         }
+        self.color_history.retain(|&c| c != color);
+        self.color_history.insert(0, color);
+        if self.color_history.len() > 18 {
+            self.color_history.pop();
+        }
+    }
+
+    pub fn screen_to_canvas(&self, screen_pos: Vec2, win_w: f32, win_h: f32) -> Vec2 {
+        let center = Vec2::new(win_w * 0.5, win_h * 0.5) + self.pan;
+        let offset = screen_pos - center;
+        let canvas_size = Vec2::new(self.document.width as f32, self.document.height as f32);
+        (offset / self.zoom) + (canvas_size * 0.5)
+    }
+
+    pub fn canvas_to_screen(&self, canvas_pos: Vec2, win_w: f32, win_h: f32) -> Vec2 {
+        let center = Vec2::new(win_w * 0.5, win_h * 0.5) + self.pan;
+        let canvas_size = Vec2::new(self.document.width as f32, self.document.height as f32);
+        let offset = (canvas_pos - canvas_size * 0.5) * self.zoom;
+        center + offset
+    }
+
+    /// Backs up the active layer's pixels before opening a filter dialog
+    pub fn begin_filter_modal(&mut self, modal: ActiveFilterModal) {
+        if let Some(layer) = self.document.active_layer() {
+            self.filter_original_pixels = Some(layer.pixels.clone());
+            self.active_filter_modal = modal;
+            self.filter_preview_active = true;
+        }
+    }
+
+    /// Cancels filter modal and restores original layer pixels
+    pub fn cancel_filter_modal(&mut self) {
+        if let Some(orig) = self.filter_original_pixels.take() {
+            if let Some(layer) = self.document.active_layer_mut() {
+                layer.pixels = orig;
+            }
+        }
+        self.active_filter_modal = ActiveFilterModal::None;
+    }
+
+    /// Commits the filter modal changes and registers to undo history
+    pub fn apply_filter_modal(&mut self, filter_name: &'static str) {
+        if let Some(before) = self.filter_original_pixels.take() {
+            if let Some(layer) = self.document.active_layer() {
+                if before != layer.pixels {
+                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                        layer_id: layer.id,
+                        description: filter_name,
+                        before_pixels: before,
+                        after_pixels: layer.pixels.clone(),
+                    });
+                    self.history.push(cmd);
+                    self.set_status(format!("Applied {}", filter_name));
+                }
+            }
+        }
+        self.active_filter_modal = ActiveFilterModal::None;
     }
 }
 
 impl Default for AppState {
     fn default() -> Self {
-        Self::new(1280, 720)
+        Self::new(1920, 1080)
     }
 }

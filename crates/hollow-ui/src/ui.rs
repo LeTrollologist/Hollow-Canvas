@@ -1,5 +1,5 @@
 use crate::icons::draw_tool_icon;
-use crate::state::{AppState, CanvasPreset, PendingFileAction};
+use crate::state::{ActiveFilterModal, AppState, CanvasPreset, PendingFileAction};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Stroke, Vec2};
 use hollow_core::brush::{EraserMode, GradientType, ShapeFillMode, ToolType};
 use hollow_core::color::{Color, DEFAULT_PALETTE};
@@ -95,7 +95,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.4.3").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.5.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -188,6 +188,100 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             }
                         });
 
+                        ui.menu_button("Filter", |ui| {
+                            ui.label(RichText::new("COLOR ADJUSTMENTS").size(8.5).strong().color(Color32::from_rgb(120, 135, 170)));
+                            if ui.button("🎨 HSL Adjustments...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::Hsl);
+                                ui.close_menu();
+                            }
+                            if ui.button("☀️ Brightness & Contrast...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::BrightnessContrast);
+                                ui.close_menu();
+                            }
+                            if ui.button("⚖️ Color Balance...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::ColorBalance);
+                                ui.close_menu();
+                            }
+                            if ui.button("🎚️ Posterize & Threshold...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::PosterizeThreshold);
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            if ui.button("🔄 Invert Colors (Ctrl+I)").clicked() {
+                                let w = state.document.width;
+                                let h = state.document.height;
+                                let sel = state.selection.clone();
+                                if let Some(layer) = state.document.active_layer_mut() {
+                                    let before = layer.pixels.clone();
+                                    hollow_core::filter::filter_invert(&mut layer.pixels, w, h, sel.as_ref());
+                                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                                        layer_id: layer.id,
+                                        description: "Invert Colors",
+                                        before_pixels: before,
+                                        after_pixels: layer.pixels.clone(),
+                                    });
+                                    state.history.push(cmd);
+                                    state.set_status("Inverted Colors");
+                                }
+                                ui.close_menu();
+                            }
+                            if ui.button("📷 Grayscale").clicked() {
+                                let w = state.document.width;
+                                let h = state.document.height;
+                                let sel = state.selection.clone();
+                                if let Some(layer) = state.document.active_layer_mut() {
+                                    let before = layer.pixels.clone();
+                                    hollow_core::filter::filter_grayscale(&mut layer.pixels, w, h, sel.as_ref());
+                                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                                        layer_id: layer.id,
+                                        description: "Grayscale",
+                                        before_pixels: before,
+                                        after_pixels: layer.pixels.clone(),
+                                    });
+                                    state.history.push(cmd);
+                                    state.set_status("Applied Grayscale");
+                                }
+                                ui.close_menu();
+                            }
+                            if ui.button("🎞️ Vintage Sepia").clicked() {
+                                let w = state.document.width;
+                                let h = state.document.height;
+                                let sel = state.selection.clone();
+                                if let Some(layer) = state.document.active_layer_mut() {
+                                    let before = layer.pixels.clone();
+                                    hollow_core::filter::filter_sepia(&mut layer.pixels, w, h, sel.as_ref());
+                                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                                        layer_id: layer.id,
+                                        description: "Sepia",
+                                        before_pixels: before,
+                                        after_pixels: layer.pixels.clone(),
+                                    });
+                                    state.history.push(cmd);
+                                    state.set_status("Applied Sepia Tone");
+                                }
+                                ui.close_menu();
+                            }
+
+                            ui.separator();
+                            ui.label(RichText::new("ARTISTIC & BLUR FX").size(8.5).strong().color(Color32::from_rgb(120, 135, 170)));
+                            if ui.button("💧 Gaussian Blur...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::GaussianBlur);
+                                ui.close_menu();
+                            }
+                            if ui.button("🔪 Sharpen & Unsharp Mask...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::SharpenUnsharp);
+                                ui.close_menu();
+                            }
+                            if ui.button("📺 Film Grain & Noise...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::FilmGrain);
+                                ui.close_menu();
+                            }
+                            if ui.button("🔍 Vignette & Lens FX...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::VignetteChromatic);
+                                ui.close_menu();
+                            }
+                        });
+
                         ui.menu_button("View", |ui| {
                             if ui.checkbox(&mut state.show_grid, "⊞ Toggle Grid (Ctrl+')").clicked() {
                                 ui.close_menu();
@@ -235,15 +329,18 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             state.show_ui_panels = !state.show_ui_panels;
                         }
 
-                        if ui.selectable_label(state.show_ref_window, "🖼").on_hover_text("Reference Image Viewer Lightbox").clicked() {
+                        let ref_label = if state.show_ref_window { "🖼 [ON]" } else { "🖼 Ref" };
+                        if ui.selectable_label(state.show_ref_window, ref_label).on_hover_text("Reference Image Viewer Lightbox").clicked() {
                             state.show_ref_window = !state.show_ref_window;
                         }
 
-                        if ui.selectable_label(state.show_rulers, "📏").on_hover_text("Toggle Viewport Rulers (Ctrl+R)").clicked() {
+                        let ruler_label = if state.show_rulers { "📏 [ON]" } else { "📏 Rulers" };
+                        if ui.selectable_label(state.show_rulers, ruler_label).on_hover_text("Toggle Viewport Rulers (Ctrl+R)").clicked() {
                             state.show_rulers = !state.show_rulers;
                         }
 
-                        if ui.selectable_label(state.show_grid, "⊞").on_hover_text("Toggle Canvas Grid (Ctrl+')").clicked() {
+                        let grid_label = if state.show_grid { "⊞ [ON]" } else { "⊞ Grid" };
+                        if ui.selectable_label(state.show_grid, grid_label).on_hover_text("Toggle Canvas Grid (Ctrl+')").clicked() {
                             state.show_grid = !state.show_grid;
                         }
 
@@ -963,7 +1060,477 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
-    // ── 8. ABOUT HOLLOW CANVAS MODAL ──
+    // ── 8. STUDIO ADJUSTMENTS & FILTER MODAL DIALOGS ──
+    let doc_w = state.document.width;
+    let doc_h = state.document.height;
+    let sel_mask = state.selection.clone();
+
+    match state.active_filter_modal {
+        ActiveFilterModal::Hsl => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("🎨 HSL Adjustments")
+                .fixed_size(Vec2::new(380.0, 220.0))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_hue_shift, -180.0..=180.0).text("Hue (°)")).changed();
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_saturation_scale, 0.0..=2.5).text("Saturation")).changed();
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_lightness_shift, -0.8..=0.8).text("Lightness")).changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("✓ Apply").strong().color(accent_c32)).clicked() {
+                            do_apply = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
+                    layer.pixels = orig.clone();
+                    if state.filter_preview_active {
+                        hollow_core::filter::adjust_hsl(
+                            &mut layer.pixels,
+                            doc_w,
+                            doc_h,
+                            state.filter_hue_shift,
+                            state.filter_saturation_scale,
+                            state.filter_lightness_shift,
+                            sel_mask.as_ref(),
+                        );
+                    }
+                }
+            }
+
+            if do_apply {
+                state.apply_filter_modal("HSL Adjustments");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
+        ActiveFilterModal::BrightnessContrast => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("☀️ Brightness & Contrast")
+                .fixed_size(Vec2::new(380.0, 200.0))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_brightness, -80.0..=80.0).text("Brightness")).changed();
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_contrast, -80.0..=80.0).text("Contrast")).changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("✓ Apply").strong().color(accent_c32)).clicked() {
+                            do_apply = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
+                    layer.pixels = orig.clone();
+                    if state.filter_preview_active {
+                        hollow_core::filter::adjust_brightness_contrast(
+                            &mut layer.pixels,
+                            doc_w,
+                            doc_h,
+                            state.filter_brightness,
+                            state.filter_contrast,
+                            sel_mask.as_ref(),
+                        );
+                    }
+                }
+            }
+
+            if do_apply {
+                state.apply_filter_modal("Brightness & Contrast");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
+        ActiveFilterModal::ColorBalance => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("⚖️ Color Balance")
+                .fixed_size(Vec2::new(400.0, 240.0))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_cyan_red, -80.0..=80.0).text("Cyan / Red")).changed();
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_magenta_green, -80.0..=80.0).text("Magenta / Green")).changed();
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_yellow_blue, -80.0..=80.0).text("Yellow / Blue")).changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("✓ Apply").strong().color(accent_c32)).clicked() {
+                            do_apply = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
+                    layer.pixels = orig.clone();
+                    if state.filter_preview_active {
+                        hollow_core::filter::adjust_color_balance(
+                            &mut layer.pixels,
+                            doc_w,
+                            doc_h,
+                            state.filter_cyan_red,
+                            state.filter_magenta_green,
+                            state.filter_yellow_blue,
+                            sel_mask.as_ref(),
+                        );
+                    }
+                }
+            }
+
+            if do_apply {
+                state.apply_filter_modal("Color Balance");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
+        ActiveFilterModal::PosterizeThreshold => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("🎚️ Posterize & Threshold")
+                .fixed_size(Vec2::new(380.0, 220.0))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_posterize_levels, 2..=24).text("Posterize Levels")).changed();
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_threshold_val, 1..=254).text("B&W Threshold")).changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("Apply Posterize").strong().color(accent_c32)).clicked() {
+                            do_apply = true;
+                        }
+                        if ui.button(RichText::new("Apply Threshold").strong()).clicked() {
+                            if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
+                                layer.pixels = orig.clone();
+                                hollow_core::filter::filter_threshold(&mut layer.pixels, doc_w, doc_h, state.filter_threshold_val, sel_mask.as_ref());
+                            }
+                            state.apply_filter_modal("Threshold");
+                            return;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
+                    layer.pixels = orig.clone();
+                    if state.filter_preview_active {
+                        hollow_core::filter::filter_posterize(
+                            &mut layer.pixels,
+                            doc_w,
+                            doc_h,
+                            state.filter_posterize_levels,
+                            sel_mask.as_ref(),
+                        );
+                    }
+                }
+            }
+
+            if do_apply {
+                state.apply_filter_modal("Posterize");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
+        ActiveFilterModal::GaussianBlur => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("💧 Gaussian Blur")
+                .fixed_size(Vec2::new(380.0, 180.0))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_blur_radius, 1.0..=32.0).text("Blur Radius (px)")).changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("✓ Apply").strong().color(accent_c32)).clicked() {
+                            do_apply = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
+                    layer.pixels = orig.clone();
+                    if state.filter_preview_active {
+                        hollow_core::filter::filter_gaussian_blur(
+                            &mut layer.pixels,
+                            doc_w,
+                            doc_h,
+                            state.filter_blur_radius,
+                            sel_mask.as_ref(),
+                        );
+                    }
+                }
+            }
+
+            if do_apply {
+                state.apply_filter_modal("Gaussian Blur");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
+        ActiveFilterModal::SharpenUnsharp => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("🔪 Sharpen & Unsharp Mask")
+                .fixed_size(Vec2::new(400.0, 240.0))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(RichText::new("Sharpen Amount:").size(10.0));
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_sharpen_amount, 0.1..=2.5).text("Sharpen")).changed();
+
+                    ui.separator();
+                    ui.label(RichText::new("Unsharp Mask Parameters:").size(10.0));
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_unsharp_radius, 1.0..=8.0).text("Radius")).changed();
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_unsharp_amount, 0.2..=2.5).text("Amount")).changed();
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_unsharp_threshold, 0.0..=20.0).text("Threshold")).changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("Apply Sharpen").strong().color(accent_c32)).clicked() {
+                            do_apply = true;
+                        }
+                        if ui.button(RichText::new("Apply Unsharp Mask").strong()).clicked() {
+                            if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
+                                layer.pixels = orig.clone();
+                                hollow_core::filter::filter_unsharp_mask(
+                                    &mut layer.pixels,
+                                    doc_w,
+                                    doc_h,
+                                    state.filter_unsharp_radius,
+                                    state.filter_unsharp_amount,
+                                    state.filter_unsharp_threshold,
+                                    sel_mask.as_ref(),
+                                );
+                            }
+                            state.apply_filter_modal("Unsharp Mask");
+                            return;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
+                    layer.pixels = orig.clone();
+                    if state.filter_preview_active {
+                        hollow_core::filter::filter_sharpen(
+                            &mut layer.pixels,
+                            doc_w,
+                            doc_h,
+                            state.filter_sharpen_amount,
+                            sel_mask.as_ref(),
+                        );
+                    }
+                }
+            }
+
+            if do_apply {
+                state.apply_filter_modal("Sharpen");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
+        ActiveFilterModal::FilmGrain => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("📺 Film Grain & Noise")
+                .fixed_size(Vec2::new(380.0, 200.0))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_noise_intensity, 0.05..=0.8).text("Intensity")).changed();
+                    changed |= ui.checkbox(&mut state.filter_noise_colored, "Chromatic (RGB Color Noise)").changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("✓ Apply").strong().color(accent_c32)).clicked() {
+                            do_apply = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
+                    layer.pixels = orig.clone();
+                    if state.filter_preview_active {
+                        hollow_core::filter::filter_film_grain(
+                            &mut layer.pixels,
+                            doc_w,
+                            doc_h,
+                            state.filter_noise_intensity,
+                            state.filter_noise_colored,
+                            sel_mask.as_ref(),
+                        );
+                    }
+                }
+            }
+
+            if do_apply {
+                state.apply_filter_modal("Film Grain");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
+        ActiveFilterModal::VignetteChromatic => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("🔍 Vignette & Lens FX")
+                .fixed_size(Vec2::new(420.0, 280.0))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(RichText::new("Vignette Settings:").size(10.0));
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_vignette_radius, 0.2..=1.4).text("Radius")).changed();
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_vignette_softness, 0.1..=1.0).text("Softness")).changed();
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_vignette_darkness, 0.1..=1.0).text("Darkness")).changed();
+
+                    ui.separator();
+                    ui.label(RichText::new("Chromatic Lens Aberration:").size(10.0));
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_chromatic_shift, 1.0..=18.0).text("Shift (px)")).changed();
+                    changed |= ui.add(egui::Slider::new(&mut state.filter_chromatic_angle, 0.0..=360.0).text("Angle (°)")).changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new("Apply Vignette").strong().color(accent_c32)).clicked() {
+                            do_apply = true;
+                        }
+                        if ui.button(RichText::new("Apply Chromatic Aberration").strong()).clicked() {
+                            if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
+                                layer.pixels = orig.clone();
+                                hollow_core::filter::filter_chromatic_aberration(
+                                    &mut layer.pixels,
+                                    doc_w,
+                                    doc_h,
+                                    state.filter_chromatic_shift,
+                                    state.filter_chromatic_angle,
+                                    sel_mask.as_ref(),
+                                );
+                            }
+                            state.apply_filter_modal("Chromatic Aberration");
+                            return;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
+                    layer.pixels = orig.clone();
+                    if state.filter_preview_active {
+                        hollow_core::filter::filter_vignette(
+                            &mut layer.pixels,
+                            doc_w,
+                            doc_h,
+                            state.filter_vignette_radius,
+                            state.filter_vignette_softness,
+                            state.filter_vignette_darkness,
+                            sel_mask.as_ref(),
+                        );
+                    }
+                }
+            }
+
+            if do_apply {
+                state.apply_filter_modal("Vignette");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
+        ActiveFilterModal::None => {}
+    }
+
+    // ── 9. ABOUT HOLLOW CANVAS MODAL ──
     if state.show_about_dialog {
         egui::Window::new("About Hollow Canvas")
             .fixed_size(Vec2::new(420.0, 320.0))
@@ -974,7 +1541,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.4.3 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.5.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);
@@ -982,7 +1549,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.add_space(6.0);
 
                 ui.label(RichText::new("Features & Guarantees:").size(10.0).strong().color(Color32::from_rgb(205, 215, 240)));
-                ui.label(RichText::new("• ⚡ Catmull-Rom Spline Drawing Engine with 0-allocation compositing\n• 🪄 Magic Wand, Gradients, Shapes & Multi-Axis Symmetry\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Universal VPack & Zip portable distribution").size(10.0).color(Color32::from_rgb(155, 165, 195)));
+                ui.label(RichText::new("• ⚡ Catmull-Rom Spline Drawing Engine with 0-allocation compositing\n• 🪄 Magic Wand, Gradients, Shapes, Multi-Axis Symmetry\n• 🎨 Full Adjustments & Artistic Filter FX Engine (HSL, Blur, Vignette, Grain)\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Universal VPack & Zip portable distribution").size(10.0).color(Color32::from_rgb(155, 165, 195)));
 
                 ui.add_space(8.0);
                 ui.separator();
@@ -1005,7 +1572,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
-    // ── 9. HELP & SHORTCUTS MODAL ──
+    // ── 10. HELP & SHORTCUTS MODAL ──
     if state.show_help {
         egui::Window::new("Hollow Canvas Studio · Shortcuts & Help")
             .fixed_size(Vec2::new(420.0, 380.0))
@@ -1030,6 +1597,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         ("Ctrl + S", "Save Project (.hcv)"),
                         ("Ctrl + O", "Open Project (.hcv)"),
                         ("Ctrl + E", "Export PNG Image"),
+                        ("Ctrl + I", "Invert Layer Colors"),
                         ("Ctrl + Z", "Undo Action"),
                         ("Ctrl + Y / Ctrl+Shift+Z", "Redo Action"),
                         ("Ctrl + D", "Deselect"),

@@ -179,16 +179,23 @@ def stage_publish(version: str, tag_dir: Path, assets: list, draft: bool = False
     checksums_file = tag_dir / "SHA256SUMS.txt"
     upload_files = [str(a) for a in assets] + [str(checksums_file)]
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Instant Real-Time Render Pipeline Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Adjustments & Filter FX Engine Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
 ### ✨ What's New in {version}
-* **⚡ Instant Frame Synchronization (Zero-Lag UI)** — Reordered the frame pipeline so egui UI interaction executes first in the rendering cycle. Clicks on Grid, Rulers, Zen mode, layer opacity, color pickers, and tool selectors now apply instantly to the canvas in the exact same millisecond and frame without requiring secondary mouse movement.
-* **🚀 Fast Fixed-Point SIMD-style Grid Rendering** — Optimized dynamic grid lines using integer fixed-point arithmetic, delivering buttery smooth rendering performance.
-* **📐 Clean Responsive Header Bar** — Streamlined top studio header bar with responsive bounds and compact icon quick-action pills.
-* **✦ Crisp Vector Tool Icons (No `□` Tofu Glyphs)** — All 18 tools render dedicated vector-drawn icons via `egui::Painter`.
-* **✏️ Renameable Layers & Glossy Theme** — Real-time editable layer names with dark obsidian styling.
+* **🎨 Studio Color Adjustments Engine** — Full professional color grading suite with real-time live preview:
+  - **HSL Adjustments**: Shift Hue (-180° to +180°), Scale Saturation (0.0 to 2.5), and Shift Lightness.
+  - **Brightness & Contrast**: Smooth curve brightness and contrast expansion.
+  - **Color Balance**: Independent Cyan/Red, Magenta/Green, and Yellow/Blue chromatic channel biases.
+  - **Quick Color Filters**: One-click Invert Colors (`Ctrl+I`), Perceptual Grayscale, and Vintage Sepia photographic tone.
+  - **Posterize & B&W Threshold**: Quantize color steps (2 to 24 levels) or binary high-contrast thresholding.
+* **✨ Artistic Convolution & Spatial Filters**:
+  - **💧 Gaussian Blur**: High-performance separable 1D Gaussian kernel convolution with configurable radius (1..=32px).
+  - **🔪 Sharpen & Unsharp Mask**: Edge contrast enhancement with difference-of-Gaussian threshold gating.
+  - **📺 Film Grain & Analog Noise**: Procedural authentic film grain generator with monochrome and chromatic RGB modes.
+  - **🔍 Vignette & Lens Dispersion**: Radial edge luminance falloff and directional chromatic aberration (Red/Blue prism split).
+* **⚡ Live Interactive Dialogs & Undo Integration** — All adjustments include a real-time live canvas preview, selection mask clipping, and full Undo/Redo (`Ctrl+Z` / `Ctrl+Y`) support.
 * **📦 Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
 
 ### 📦 Downloads & Assets

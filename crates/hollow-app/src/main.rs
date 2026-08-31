@@ -647,6 +647,23 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.state.selection = None;
                     app.state.set_status("Deselected");
                 }
+                0x49 if is_ctrl => { // Ctrl+I (Invert Colors)
+                    let w = app.state.document.width;
+                    let h = app.state.document.height;
+                    let sel = app.state.selection.clone();
+                    if let Some(layer) = app.state.document.active_layer_mut() {
+                        let before = layer.pixels.clone();
+                        hollow_core::filter::filter_invert(&mut layer.pixels, w, h, sel.as_ref());
+                        let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                            layer_id: layer.id,
+                            description: "Invert Colors",
+                            before_pixels: before,
+                            after_pixels: layer.pixels.clone(),
+                        });
+                        app.state.history.push(cmd);
+                        app.state.set_status("Inverted Colors");
+                    }
+                }
                 0x52 if is_ctrl => { // Ctrl+R (Toggle Rulers)
                     app.state.show_rulers = !app.state.show_rulers;
                 }
