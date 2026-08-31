@@ -193,39 +193,34 @@ impl SoftwareRenderer {
         let center_x = (win_w as f32) * 0.5 + pan.x;
         let center_y = (win_h as f32) * 0.5 + pan.y;
 
-        let canvas_w = doc_w * zoom;
-        let canvas_h = doc_h * zoom;
+        // Screen bounds of the canvas
+        let x_start = (((0.0 - doc_w * 0.5) * zoom + center_x).round() as isize).max(0).min(win_w as isize) as usize;
+        let x_end = (((doc_w - doc_w * 0.5) * zoom + center_x).round() as isize).max(0).min(win_w as isize) as usize;
+        let y_start = (((0.0 - doc_h * 0.5) * zoom + center_y).round() as isize).max(0).min(win_h as isize) as usize;
+        let y_end = (((doc_h - doc_h * 0.5) * zoom + center_y).round() as isize).max(0).min(win_h as isize) as usize;
 
-        let x0 = (center_x - canvas_w * 0.5).max(0.0).min(win_w as f32) as usize;
-        let x1 = (center_x + canvas_w * 0.5).max(0.0).min(win_w as f32) as usize;
-        let y0 = (center_y - canvas_h * 0.5).max(0.0).min(win_h as f32) as usize;
-        let y1 = (center_y + canvas_h * 0.5).max(0.0).min(win_h as f32) as usize;
+        if x_start >= x_end || y_start >= y_end {
+            return;
+        }
 
-        let grid_f = grid_size as f32;
-        let inv_zoom = 1.0 / zoom;
         let alpha = grid_opacity.clamp(0.0, 1.0);
-        let grid_col = 0x00A89FD8; // Light purple grid lines
+        let gr = 168u32;
+        let gg = 159u32;
+        let gb = 216u32;
 
-        for screen_y in y0..y1 {
-            let doc_yf = (screen_y as f32 - center_y) * inv_zoom + doc_h * 0.5;
-            let is_h_line = (doc_yf % grid_f).abs() < (inv_zoom * 0.65).max(0.75);
-
-            let row_offset = screen_y * win_w;
-            for screen_x in x0..x1 {
-                let doc_xf = (screen_x as f32 - center_x) * inv_zoom + doc_w * 0.5;
-                let is_v_line = (doc_xf % grid_f).abs() < (inv_zoom * 0.65).max(0.75);
-
-                if is_h_line || is_v_line {
-                    let pixel_idx = row_offset + screen_x;
+        // 1. Draw Vertical Grid Lines
+        let mut gx = 0u32;
+        while gx <= doc.width {
+            let sx = ((gx as f32 - doc_w * 0.5) * zoom + center_x).round() as isize;
+            if sx >= x_start as isize && sx < x_end as isize {
+                let x = sx as usize;
+                for y in y_start..y_end {
+                    let pixel_idx = y * win_w + x;
                     if pixel_idx < buffer.len() {
                         let cur = buffer[pixel_idx];
                         let cr = (cur >> 16) & 0xFF;
                         let cg = (cur >> 8) & 0xFF;
                         let cb = cur & 0xFF;
-
-                        let gr = (grid_col >> 16) & 0xFF;
-                        let gg = (grid_col >> 8) & 0xFF;
-                        let gb = grid_col & 0xFF;
 
                         let nr = ((cr as f32 * (1.0 - alpha)) + (gr as f32 * alpha)).round() as u32;
                         let ng = ((cg as f32 * (1.0 - alpha)) + (gg as f32 * alpha)).round() as u32;
@@ -235,6 +230,33 @@ impl SoftwareRenderer {
                     }
                 }
             }
+            gx += grid_size;
+        }
+
+        // 2. Draw Horizontal Grid Lines
+        let mut gy = 0u32;
+        while gy <= doc.height {
+            let sy = ((gy as f32 - doc_h * 0.5) * zoom + center_y).round() as isize;
+            if sy >= y_start as isize && sy < y_end as isize {
+                let y = sy as usize;
+                let row = y * win_w;
+                for x in x_start..x_end {
+                    let pixel_idx = row + x;
+                    if pixel_idx < buffer.len() {
+                        let cur = buffer[pixel_idx];
+                        let cr = (cur >> 16) & 0xFF;
+                        let cg = (cur >> 8) & 0xFF;
+                        let cb = cur & 0xFF;
+
+                        let nr = ((cr as f32 * (1.0 - alpha)) + (gr as f32 * alpha)).round() as u32;
+                        let ng = ((cg as f32 * (1.0 - alpha)) + (gg as f32 * alpha)).round() as u32;
+                        let nb = ((cb as f32 * (1.0 - alpha)) + (gb as f32 * alpha)).round() as u32;
+
+                        buffer[pixel_idx] = 0xFF000000 | (nr << 16) | (ng << 8) | nb;
+                    }
+                }
+            }
+            gy += grid_size;
         }
     }
 

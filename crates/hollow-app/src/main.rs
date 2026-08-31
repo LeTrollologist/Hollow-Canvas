@@ -870,6 +870,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                                 let rgba = img.to_rgba8();
                                 let (w, h) = rgba.dimensions();
                                 app.state.reference_image = Some((w, h, rgba.into_raw()));
+                                app.state.ref_texture = None;
                                 app.state.show_ref_window = true;
                                 app.state.set_status(format!("Loaded reference: {}", path.display()));
                             }

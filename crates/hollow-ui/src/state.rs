@@ -96,6 +96,7 @@ pub struct AppState {
 
     // Reference Dock & Backlight
     pub reference_image: Option<(u32, u32, Vec<u8>)>,
+    pub ref_texture: Option<egui::TextureHandle>,
     pub show_ref_window: bool,
     pub ref_zoom: f32,
     pub ref_pan: Vec2,
@@ -164,6 +165,7 @@ impl AppState {
             wand_sample_all_layers: false,
 
             reference_image: None,
+            ref_texture: None,
             show_ref_window: false,
             ref_zoom: 1.0,
             ref_pan: Vec2::ZERO,

@@ -179,20 +179,15 @@ def stage_publish(version: str, tag_dir: Path, assets: list, draft: bool = False
     checksums_file = tag_dir / "SHA256SUMS.txt"
     upload_files = [str(a) for a in assets] + [str(checksums_file)]
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Polish & Precision Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
-### ✨ What's New in v0.2.0
-* **🎨 Modern Studio UI Overhaul** — Sleek iconography, refined contrast, tabbed docks, and unified tool properties.
-* **🪄 Magic Wand Tool** — Contiguous and global fuzzy color-matching selection creating active selection masks.
-* **✦ New Canvas Studio** — Pre-loaded presets (Digital Art 1K/2K/4K, 1080p/4K Display, Print A4/A5 @ 300 DPI, Social Media Banners, Pixel Art) plus custom aspect-ratio locked dimensions.
-* **🌈 Linear & Radial Gradients** — Interactive two-point drag gradient tool with live viewport previews and dithering.
-* **▭ Shapes Engine** — Outline, Solid Fill, and Dual-Color (Primary Outline + Secondary Fill) for Rectangles, Ellipses, and Polygons.
-* **▱ Advanced Eraser Modes** — Smooth Soft Alpha, Strict 1-Bit Hard Pixel, and Secondary Color-Targeted Erase.
-* **⊞ Toggleable Grid & 📏 Dynamic Rulers** — Customizable pixel grid overlay (8px–128px) and coordinate rulers tracking zoom, pan, and cursor position.
-* **💡 Reference Viewer Lightbox Backlight** — Toggleable high-contrast white lightbox and checkerboard backgrounds for inspecting transparent lineart.
-* **✥ Real-Time Canvas Operations** — Live canvas crop/extend, bilinear image resampling, horizontal/vertical flips, and 90°/180° rotation.
+### ✨ What's New in v0.3.0
+* **⊞ Mathematically Uniform Grid** — Re-engineered canvas-space coordinate line projection guarantees 100% uniform grid cells with zero jitter or scaling distortion.
+* **✦ Universal Crisp Typography Tool Glyphs** — Replaced unsupported emojis with universal glyphs (`✦ Brush`, `✎ Pencil`, `≋ Water`, `░ Chalk`, `⁕ Spray`, `≈ Smudge`, `▨ Gradient`, `★ Wand`, `⌫ Eraser`, `⯀ Fill`, `╱ Line`, `▭ Rect`, `○ Oval`, `⬟ Poly`, `▢ Select`, `✛ Move`, `⛶ Crop`, `◉ Pick`), eliminating missing font tofu boxes.
+* **🖥️ Professional Studio Menu Bar** — Slick DAW/Photoshop style menu bar (`File`, `Edit`, `Select`, `Canvas`, `View`, `Window`) with streamlined access to all commands and modals.
+* **🖼️ Interactive Reference Viewer with Lightbox** — Uploads loaded reference images directly to egui GPU texture handles, supporting interactive zoom, panning, and High-Contrast White Lightbox & Checkerboard backlights.
 * **Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
 
 ### 📦 Downloads & Assets

@@ -10,17 +10,141 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     let accent_c32 = Color32::from_rgb(ar, ag, ab);
     let accent_dim_c32 = Color32::from_rgba_unmultiplied(ar, ag, ab, 45);
 
-    // ── 1. TOP HEADER PANEL ──
+    // Ensure reference texture is loaded if reference_image is present
+    if state.ref_texture.is_none() {
+        if let Some((w, h, raw_rgba)) = &state.reference_image {
+            let color_image = egui::ColorImage::from_rgba_unmultiplied([*w as usize, *h as usize], raw_rgba);
+            state.ref_texture = Some(ctx.load_texture("ref_image_texture", color_image, Default::default()));
+        }
+    }
+
+    // ── 1. TOP STUDIO MENU BAR & HEADER ──
     egui::TopBottomPanel::top("header_panel")
-        .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(5, 8, 20, 240)).inner_margin(6.0))
+        .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(8, 12, 24, 248)).inner_margin(4.0))
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("HOLLOW CANVAS").size(14.0).strong().color(Color32::from_rgb(215, 222, 245)));
-                ui.label(RichText::new("Studio v0.2.0").size(10.0).color(Color32::from_rgb(92, 106, 138)));
+                ui.label(RichText::new("HOLLOW CANVAS").size(13.0).strong().color(Color32::from_rgb(225, 232, 252)));
+                ui.label(RichText::new("Studio v0.3.0").size(9.0).color(Color32::from_rgb(110, 125, 160)));
 
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                // ── DROPDOWN MENUS ──
+                egui::menu::bar(ui, |ui| {
+                    ui.menu_button("File", |ui| {
+                        if ui.button("✦ New Canvas... (Ctrl+N)").clicked() {
+                            state.show_new_canvas_dialog = true;
+                            ui.close_menu();
+                        }
+                        if ui.button("📂 Open Project... (Ctrl+O)").clicked() {
+                            state.pending_file_action = Some(PendingFileAction::OpenProject);
+                            ui.close_menu();
+                        }
+                        if ui.button("💾 Save Project (Ctrl+S)").clicked() {
+                            state.pending_file_action = Some(PendingFileAction::SaveProject);
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("📤 Export Flat PNG... (Ctrl+E)").clicked() {
+                            state.pending_file_action = Some(PendingFileAction::ExportPng);
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.menu_button("Edit", |ui| {
+                        if ui.button("↶ Undo (Ctrl+Z)").clicked() {
+                            if let Some(desc) = state.history.undo(&mut state.document) {
+                                state.set_status(format!("Undo: {}", desc));
+                            }
+                            ui.close_menu();
+                        }
+                        if ui.button("↷ Redo (Ctrl+Y)").clicked() {
+                            if let Some(desc) = state.history.redo(&mut state.document) {
+                                state.set_status(format!("Redo: {}", desc));
+                            }
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("⇄ Swap Primary/Secondary Color (X)").clicked() {
+                            state.swap_colors();
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.menu_button("Select", |ui| {
+                        if ui.button("Invert Selection (Ctrl+Shift+I)").clicked() {
+                            if let Some(mask) = &mut state.selection {
+                                mask.invert();
+                                state.set_status("Selection inverted");
+                            }
+                            ui.close_menu();
+                        }
+                        if ui.button("✕ Deselect (Ctrl+D)").clicked() {
+                            state.selection = None;
+                            state.set_status("Deselected");
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.menu_button("Canvas", |ui| {
+                        if ui.button("Resize / Scale Canvas...").clicked() {
+                            state.show_resize_canvas_dialog = true;
+                            state.resize_canvas_w = state.document.width;
+                            state.resize_canvas_h = state.document.height;
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("Flip Horizontal").clicked() {
+                            state.document.flip(true);
+                            state.set_status("Flipped horizontally");
+                            ui.close_menu();
+                        }
+                        if ui.button("Flip Vertical").clicked() {
+                            state.document.flip(false);
+                            state.set_status("Flipped vertically");
+                            ui.close_menu();
+                        }
+                        if ui.button("Rotate 90° CW").clicked() {
+                            state.document.rotate_90(true);
+                            state.set_status("Rotated 90° CW");
+                            ui.close_menu();
+                        }
+                        if ui.button("Rotate 180°").clicked() {
+                            state.document.rotate_180();
+                            state.set_status("Rotated 180°");
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.menu_button("View", |ui| {
+                        if ui.checkbox(&mut state.show_grid, "⊞ Toggle Grid (Ctrl+')").clicked() {
+                            ui.close_menu();
+                        }
+                        if ui.checkbox(&mut state.show_rulers, "📏 Toggle Rulers (Ctrl+R)").clicked() {
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("Reset View (100%)").clicked() {
+                            state.reset_view();
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.menu_button("Window", |ui| {
+                        if ui.checkbox(&mut state.show_ref_window, "🖼 Reference Viewer").clicked() {
+                            ui.close_menu();
+                        }
+                        if ui.button("❓ Shortcuts & Help (?)").clicked() {
+                            state.show_help = true;
+                            ui.close_menu();
+                        }
+                    });
+                });
+
+                // Active Tool Badge in header
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.add_space(14.0);
-                    // Tool info badge
+                    ui.add_space(8.0);
                     let tool_label = format!(
                         "{} {} · {}px · {}%",
                         state.brush.tool.icon(),
@@ -32,29 +156,27 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         .fill(accent_dim_c32)
                         .stroke(egui::Stroke::new(1.0_f32, accent_c32))
                         .rounding(3.0)
-                        .inner_margin(egui::vec2(8.0, 3.0))
+                        .inner_margin(egui::vec2(7.0, 2.0))
                         .show(ui, |ui| {
-                            ui.label(RichText::new(tool_label).size(11.0).strong().color(accent_c32));
+                            ui.label(RichText::new(tool_label).size(10.5).strong().color(accent_c32));
                         });
                 });
 
+                // Quick Right action icons
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("Help (?)").clicked() {
+                    if ui.button("? Help").clicked() {
                         state.show_help = !state.show_help;
                     }
 
-                    // Reference dock toggle
                     let ref_label = if state.show_ref_window { "🖼 Ref [ON]" } else { "🖼 Ref" };
                     if ui.selectable_label(state.show_ref_window, ref_label).clicked() {
                         state.show_ref_window = !state.show_ref_window;
                     }
 
-                    // Rulers toggle
                     if ui.selectable_label(state.show_rulers, "📏 Rulers").clicked() {
                         state.show_rulers = !state.show_rulers;
                     }
 
-                    // Grid toggle
                     let grid_label = if state.show_grid { "⊞ Grid [ON]" } else { "⊞ Grid" };
                     if ui.selectable_label(state.show_grid, grid_label).clicked() {
                         state.show_grid = !state.show_grid;
@@ -62,20 +184,14 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     ui.separator();
 
-                    if ui.button("Export PNG").clicked() {
-                        state.pending_file_action = Some(PendingFileAction::ExportPng);
+                    if ui.button(RichText::new("✦ New").strong().color(accent_c32)).clicked() {
+                        state.show_new_canvas_dialog = true;
                     }
-
-                    if ui.button("Open").clicked() {
-                        state.pending_file_action = Some(PendingFileAction::OpenProject);
-                    }
-
-                    if ui.button(RichText::new("💾 Save").color(accent_c32)).clicked() {
+                    if ui.button("💾 Save").clicked() {
                         state.pending_file_action = Some(PendingFileAction::SaveProject);
                     }
-
-                    if ui.button(RichText::new("✦ New Canvas").strong().color(accent_c32)).clicked() {
-                        state.show_new_canvas_dialog = true;
+                    if ui.button("📤 Export").clicked() {
+                        state.pending_file_action = Some(PendingFileAction::ExportPng);
                     }
                 });
             });
@@ -83,11 +199,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
     // ── 2. BOTTOM STATUS BAR ──
     egui::TopBottomPanel::bottom("status_bar")
-        .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(3, 5, 12, 245)).inner_margin(4.0))
+        .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(4, 6, 14, 250)).inner_margin(4.0))
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("●").size(8.0).color(accent_c32));
-                ui.label(RichText::new(&state.status_message).size(10.0).color(Color32::from_rgb(160, 172, 200)));
+                ui.label(RichText::new(&state.status_message).size(10.0).color(Color32::from_rgb(165, 178, 205)));
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
@@ -118,39 +234,39 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
     // ── 3. LEFT SIDEBAR (TOOLS & BRUSH PROPERTIES) ──
     egui::SidePanel::left("left_tools_panel")
-        .default_width(210.0)
-        .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(5, 8, 20, 235)).inner_margin(8.0))
+        .default_width(215.0)
+        .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(8, 12, 24, 240)).inner_margin(8.0))
         .show(ctx, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
-                ui.label(RichText::new("STUDIO TOOLS").size(9.0).strong().color(Color32::from_rgb(92, 106, 138)));
+                ui.label(RichText::new("STUDIO TOOLS").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
 
                 let tools = [
-                    (ToolType::Brush, "🎨 Brush"),
-                    (ToolType::Pencil, "✏ Pencil"),
-                    (ToolType::Watercolor, "💧 Water"),
-                    (ToolType::Chalk, "▧ Chalk"),
-                    (ToolType::Spray, "✧ Spray"),
-                    (ToolType::Smudge, "〰 Smudge"),
-                    (ToolType::Gradient, "🌈 Gradient"),
-                    (ToolType::Wand, "🪄 Wand"),
-                    (ToolType::Eraser, "▱ Eraser"),
-                    (ToolType::Fill, "◈ Fill"),
+                    (ToolType::Brush, "✦ Brush"),
+                    (ToolType::Pencil, "✎ Pencil"),
+                    (ToolType::Watercolor, "≋ Water"),
+                    (ToolType::Chalk, "░ Chalk"),
+                    (ToolType::Spray, "⁕ Spray"),
+                    (ToolType::Smudge, "≈ Smudge"),
+                    (ToolType::Gradient, "▨ Gradient"),
+                    (ToolType::Wand, "★ Wand"),
+                    (ToolType::Eraser, "⌫ Eraser"),
+                    (ToolType::Fill, "⯀ Fill"),
                     (ToolType::Line, "╱ Line"),
                     (ToolType::Rect, "▭ Rect"),
                     (ToolType::Ellipse, "○ Oval"),
-                    (ToolType::Polygon, "⬠ Poly"),
+                    (ToolType::Polygon, "⬟ Poly"),
                     (ToolType::Marquee, "▢ Select"),
-                    (ToolType::Move, "✥ Move"),
+                    (ToolType::Move, "✛ Move"),
                     (ToolType::Crop, "⛶ Crop"),
-                    (ToolType::Eyedropper, "🔍 Pick"),
+                    (ToolType::Eyedropper, "◉ Pick"),
                 ];
 
                 egui::Grid::new("tools_grid").num_columns(2).spacing([4.0, 4.0]).show(ui, |ui| {
                     for (i, (t, label)) in tools.iter().enumerate() {
                         let selected = state.brush.tool == *t;
                         let btn = egui::Button::new(
-                            RichText::new(*label).size(11.0).color(if selected { accent_c32 } else { Color32::from_rgb(185, 195, 220) })
-                        ).min_size(Vec2::new(88.0, 24.0));
+                            RichText::new(*label).size(11.0).color(if selected { accent_c32 } else { Color32::from_rgb(190, 200, 225) })
+                        ).min_size(Vec2::new(92.0, 24.0));
 
                         if ui.add(btn).clicked() {
                             state.brush.tool = *t;
@@ -166,7 +282,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.separator();
 
                 // Tool-specific properties
-                ui.label(RichText::new("TOOL PROPERTIES").size(9.0).strong().color(Color32::from_rgb(92, 106, 138)));
+                ui.label(RichText::new("TOOL PROPERTIES").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
 
                 match state.brush.tool {
                     ToolType::Gradient => {
@@ -179,7 +295,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             }
                         });
                         ui.checkbox(&mut state.brush.gradient_dither, "Dither Smoothing");
-                        ui.label(RichText::new("Drag on canvas: blends Primary to Secondary color").size(9.0).color(Color32::from_rgb(130, 140, 168)));
+                        ui.label(RichText::new("Drag on canvas: blends Primary to Secondary").size(9.0).color(Color32::from_rgb(130, 140, 168)));
                     }
                     ToolType::Wand => {
                         ui.add(egui::Slider::new(&mut state.wand_tolerance, 0..=128).text("Tolerance"));
@@ -308,7 +424,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 }
 
                 ui.add_space(6.0);
-                ui.label(RichText::new("BRUSH DYNAMICS").size(9.0).strong().color(Color32::from_rgb(92, 106, 138)));
+                ui.label(RichText::new("BRUSH DYNAMICS").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
                 ui.add(egui::Slider::new(&mut state.brush.size, 1.0..=180.0).text("Size"));
                 ui.add(egui::Slider::new(&mut state.brush.opacity, 0.02..=1.0).text("Opacity"));
                 ui.add(egui::Slider::new(&mut state.brush.smoothing, 0.0..=0.95).text("Smoothing"));
@@ -317,7 +433,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                 ui.add_space(8.0);
                 ui.separator();
-                ui.label(RichText::new("SYMMETRY & GRID").size(9.0).strong().color(Color32::from_rgb(92, 106, 138)));
+                ui.label(RichText::new("SYMMETRY & GRID").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
                 ui.horizontal(|ui| {
                     let modes = [
                         (SymmetryMode::None, "Ø None"),
@@ -348,12 +464,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
     // ── 4. RIGHT SIDEBAR (LAYERS, COLORS & CANVAS CONTROLS) ──
     egui::SidePanel::right("right_layers_panel")
-        .default_width(230.0)
-        .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(5, 8, 20, 235)).inner_margin(8.0))
+        .default_width(235.0)
+        .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(8, 12, 24, 240)).inner_margin(8.0))
         .show(ctx, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
                 // ── PALETTE & COLOR PICKER ──
-                ui.label(RichText::new("COLOR PALETTE").size(9.0).strong().color(Color32::from_rgb(92, 106, 138)));
+                ui.label(RichText::new("COLOR PALETTE").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
 
                 ui.horizontal(|ui| {
                     let [pr, pg, pb, _] = state.brush.primary_color.to_rgba8();
@@ -369,7 +485,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         state.color_slot_is_secondary = true;
                     }
 
-                    if ui.button("🔁 Swap (X)").clicked() {
+                    if ui.button("⇄ Swap (X)").clicked() {
                         state.swap_colors();
                     }
                 });
@@ -416,7 +532,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                 // ── LAYERS PANEL ──
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("LAYERS").size(9.0).strong().color(Color32::from_rgb(92, 106, 138)));
+                    ui.label(RichText::new("LAYERS").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.button("➕ Add Layer").clicked() {
                             let id = state.document.add_layer(None);
@@ -436,8 +552,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     let is_ref = state.document.layers[i].is_reference;
 
                     egui::Frame::none()
-                        .fill(if is_active { Color32::from_rgba_unmultiplied(ar, ag, ab, 40) } else { Color32::from_rgba_unmultiplied(15, 20, 35, 180) })
-                        .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else { Color32::from_rgb(30, 40, 65) }))
+                        .fill(if is_active { Color32::from_rgba_unmultiplied(ar, ag, ab, 40) } else { Color32::from_rgba_unmultiplied(16, 22, 40, 180) })
+                        .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else { Color32::from_rgb(32, 44, 72) }))
                         .rounding(3.0)
                         .inner_margin(4.0)
                         .show(ui, |ui| {
@@ -479,7 +595,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.separator();
 
                 // ── REAL-TIME CANVAS OPERATIONS ──
-                ui.label(RichText::new("CANVAS OPERATIONS").size(9.0).strong().color(Color32::from_rgb(92, 106, 138)));
+                ui.label(RichText::new("CANVAS OPERATIONS").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
 
                 ui.horizontal(|ui| {
                     if ui.button("Resize / Scale...").clicked() {
@@ -682,10 +798,10 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
-    // ── 7. REFERENCE IMAGE FLOATING DOCK (WITH BACKLIGHT) ──
+    // ── 7. REFERENCE IMAGE FLOATING DOCK (LIVE IMAGE RENDERING & LIGHTBOX BACKLIGHT) ──
     if state.show_ref_window {
         egui::Window::new("🖼 Reference Viewer")
-            .default_size(Vec2::new(320.0, 320.0))
+            .default_size(Vec2::new(360.0, 360.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("📂 Load Image...").clicked() {
@@ -694,22 +810,52 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     if ui.selectable_label(state.ref_backlight, "💡 Backlight").clicked() {
                         state.ref_backlight = !state.ref_backlight;
                     }
-                });
-
-                if state.ref_backlight {
-                    ui.horizontal(|ui| {
+                    if state.ref_backlight {
                         ui.label("Mode:");
                         ui.selectable_value(&mut state.ref_backlight_mode, 0, "Dark");
-                        ui.selectable_value(&mut state.ref_backlight_mode, 1, "White Lightbox");
+                        ui.selectable_value(&mut state.ref_backlight_mode, 1, "White");
                         ui.selectable_value(&mut state.ref_backlight_mode, 2, "Checker");
-                    });
-                }
+                    }
+                });
 
                 if let Some((w, h, _)) = state.reference_image {
-                    ui.label(RichText::new(format!("Loaded Image: {} × {} px", w, h)).size(10.0).color(accent_c32));
-                    ui.add(egui::Slider::new(&mut state.ref_zoom, 0.1..=4.0).text("Ref Zoom"));
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("{} × {} px", w, h)).size(10.0).color(accent_c32));
+                        ui.add(egui::Slider::new(&mut state.ref_zoom, 0.1..=4.0).text("Zoom"));
+                        if ui.button("1:1").clicked() {
+                            state.ref_zoom = 1.0;
+                        }
+                    });
+
+                    ui.separator();
+
+                    // Background frame matching backlight mode
+                    let bg_color = match state.ref_backlight_mode {
+                        1 => Color32::from_rgb(250, 250, 250), // Pure White Lightbox
+                        2 => Color32::from_rgb(120, 120, 120), // Neutral Checker / Gray
+                        _ => Color32::from_rgb(10, 14, 25),    // Dark studio
+                    };
+
+                    egui::Frame::none()
+                        .fill(bg_color)
+                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(40, 50, 80)))
+                        .rounding(4.0)
+                        .inner_margin(4.0)
+                        .show(ui, |ui| {
+                            ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                                if let Some(tex) = &state.ref_texture {
+                                    let img_size = Vec2::new(w as f32 * state.ref_zoom, h as f32 * state.ref_zoom);
+                                    ui.image((tex.id(), img_size));
+                                }
+                            });
+                        });
                 } else {
-                    ui.label(RichText::new("No reference image loaded.\nClick 'Load Image...' to view lineart or reference art alongside your canvas.").size(10.0).color(Color32::from_rgb(140, 150, 180)));
+                    ui.add_space(20.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new("No reference image loaded.").size(12.0).color(Color32::from_rgb(180, 190, 220)));
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("Click '📂 Load Image...' to inspect lineart, textures, or character sheets.").size(10.0).color(Color32::from_rgb(130, 140, 168)));
+                    });
                 }
             });
     }
@@ -721,28 +867,28 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .collapsible(false)
             .show(ctx, |ui| {
                 ScrollArea::vertical().show(ui, |ui| {
-                    ui.label(RichText::new("SHORTCUTS").size(10.0).strong().color(accent_c32));
+                    ui.label(RichText::new("STUDIO SHORTCUTS").size(10.0).strong().color(accent_c32));
                     let shortcuts = [
-                        ("B", "Brush Tool"),
-                        ("P", "Pencil Tool"),
-                        ("W", "Magic Wand Tool"),
-                        ("G", "Gradient / Fill Tool"),
-                        ("E", "Eraser Tool"),
-                        ("I", "Eyedropper Color Picker"),
-                        ("V", "Move Layer Tool"),
-                        ("M", "Marquee Selection Tool"),
-                        ("X", "Swap Primary & Secondary Colors"),
+                        ("B", "✦ Brush Tool"),
+                        ("P", "✎ Pencil Tool"),
+                        ("W", "★ Magic Wand Selection"),
+                        ("G", "▨ Gradient / Fill Tool"),
+                        ("E", "⌫ Eraser Tool"),
+                        ("I / Alt+Click", "◉ Eyedropper Color Picker"),
+                        ("V", "✛ Move Layer Tool"),
+                        ("M", "▢ Marquee Selection Tool"),
+                        ("X", "⇄ Swap Primary & Secondary Colors"),
                         ("Space + Drag", "Pan Canvas Viewport"),
                         ("Mouse Wheel", "Zoom Canvas In / Out"),
-                        ("Ctrl + N", "Create New Canvas"),
-                        ("Ctrl + S", "Save Project (.hcv)"),
-                        ("Ctrl + O", "Open Project (.hcv)"),
-                        ("Ctrl + E", "Export PNG Image"),
-                        ("Ctrl + Z", "Undo Action"),
-                        ("Ctrl + Y / Ctrl+Shift+Z", "Redo Action"),
-                        ("Ctrl + D", "Deselect"),
-                        ("Ctrl + '", "Toggle Viewport Grid"),
-                        ("Ctrl + R", "Toggle Viewport Rulers"),
+                        ("Ctrl + N", "✦ Create New Canvas"),
+                        ("Ctrl + S", "💾 Save Project (.hcv)"),
+                        ("Ctrl + O", "📂 Open Project (.hcv)"),
+                        ("Ctrl + E", "📤 Export PNG Image"),
+                        ("Ctrl + Z", "↶ Undo Action"),
+                        ("Ctrl + Y / Ctrl+Shift+Z", "↷ Redo Action"),
+                        ("Ctrl + D", "✕ Deselect"),
+                        ("Ctrl + '", "⊞ Toggle Viewport Grid"),
+                        ("Ctrl + R", "📏 Toggle Viewport Rulers"),
                     ];
 
                     egui::Grid::new("help_grid").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
