@@ -1,4 +1,5 @@
 pub mod dialogs;
+pub mod icons;
 pub mod state;
 pub mod style;
 pub mod ui;

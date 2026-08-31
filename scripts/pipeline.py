@@ -179,17 +179,15 @@ def stage_publish(version: str, tag_dir: Path, assets: list, draft: bool = False
     checksums_file = tag_dir / "SHA256SUMS.txt"
     upload_files = [str(a) for a in assets] + [str(checksums_file)]
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Polish & Precision Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Vector Icons & Polish Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
 ### ✨ What's New in {version}
-* **👁️ Zen / Full Canvas Mode (`Tab`)** — One-key toggle to hide/show all studio docks and toolbars for distraction-free illustration, featuring a floating restore button when hidden.
-* **🛡️ Native Application & Taskbar Icon** — Custom crafted studio logo icon rendered to SVG, PNG, and multi-res `.ico`, embedded into Win32 `WM_SETICON` for the window title bar and Windows taskbar.
-* **🔒 Layer Alpha Lock (🔒α)** — Lock layer transparency so brush and tool strokes only affect existing pixels (essential for shading, highlighting, and textures).
-* **⮑ Layer Clipping Masks** — Clip layer visibility directly to the alpha boundaries of the layer beneath it.
-* **📐 Header Layout Overflow Fix** — Refined top studio header bar with responsive layout bounds and compact icon action pills, ensuring zero overflow on any window size.
-* **ℹ️ About Hollow Canvas Dialog** — Modal with build metadata, GPLv3 license, offline privacy guarantee, and shortcut reference.
+* **✦ Crisp Vector Tool Icons (No `□` Tofu Glyphs)** — All 18 tools now render dedicated vector-drawn icons via `egui::Painter` (Brush, Pencil, Water, Chalk, Spray, Smudge, Gradient, Magic Wand, Eraser, Fill, Line, Rect, Oval, Poly, Select, Move, Crop, Eyedropper). Never relies on OS font glyphs and will never render missing glyph square boxes.
+* **📐 Complete Header Layout Overflow Prevention** — Cleaned up header controls with responsive bounds and compact quick-action pills, guaranteeing zero runoff or clipping at any window size.
+* **✏️ Renameable / Custom Named Layers** — Click or double-click any layer card to edit and customize layer names inline in real time.
+* **✨ Glossy Studio Face Lift** — Refined dark obsidian theme, smooth 4px rounded pill buttons, subtle glass highlight edges, glowing hover outlines, and illuminated active states.
 * **📦 Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
 
 ### 📦 Downloads & Assets

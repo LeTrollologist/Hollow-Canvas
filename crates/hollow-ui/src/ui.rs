@@ -1,8 +1,77 @@
+use crate::icons::draw_tool_icon;
 use crate::state::{AppState, CanvasPreset, PendingFileAction};
-use egui::{Align, Color32, Layout, RichText, ScrollArea, Vec2};
+use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Stroke, Vec2};
 use hollow_core::brush::{EraserMode, GradientType, ShapeFillMode, ToolType};
 use hollow_core::color::{Color, DEFAULT_PALETTE};
 use hollow_core::symmetry::SymmetryMode;
+
+/// Helper to render a custom studio tool button with a crisp vector-drawn icon
+fn render_tool_button(
+    ui: &mut egui::Ui,
+    tool: ToolType,
+    label: &str,
+    is_selected: bool,
+    accent_c32: Color32,
+) -> bool {
+    let size = Vec2::new(94.0, 26.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let is_hovered = response.hovered();
+
+        // Button background
+        let bg_fill = if is_selected {
+            Color32::from_rgba_unmultiplied(accent_c32.r(), accent_c32.g(), accent_c32.b(), 45)
+        } else if is_hovered {
+            Color32::from_rgba_unmultiplied(32, 44, 76, 220)
+        } else {
+            Color32::from_rgba_unmultiplied(20, 28, 48, 180)
+        };
+
+        // Button border
+        let stroke = if is_selected {
+            Stroke::new(1.5_f32, accent_c32)
+        } else if is_hovered {
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent_c32.r(), accent_c32.g(), accent_c32.b(), 180))
+        } else {
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(85, 105, 150, 45))
+        };
+
+        painter.rect(rect, 4.0, bg_fill, stroke);
+
+        // Vector Icon Area (Left side)
+        let icon_rect = Rect::from_min_size(rect.min + egui::vec2(4.0, 3.0), Vec2::new(20.0, 20.0));
+        let icon_color = if is_selected {
+            accent_c32
+        } else if is_hovered {
+            Color32::from_rgb(240, 245, 255)
+        } else {
+            Color32::from_rgb(180, 195, 225)
+        };
+        draw_tool_icon(painter, icon_rect, tool, icon_color, is_selected);
+
+        // Text Label (Right side)
+        let text_color = if is_selected {
+            accent_c32
+        } else if is_hovered {
+            Color32::from_rgb(245, 248, 255)
+        } else {
+            Color32::from_rgb(195, 205, 228)
+        };
+
+        let text_pos = rect.min + egui::vec2(28.0, 5.0);
+        painter.text(
+            text_pos,
+            egui::Align2::LEFT_TOP,
+            label,
+            egui::FontId::proportional(11.0),
+            text_color,
+        );
+    }
+
+    response.clicked()
+}
 
 pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     let accent = state.document.theme.accent_color();
@@ -21,11 +90,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     // ── 1. TOP STUDIO MENU BAR & HEADER ──
     if state.show_ui_panels {
         egui::TopBottomPanel::top("header_panel")
-            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(8, 12, 24, 248)).inner_margin(4.0))
+            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(8, 12, 24, 250)).inner_margin(4.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("HOLLOW CANVAS").size(13.0).strong().color(Color32::from_rgb(225, 232, 252)));
-                    ui.label(RichText::new("v0.4.0").size(9.0).color(Color32::from_rgb(110, 125, 160)));
+                    ui.label(RichText::new("HOLLOW CANVAS").size(13.0).strong().color(Color32::from_rgb(230, 238, 255)));
+                    ui.label(RichText::new("v0.4.1").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -151,26 +220,21 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         });
                     });
 
-                    // Active Tool Badge in header
+                    // Active Tool Badge
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         ui.add_space(4.0);
-                        let tool_label = format!(
-                            "{} {} · {}px",
-                            state.brush.tool.icon(),
-                            state.brush.tool.label(),
-                            state.brush.size as u32
-                        );
+                        let tool_label = format!("{} · {}px", state.brush.tool.label(), state.brush.size as u32);
                         egui::Frame::none()
                             .fill(accent_dim_c32)
                             .stroke(egui::Stroke::new(1.0_f32, accent_c32))
-                            .rounding(3.0)
-                            .inner_margin(egui::vec2(6.0, 2.0))
+                            .rounding(4.0)
+                            .inner_margin(egui::vec2(8.0, 2.5))
                             .show(ui, |ui| {
-                                ui.label(RichText::new(tool_label).size(10.0).strong().color(accent_c32));
+                                ui.label(RichText::new(tool_label).size(10.5).strong().color(accent_c32));
                             });
                     });
 
-                    // Streamlined Quick Action Pills on Right (No Overflow)
+                    // Compact Top-Right Action Controls (Never Run Off Screen)
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.button("ℹ").on_hover_text("About Hollow Canvas").clicked() {
                             state.show_about_dialog = true;
@@ -180,35 +244,23 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             state.show_help = !state.show_help;
                         }
 
-                        if ui.selectable_label(!state.show_ui_panels, "👁 Zen").on_hover_text("Toggle Full Canvas / Hide Docks (Tab)").clicked() {
+                        if ui.selectable_label(!state.show_ui_panels, "👁 Zen").on_hover_text("Full Canvas / Hide Docks (Tab)").clicked() {
                             state.show_ui_panels = !state.show_ui_panels;
                         }
 
-                        let ref_label = if state.show_ref_window { "🖼 [ON]" } else { "🖼" };
-                        if ui.selectable_label(state.show_ref_window, ref_label).on_hover_text("Reference Image Viewer").clicked() {
+                        let ref_label = if state.show_ref_window { "🖼 Ref [ON]" } else { "🖼 Ref" };
+                        if ui.selectable_label(state.show_ref_window, ref_label).on_hover_text("Toggle Reference Viewer").clicked() {
                             state.show_ref_window = !state.show_ref_window;
                         }
 
-                        let ruler_label = if state.show_rulers { "📏 [ON]" } else { "📏" };
+                        let ruler_label = if state.show_rulers { "📏 Rulers [ON]" } else { "📏 Rulers" };
                         if ui.selectable_label(state.show_rulers, ruler_label).on_hover_text("Toggle Rulers (Ctrl+R)").clicked() {
                             state.show_rulers = !state.show_rulers;
                         }
 
-                        let grid_label = if state.show_grid { "⊞ [ON]" } else { "⊞" };
+                        let grid_label = if state.show_grid { "⊞ Grid [ON]" } else { "⊞ Grid" };
                         if ui.selectable_label(state.show_grid, grid_label).on_hover_text("Toggle Grid (Ctrl+')").clicked() {
                             state.show_grid = !state.show_grid;
-                        }
-
-                        ui.separator();
-
-                        if ui.button("📤 Export").on_hover_text("Export Flat PNG (Ctrl+E)").clicked() {
-                            state.pending_file_action = Some(PendingFileAction::ExportPng);
-                        }
-                        if ui.button("💾 Save").on_hover_text("Save Project (Ctrl+S)").clicked() {
-                            state.pending_file_action = Some(PendingFileAction::SaveProject);
-                        }
-                        if ui.button(RichText::new("✦ New").strong().color(accent_c32)).on_hover_text("New Canvas (Ctrl+N)").clicked() {
-                            state.show_new_canvas_dialog = true;
                         }
                     });
                 });
@@ -219,9 +271,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .fixed_pos(egui::pos2(12.0, 12.0))
             .show(ctx, |ui| {
                 egui::Frame::none()
-                    .fill(Color32::from_rgba_unmultiplied(8, 12, 24, 220))
+                    .fill(Color32::from_rgba_unmultiplied(8, 12, 24, 230))
                     .stroke(egui::Stroke::new(1.0_f32, accent_c32))
-                    .rounding(4.0)
+                    .rounding(5.0)
                     .inner_margin(6.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -239,17 +291,17 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     // ── 2. BOTTOM STATUS BAR ──
     if state.show_ui_panels {
         egui::TopBottomPanel::bottom("status_bar")
-            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(4, 6, 14, 250)).inner_margin(4.0))
+            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(5, 7, 15, 252)).inner_margin(4.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("●").size(8.0).color(accent_c32));
-                    ui.label(RichText::new(&state.status_message).size(10.0).color(Color32::from_rgb(165, 178, 205)));
+                    ui.label(RichText::new(&state.status_message).size(10.5).color(Color32::from_rgb(170, 182, 210)));
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{} × {} px", state.document.width, state.document.height))
                                 .size(10.0)
-                                .color(Color32::from_rgb(130, 140, 168)),
+                                .color(Color32::from_rgb(130, 142, 172)),
                         );
                         ui.add_space(12.0);
                         ui.label(
@@ -259,7 +311,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 state.cursor_canvas_pos.y.round() as i32
                             ))
                             .size(10.0)
-                            .color(Color32::from_rgb(130, 140, 168)),
+                            .color(Color32::from_rgb(130, 142, 172)),
                         );
                         ui.add_space(12.0);
                         ui.label(
@@ -276,41 +328,37 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     // ── 3. LEFT SIDEBAR (TOOLS & BRUSH PROPERTIES) ──
     if state.show_ui_panels {
         egui::SidePanel::left("left_tools_panel")
-            .default_width(215.0)
-            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(8, 12, 24, 240)).inner_margin(8.0))
+            .default_width(220.0)
+            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(10, 14, 26, 245)).inner_margin(8.0))
             .show(ctx, |ui| {
                 ScrollArea::vertical().show(ui, |ui| {
-                    ui.label(RichText::new("STUDIO TOOLS").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
+                    ui.label(RichText::new("STUDIO TOOLS").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
 
                     let tools = [
-                        (ToolType::Brush, "✦ Brush"),
-                        (ToolType::Pencil, "✎ Pencil"),
-                        (ToolType::Watercolor, "≋ Water"),
-                        (ToolType::Chalk, "░ Chalk"),
-                        (ToolType::Spray, "⁕ Spray"),
-                        (ToolType::Smudge, "≈ Smudge"),
-                        (ToolType::Gradient, "▨ Gradient"),
-                        (ToolType::Wand, "★ Wand"),
-                        (ToolType::Eraser, "⌫ Eraser"),
-                        (ToolType::Fill, "⯀ Fill"),
-                        (ToolType::Line, "╱ Line"),
-                        (ToolType::Rect, "▭ Rect"),
-                        (ToolType::Ellipse, "○ Oval"),
-                        (ToolType::Polygon, "⬟ Poly"),
-                        (ToolType::Marquee, "▢ Select"),
-                        (ToolType::Move, "✛ Move"),
-                        (ToolType::Crop, "⛶ Crop"),
-                        (ToolType::Eyedropper, "◉ Pick"),
+                        (ToolType::Brush, "Brush"),
+                        (ToolType::Pencil, "Pencil"),
+                        (ToolType::Watercolor, "Water"),
+                        (ToolType::Chalk, "Chalk"),
+                        (ToolType::Spray, "Spray"),
+                        (ToolType::Smudge, "Smudge"),
+                        (ToolType::Gradient, "Gradient"),
+                        (ToolType::Wand, "Wand"),
+                        (ToolType::Eraser, "Eraser"),
+                        (ToolType::Fill, "Fill"),
+                        (ToolType::Line, "Line"),
+                        (ToolType::Rect, "Rect"),
+                        (ToolType::Ellipse, "Oval"),
+                        (ToolType::Polygon, "Poly"),
+                        (ToolType::Marquee, "Select"),
+                        (ToolType::Move, "Move"),
+                        (ToolType::Crop, "Crop"),
+                        (ToolType::Eyedropper, "Pick"),
                     ];
 
-                    egui::Grid::new("tools_grid").num_columns(2).spacing([4.0, 4.0]).show(ui, |ui| {
+                    egui::Grid::new("tools_grid").num_columns(2).spacing([6.0, 5.0]).show(ui, |ui| {
                         for (i, (t, label)) in tools.iter().enumerate() {
-                            let selected = state.brush.tool == *t;
-                            let btn = egui::Button::new(
-                                RichText::new(*label).size(11.0).color(if selected { accent_c32 } else { Color32::from_rgb(190, 200, 225) })
-                            ).min_size(Vec2::new(92.0, 24.0));
-
-                            if ui.add(btn).clicked() {
+                            let is_selected = state.brush.tool == *t;
+                            if render_tool_button(ui, *t, label, is_selected, accent_c32) {
                                 state.brush.tool = *t;
                                 state.set_status(format!("Tool: {}", t.label()));
                             }
@@ -324,7 +372,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.separator();
 
                     // Tool-specific properties
-                    ui.label(RichText::new("TOOL PROPERTIES").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
+                    ui.label(RichText::new("TOOL PROPERTIES").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
 
                     match state.brush.tool {
                         ToolType::Gradient => {
@@ -337,7 +385,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 }
                             });
                             ui.checkbox(&mut state.brush.gradient_dither, "Dither Smoothing");
-                            ui.label(RichText::new("Drag on canvas: blends Primary to Secondary").size(9.0).color(Color32::from_rgb(130, 140, 168)));
+                            ui.label(RichText::new("Drag on canvas: blends Primary to Secondary").size(9.0).color(Color32::from_rgb(130, 142, 172)));
                         }
                         ToolType::Wand => {
                             ui.add(egui::Slider::new(&mut state.wand_tolerance, 0..=128).text("Tolerance"));
@@ -379,7 +427,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             });
                             if state.brush.eraser_mode == EraserMode::ColorErase {
                                 ui.add(egui::Slider::new(&mut state.brush.color_erase_tolerance, 0..=128).text("Color Tol"));
-                                ui.label(RichText::new("Erases pixels matching Secondary color").size(9.0).color(Color32::from_rgb(130, 140, 168)));
+                                ui.label(RichText::new("Erases pixels matching Secondary color").size(9.0).color(Color32::from_rgb(130, 142, 172)));
                             }
                         }
                         ToolType::Line | ToolType::Rect | ToolType::Ellipse | ToolType::Polygon => {
@@ -417,13 +465,13 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                         if ui.button("Invert").clicked() {
                                             do_invert = true;
                                         }
-                                        if ui.button("✕ Deselect (Ctrl+D)").clicked() {
+                                        if ui.button("✕ Deselect").clicked() {
                                             do_deselect = true;
                                         }
                                     });
                                 }
                             } else {
-                                ui.label(RichText::new("Drag on canvas to select area").size(9.0).color(Color32::from_rgb(130, 140, 168)));
+                                ui.label(RichText::new("Drag on canvas to select area").size(9.0).color(Color32::from_rgb(130, 142, 172)));
                             }
                             if do_invert {
                                 if let Some(mask) = &mut state.selection {
@@ -459,14 +507,14 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     }
                                 });
                             } else {
-                                ui.label(RichText::new("Drag box to crop canvas").size(9.0).color(Color32::from_rgb(130, 140, 168)));
+                                ui.label(RichText::new("Drag box to crop canvas").size(9.0).color(Color32::from_rgb(130, 142, 172)));
                             }
                         }
                         _ => {}
                     }
 
                     ui.add_space(6.0);
-                    ui.label(RichText::new("BRUSH DYNAMICS").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
+                    ui.label(RichText::new("BRUSH DYNAMICS").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
                     ui.add(egui::Slider::new(&mut state.brush.size, 1.0..=180.0).text("Size"));
                     ui.add(egui::Slider::new(&mut state.brush.opacity, 0.02..=1.0).text("Opacity"));
                     ui.add(egui::Slider::new(&mut state.brush.smoothing, 0.0..=0.95).text("Smoothing"));
@@ -475,13 +523,13 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     ui.add_space(8.0);
                     ui.separator();
-                    ui.label(RichText::new("SYMMETRY & GRID").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
+                    ui.label(RichText::new("SYMMETRY & GRID").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
                     ui.horizontal(|ui| {
                         let modes = [
-                            (SymmetryMode::None, "Ø None"),
-                            (SymmetryMode::Horizontal, "◫ Horiz"),
-                            (SymmetryMode::Vertical, "⊟ Vert"),
-                            (SymmetryMode::Quad, "⊞ Quad"),
+                            (SymmetryMode::None, "None"),
+                            (SymmetryMode::Horizontal, "Horiz"),
+                            (SymmetryMode::Vertical, "Vert"),
+                            (SymmetryMode::Quad, "Quad"),
                         ];
                         for (m, icon) in modes {
                             let selected = state.symmetry.mode == m;
@@ -508,24 +556,24 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     // ── 4. RIGHT SIDEBAR (LAYERS, COLORS & CANVAS CONTROLS) ──
     if state.show_ui_panels {
         egui::SidePanel::right("right_layers_panel")
-            .default_width(235.0)
-            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(8, 12, 24, 240)).inner_margin(8.0))
+            .default_width(240.0)
+            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(10, 14, 26, 245)).inner_margin(8.0))
             .show(ctx, |ui| {
                 ScrollArea::vertical().show(ui, |ui| {
                     // ── PALETTE & COLOR PICKER ──
-                    ui.label(RichText::new("COLOR PALETTE").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
+                    ui.label(RichText::new("COLOR PALETTE").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
 
                     ui.horizontal(|ui| {
                         let [pr, pg, pb, _] = state.brush.primary_color.to_rgba8();
                         let [sr, sg, sb, _] = state.brush.secondary_color.to_rgba8();
 
                         let prim_btn = egui::Button::new("").min_size(Vec2::new(32.0, 32.0)).fill(Color32::from_rgb(pr, pg, pb));
-                        if ui.add(prim_btn).clicked() {
+                        if ui.add(prim_btn).on_hover_text("Primary Color").clicked() {
                             state.color_slot_is_secondary = false;
                         }
 
                         let sec_btn = egui::Button::new("").min_size(Vec2::new(32.0, 32.0)).fill(Color32::from_rgb(sr, sg, sb));
-                        if ui.add(sec_btn).clicked() {
+                        if ui.add(sec_btn).on_hover_text("Secondary Color").clicked() {
                             state.color_slot_is_secondary = true;
                         }
 
@@ -576,7 +624,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     // ── LAYERS PANEL ──
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("LAYERS").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
+                        ui.label(RichText::new("LAYERS").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if ui.button("➕ Add Layer").clicked() {
                                 let id = state.document.add_layer(None);
@@ -592,15 +640,14 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     for i in (0..layer_count).rev() {
                         let is_active = state.document.layers[i].id == active_id;
                         let layer_id = state.document.layers[i].id;
-                        let layer_name = state.document.layers[i].name.clone();
                         let is_ref = state.document.layers[i].is_reference;
                         let is_clip = state.document.layers[i].clipping_mask;
 
                         egui::Frame::none()
-                            .fill(if is_active { Color32::from_rgba_unmultiplied(ar, ag, ab, 40) } else { Color32::from_rgba_unmultiplied(16, 22, 40, 180) })
-                            .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else { Color32::from_rgb(32, 44, 72) }))
-                            .rounding(3.0)
-                            .inner_margin(4.0)
+                            .fill(if is_active { Color32::from_rgba_unmultiplied(ar, ag, ab, 42) } else { Color32::from_rgba_unmultiplied(18, 25, 46, 180) })
+                            .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else { Color32::from_rgb(36, 48, 78) }))
+                            .rounding(4.0)
+                            .inner_margin(5.0)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     let vis_icon = if state.document.layers[i].visible { "👁" } else { "⊘" };
@@ -608,14 +655,18 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                         state.document.layers[i].visible = !state.document.layers[i].visible;
                                     }
 
-                                    let mut label_txt = layer_name;
                                     if is_clip {
-                                        label_txt = format!("⮑ {}", label_txt);
+                                        ui.label(RichText::new("⮑").size(11.0).color(accent_c32));
                                     }
                                     if is_ref {
-                                        label_txt = format!("⭐ {}", label_txt);
+                                        ui.label(RichText::new("⭐").size(10.0));
                                     }
-                                    if ui.selectable_label(is_active, label_txt).clicked() {
+
+                                    // Editable Layer Name
+                                    let name_edit = egui::TextEdit::singleline(&mut state.document.layers[i].name)
+                                        .desired_width(85.0);
+                                    let response = ui.add(name_edit);
+                                    if response.clicked() || response.gained_focus() {
                                         state.document.active_layer_id = layer_id;
                                     }
 
@@ -643,14 +694,14 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     });
                                 }
                             });
-                        ui.add_space(2.0);
+                        ui.add_space(3.0);
                     }
 
                     ui.add_space(8.0);
                     ui.separator();
 
                     // ── REAL-TIME CANVAS OPERATIONS ──
-                    ui.label(RichText::new("CANVAS OPERATIONS").size(9.0).strong().color(Color32::from_rgb(100, 115, 148)));
+                    ui.label(RichText::new("CANVAS OPERATIONS").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
 
                     ui.horizontal(|ui| {
                         if ui.button("Resize / Scale...").clicked() {
@@ -701,10 +752,10 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.label(RichText::new("Choose a preset or configure custom canvas dimensions:").size(11.0).color(Color32::from_rgb(160, 172, 200)));
+                ui.label(RichText::new("Choose a preset or configure custom canvas dimensions:").size(11.0).color(Color32::from_rgb(170, 182, 210)));
                 ui.add_space(6.0);
 
-                ui.label(RichText::new("PRESETS").size(9.0).strong().color(accent_c32));
+                ui.label(RichText::new("PRESETS").size(9.5).strong().color(accent_c32));
                 ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
                     for (idx, preset) in CanvasPreset::ALL.iter().enumerate() {
                         let text = format!("{}: {} ({}×{})", preset.category, preset.name, preset.width, preset.height);
@@ -719,7 +770,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                 ui.add_space(8.0);
                 ui.separator();
-                ui.label(RichText::new("CUSTOM DIMENSIONS").size(9.0).strong().color(accent_c32));
+                ui.label(RichText::new("CUSTOM DIMENSIONS").size(9.5).strong().color(accent_c32));
 
                 ui.horizontal(|ui| {
                     ui.label("Width:");
@@ -909,7 +960,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.vertical_centered(|ui| {
                         ui.label(RichText::new("No reference image loaded.").size(12.0).color(Color32::from_rgb(180, 190, 220)));
                         ui.add_space(4.0);
-                        ui.label(RichText::new("Click '📂 Load Image...' to inspect lineart, textures, or character sheets.").size(10.0).color(Color32::from_rgb(130, 140, 168)));
+                        ui.label(RichText::new("Click '📂 Load Image...' to inspect lineart, textures, or character sheets.").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                     });
                 }
             });
@@ -924,24 +975,24 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(230, 238, 255)));
+                    ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.4.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 140, 170)));
+                    ui.label(RichText::new("Version 0.4.1 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);
                 ui.separator();
                 ui.add_space(6.0);
 
-                ui.label(RichText::new("Features & Guarantees:").size(10.0).strong().color(Color32::from_rgb(200, 210, 235)));
-                ui.label(RichText::new("• ⚡ Catmull-Rom Spline Drawing Engine with 0-allocation compositing\n• 🪄 Magic Wand, Gradients, Shapes & Multi-Axis Symmetry\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Universal VPack & Zip portable distribution").size(10.0).color(Color32::from_rgb(150, 160, 190)));
+                ui.label(RichText::new("Features & Guarantees:").size(10.0).strong().color(Color32::from_rgb(205, 215, 240)));
+                ui.label(RichText::new("• ⚡ Catmull-Rom Spline Drawing Engine with 0-allocation compositing\n• 🪄 Magic Wand, Gradients, Shapes & Multi-Axis Symmetry\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Universal VPack & Zip portable distribution").size(10.0).color(Color32::from_rgb(155, 165, 195)));
 
                 ui.add_space(8.0);
                 ui.separator();
 
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("License:").size(10.0).color(Color32::from_rgb(120, 130, 160)));
-                    ui.label(RichText::new("GNU General Public License v3.0 (GPL-3.0)").size(10.0).color(Color32::from_rgb(180, 190, 220)));
+                    ui.label(RichText::new("GNU General Public License v3.0 (GPL-3.0)").size(10.0).color(Color32::from_rgb(185, 195, 225)));
                 });
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Author:").size(10.0).color(Color32::from_rgb(120, 130, 160)));
@@ -966,33 +1017,33 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ScrollArea::vertical().show(ui, |ui| {
                     ui.label(RichText::new("STUDIO SHORTCUTS").size(10.0).strong().color(accent_c32));
                     let shortcuts = [
-                        ("Tab", "👁 Toggle Full Canvas / Hide Docks"),
-                        ("B", "✦ Brush Tool"),
-                        ("P", "✎ Pencil Tool"),
-                        ("W", "★ Magic Wand Selection"),
-                        ("G", "▨ Gradient / Fill Tool"),
-                        ("E", "⌫ Eraser Tool"),
-                        ("I / Alt+Click", "◉ Eyedropper Color Picker"),
-                        ("V", "✛ Move Layer Tool"),
-                        ("M", "▢ Marquee Selection Tool"),
-                        ("X", "⇄ Swap Primary & Secondary Colors"),
+                        ("Tab", "Toggle Full Canvas / Zen Mode"),
+                        ("B", "Brush Tool"),
+                        ("P", "Pencil Tool"),
+                        ("W", "Magic Wand Selection"),
+                        ("G", "Gradient / Fill Tool"),
+                        ("E", "Eraser Tool"),
+                        ("I / Alt+Click", "Eyedropper Color Picker"),
+                        ("V", "Move Layer Tool"),
+                        ("M", "Marquee Selection Tool"),
+                        ("X", "Swap Primary & Secondary Colors"),
                         ("Space + Drag", "Pan Canvas Viewport"),
                         ("Mouse Wheel", "Zoom Canvas In / Out"),
-                        ("Ctrl + N", "✦ Create New Canvas"),
-                        ("Ctrl + S", "💾 Save Project (.hcv)"),
-                        ("Ctrl + O", "📂 Open Project (.hcv)"),
-                        ("Ctrl + E", "📤 Export PNG Image"),
-                        ("Ctrl + Z", "↶ Undo Action"),
-                        ("Ctrl + Y / Ctrl+Shift+Z", "↷ Redo Action"),
-                        ("Ctrl + D", "✕ Deselect"),
-                        ("Ctrl + '", "⊞ Toggle Viewport Grid"),
-                        ("Ctrl + R", "📏 Toggle Viewport Rulers"),
+                        ("Ctrl + N", "Create New Canvas"),
+                        ("Ctrl + S", "Save Project (.hcv)"),
+                        ("Ctrl + O", "Open Project (.hcv)"),
+                        ("Ctrl + E", "Export PNG Image"),
+                        ("Ctrl + Z", "Undo Action"),
+                        ("Ctrl + Y / Ctrl+Shift+Z", "Redo Action"),
+                        ("Ctrl + D", "Deselect"),
+                        ("Ctrl + '", "Toggle Viewport Grid"),
+                        ("Ctrl + R", "Toggle Viewport Rulers"),
                     ];
 
                     egui::Grid::new("help_grid").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
                         for (k, desc) in shortcuts {
-                            ui.label(RichText::new(k).strong().color(Color32::from_rgb(220, 230, 255)));
-                            ui.label(RichText::new(desc).color(Color32::from_rgb(160, 172, 200)));
+                            ui.label(RichText::new(k).strong().color(Color32::from_rgb(225, 235, 255)));
+                            ui.label(RichText::new(desc).color(Color32::from_rgb(165, 175, 205)));
                             ui.end_row();
                         }
                     });
