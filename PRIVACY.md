@@ -2,7 +2,7 @@
 
 **Last Updated: August 31, 2026**
 
-At **Hollow Canvas**, your privacy and creative ownership are absolute priorities. This Privacy Policy explains our data practices, architecture, and commitments.
+When using **Hollow Canvas**, your privacy and creative ownership are absolute priorities. This Privacy Policy explains our data practices, architecture, and commitments.
 
 ---
 
