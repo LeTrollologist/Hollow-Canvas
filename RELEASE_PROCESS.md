@@ -1,15 +1,16 @@
 # Hollow Canvas: Local Release & Packaging Process
 
-This document outlines the standardized, local-first release pipeline for Hollow Canvas. All builds, tests, packaging, and publishing operations run deterministically on the local developer machine without relying on external CI/CD services.
+This document outlines the standardized, local-first release pipeline for Hollow Canvas. All builds, tests, packaging, security scans, VirusTotal verification, and publishing operations run deterministically on the local developer machine without relying on external CI/CD services.
 
 ---
 
 ## 1. Overview & Core Principles
 
-1. **No GitHub Actions**: Everything is built, tested, and published locally via `scripts/pipeline.py` and the `gh` CLI.
+1. **No GitHub Actions**: Everything is built, tested, scanned, and published locally via `scripts/pipeline.py` and the `gh` CLI.
 2. **Canonical Asset Naming**: All assets follow `hollow-canvas-v{VER}-{platform}-{arch}.{ext}`.
-3. **Clean Distribution Bundles**: Only standalone archives (`.zip` and `.vpack`) and `SHA256SUMS.txt` are published as release assets.
+3. **Clean Distribution Bundles**: Only standalone archives (`.zip` and `.vpack`), `SHA256SUMS.txt`, and security audit summaries (`virustotal-summary.txt`) are published as release assets.
 4. **VPack Integration**: Every release includes a high-compression `.vpack` archive compatible with the `vpack` archiver.
+5. **VirusTotal & Binary Hygiene**: Every release zip is submitted for multi-engine antivirus verification and linked in release notes.
 
 ---
 
@@ -23,29 +24,37 @@ This document outlines the standardized, local-first release pipeline for Hollow
 | **`security`** | Audit logs | Generates `dist/v{VER}/audit/security-audit.txt` |
 | **`package`** | Asset bundling | Generates `.zip` and `.vpack` archives |
 | **`verify`** | Checksums & lint | Generates `SHA256SUMS.txt` and tests `.vpack` integrity |
+| **`virustotal`** | VirusTotal Scan & Audit | Submits zip via VirusTotal API v3 and generates audit report |
 | **`publish`** | GitHub Release | Creates release on GitHub and uploads canonical assets |
 
 ---
 
 ## 3. Running a Release
 
-### Full Release (Build, Test, Package & Publish)
+### Environment Configuration (Optional for VirusTotal API)
+Set your VirusTotal API key to automate scanning and verification polling:
+```powershell
+$env:VIRUSTOTAL_API_KEY = "your-virustotal-api-key-here"
+```
+*(If no API key is set, the pipeline automatically generates canonical VirusTotal GUI permalinks based on SHA-256 digests).*
+
+### Full Release (Build, Test, Package, VirusTotal & Publish)
 ```bash
-python scripts/pipeline.py v0.1.0
+python scripts/pipeline.py v0.8.3
 ```
 *or via Make:*
 ```bash
-make release TAG=v0.1.0
+make release TAG=v0.8.3
 ```
 
 ### Local Build & Package Only (No Upload)
 ```bash
-python scripts/pipeline.py v0.1.0 --no-publish
+python scripts/pipeline.py v0.8.3 --no-publish
 ```
 
 ### Create as GitHub Draft Release
 ```bash
-python scripts/pipeline.py v0.1.0 --draft
+python scripts/pipeline.py v0.8.3 --draft
 ```
 
 ---
@@ -53,14 +62,16 @@ python scripts/pipeline.py v0.1.0 --draft
 ## 4. Output Layout (`dist/`)
 
 ```text
-dist/v0.1.0/
+dist/v0.8.3/
 ├── windows-staging/                                # Temporary staging folder
-├── hollow-canvas-v0.1.0-windows-x86_64.zip         # Standard Zip distribution
-├── hollow-canvas-v0.1.0-windows-x86_64.vpack       # VPack distribution
+├── hollow-canvas-v0.8.3-windows-x86_64.zip         # Standard Zip distribution
+├── hollow-canvas-v0.8.3-windows-x86_64.vpack       # VPack distribution
 ├── SHA256SUMS.txt                                  # SHA-256 Checksums
 ├── release_notes.md                                # Release markdown body
 └── audit/
-    └── security-audit.txt                          # Local security audit log
+    ├── security-audit.txt                          # Local security audit log
+    ├── virustotal-summary.txt                      # VirusTotal scan analysis summary
+    └── virustotal-report.json                     # Full VirusTotal v3 JSON response (when API key is set)
 ```
 
 ---
@@ -70,10 +81,13 @@ dist/v0.1.0/
 To verify released packages:
 ```bash
 # Check SHA-256
-certutil -hashfile hollow-canvas-v0.1.0-windows-x86_64.zip SHA256
+certutil -hashfile hollow-canvas-v0.8.3-windows-x86_64.zip SHA256
 
 # Verify VPACK integrity and CRC-32
-vpack test hollow-canvas-v0.1.0-windows-x86_64.vpack
+vpack test hollow-canvas-v0.8.3-windows-x86_64.vpack
+
+# Inspect VirusTotal Analysis
+# https://www.virustotal.com/gui/file/<SHA256_HASH>
 ```
 
 ---
@@ -83,13 +97,13 @@ vpack test hollow-canvas-v0.1.0-windows-x86_64.vpack
 ### Option A: Via VPack Archiver
 ```bash
 # Extract all contents
-vpack extract hollow-canvas-v0.1.0-windows-x86_64.vpack
+vpack extract hollow-canvas-v0.8.3-windows-x86_64.vpack
 
 # Or extract to a specific folder
-vpack extract hollow-canvas-v0.1.0-windows-x86_64.vpack -o ./HollowCanvas/
+vpack extract hollow-canvas-v0.8.3-windows-x86_64.vpack -o ./HollowCanvas/
 ```
 
 ### Option B: Via Native Windows Zip
 ```powershell
-Expand-Archive -Path .\hollow-canvas-v0.1.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
+Expand-Archive -Path .\hollow-canvas-v0.8.3-windows-x86_64.zip -DestinationPath .\HollowCanvas
 ```
