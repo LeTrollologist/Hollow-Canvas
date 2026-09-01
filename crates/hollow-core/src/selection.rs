@@ -46,11 +46,11 @@ impl SelectionMask {
         for y in (0..h).step_by(step) {
             for x in (0..w).step_by(step) {
                 let idx = (y * w + x) as usize;
-                if idx < mask.len() && mask[idx] > 32 {
-                    let left_empty = x == 0 || mask[idx - 1] <= 32;
-                    let right_empty = x + 1 >= w || mask[idx + 1] <= 32;
-                    let top_empty = y == 0 || mask[idx - (w as usize)] <= 32;
-                    let bottom_empty = y + 1 >= h || mask[idx + (w as usize)] <= 32;
+                if idx < mask.len() && mask[idx] > 8 {
+                    let left_empty = x == 0 || mask[idx - 1] <= 8;
+                    let right_empty = x + 1 >= w || mask[idx + 1] <= 8;
+                    let top_empty = y == 0 || mask[idx - (w as usize)] <= 8;
+                    let bottom_empty = y + 1 >= h || mask[idx + (w as usize)] <= 8;
 
                     let fx = x as f32;
                     let fy = y as f32;
@@ -242,6 +242,7 @@ impl SelectionMask {
         let r = radius.min(50) as i32;
         let w = self.width as i32;
         let h = self.height as i32;
+        let original_mask = self.mask.clone();
         let mut tmp = self.mask.clone();
         let mut out = vec![0u8; self.mask.len()];
 
@@ -282,7 +283,14 @@ impl SelectionMask {
             tmp.copy_from_slice(&out);
         }
 
-        self.mask = tmp;
+        // Confine feathering strictly within the original selection boundary so drawing NEVER bleeds past the selection
+        for i in 0..self.mask.len() {
+            if original_mask[i] == 0 {
+                self.mask[i] = 0;
+            } else {
+                self.mask[i] = tmp[i].min(original_mask[i]);
+            }
+        }
         self.recompute_metadata();
     }
 

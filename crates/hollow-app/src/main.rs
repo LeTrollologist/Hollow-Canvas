@@ -165,6 +165,7 @@ struct HollowCanvasDesktopApp {
     win_w: usize,
     win_h: usize,
     is_pointer_down: bool,
+    is_drawing_on_canvas: bool,
     is_space_down: bool,
     last_canvas_pos: Option<Vec2>,
     stroke_points: Vec<BrushPoint>,
@@ -172,6 +173,71 @@ struct HollowCanvasDesktopApp {
     before_move_offset: (i32, i32),
     active_snapshot_taken: bool,
     mouse_pos: egui::Pos2,
+}
+
+impl HollowCanvasDesktopApp {
+    pub fn is_over_ui(&self, pos: Vec2) -> bool {
+        let w = self.win_w as f32;
+        let h = self.win_h as f32;
+
+        // 1. Check if egui is actively using or requesting pointer interaction
+        if self.egui_ctx.wants_pointer_input() || self.egui_ctx.is_pointer_over_area() || self.egui_ctx.is_using_pointer() {
+            return true;
+        }
+
+        // 2. Main Studio Panels
+        if self.state.show_ui_panels {
+            // Top menu & window titlebar region
+            if pos.y < 46.0 {
+                return true;
+            }
+            // Bottom status bar
+            if pos.y > (h - 32.0) {
+                return true;
+            }
+            // Left tool dock & properties panel
+            if pos.x < 235.0 {
+                return true;
+            }
+            // Right layers & color palette panel
+            if pos.x > (w - 255.0) {
+                return true;
+            }
+        } else {
+            // Minimal floating hamburger / header button area
+            if pos.x < 260.0 && pos.y < 50.0 {
+                return true;
+            }
+        }
+
+        // 3. Selection floating HUD bar
+        if self.state.selection.as_ref().map_or(false, |s| s.has_selection()) && !self.state.transform_session.is_active && self.state.show_ui_panels {
+            let hud_x_min = (w - 380.0) * 0.5;
+            let hud_x_max = (w + 380.0) * 0.5;
+            let hud_y_min = h - 70.0;
+            let hud_y_max = h - 15.0;
+            if pos.x >= hud_x_min && pos.x <= hud_x_max && pos.y >= hud_y_min && pos.y <= hud_y_max {
+                return true;
+            }
+        }
+
+        // 4. Any active dialogs, modal filters, reference lightbox dock
+        if self.state.show_ref_window
+            || self.state.show_help
+            || self.state.show_about_dialog
+            || self.state.show_new_canvas_dialog
+            || self.state.show_resize_canvas_dialog
+            || self.state.active_filter_modal != hollow_ui::state::ActiveFilterModal::None
+            || self.state.show_gallery
+            || self.state.transform_session.is_active
+        {
+            if self.egui_ctx.is_pointer_over_area() || self.egui_ctx.wants_pointer_input() {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -238,14 +304,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             let canvas_pos = app.state.screen_to_canvas(screen_pos, app.win_w as f32, app.win_h as f32);
             app.state.cursor_canvas_pos = canvas_pos;
 
-            let is_over_ui = y < 42.0
-                || y > (app.win_h as f32 - 28.0)
-                || x < 205.0
-                || x > (app.win_w as f32 - 235.0)
-                || ((app.state.show_ref_window || app.state.show_help || app.state.show_gallery)
-                    && app.egui_ctx.is_pointer_over_area());
-
-            if app.is_pointer_down && !is_over_ui {
+            if app.is_drawing_on_canvas && !app.is_space_down {
                 let tool = app.state.brush.tool;
                 if tool == ToolType::Move {
                     let is_ctrl = (GetKeyState(0x11) as i32 & 0x8000) != 0;
@@ -346,143 +405,137 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 return 0;
             }
 
+            // Check if pointer down is over ANY UI element (menus, sliders, titlebar, dialogs)
+            if app.is_over_ui(screen_pos) {
+                app.is_drawing_on_canvas = false;
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+                return 0;
+            }
+
+            app.is_drawing_on_canvas = true;
             let canvas_pos = app.state.screen_to_canvas(screen_pos, app.win_w as f32, app.win_h as f32);
             app.last_canvas_pos = Some(canvas_pos);
             app.stroke_points.clear();
             app.stroke_points.push(BrushPoint::new(canvas_pos, 1.0));
 
             let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0; // VK_MENU (Alt)
+            let tool = app.state.brush.tool;
 
-            let is_over_ui = if app.state.show_ui_panels {
-                raw_y < 38.0
-                    || raw_y > (app.win_h as f32 - 28.0)
-                    || raw_x < 218.0
-                    || raw_x > (app.win_w as f32 - 240.0)
-                    || ((app.state.show_ref_window || app.state.show_help || app.state.show_about_dialog || app.state.show_new_canvas_dialog || app.state.show_resize_canvas_dialog)
-                        && app.egui_ctx.is_pointer_over_area())
-            } else {
-                (raw_x < 250.0 && raw_y < 50.0)
-                    || ((app.state.show_ref_window || app.state.show_help || app.state.show_about_dialog || app.state.show_new_canvas_dialog || app.state.show_resize_canvas_dialog)
-                        && app.egui_ctx.is_pointer_over_area())
-            };
-
-            if !is_over_ui {
-                let tool = app.state.brush.tool;
-
-                if is_alt {
-                    let flat = app.state.document.composite_layers(false);
-                    let cx = canvas_pos.x as i32;
-                    let cy = canvas_pos.y as i32;
-                    if cx >= 0 && cx < app.state.document.width as i32 && cy >= 0 && cy < app.state.document.height as i32 {
-                        let idx = ((cy * app.state.document.width as i32 + cx) * 4) as usize;
-                        if idx + 3 < flat.len() {
-                            let picked = hollow_core::color::Color::from_rgba8(flat[idx], flat[idx + 1], flat[idx + 2], flat[idx + 3]);
-                            app.state.brush.primary_color = picked;
-                            app.state.push_color_history(picked);
-                            app.state.set_status(format!("Sampled color: {}", picked.to_hex()));
-                        }
+            if is_alt {
+                let flat = app.state.document.composite_layers(false);
+                let cx = canvas_pos.x as i32;
+                let cy = canvas_pos.y as i32;
+                if cx >= 0 && cx < app.state.document.width as i32 && cy >= 0 && cy < app.state.document.height as i32 {
+                    let idx = ((cy * app.state.document.width as i32 + cx) * 4) as usize;
+                    if idx + 3 < flat.len() {
+                        let picked = hollow_core::color::Color::from_rgba8(flat[idx], flat[idx + 1], flat[idx + 2], flat[idx + 3]);
+                        app.state.brush.primary_color = picked;
+                        app.state.push_color_history(picked);
+                        app.state.set_status(format!("Sampled color: {}", picked.to_hex()));
                     }
-                } else if tool == ToolType::Wand {
-                    if canvas_pos.x >= 0.0 && canvas_pos.y >= 0.0 {
-                        let mask = StrokeRasterizer::rasterize_magic_wand(
-                            &app.state.document,
-                            canvas_pos.x as u32,
-                            canvas_pos.y as u32,
-                            app.state.wand_tolerance,
-                            app.state.wand_contiguous,
-                            app.state.wand_sample_all_layers,
-                        );
-                        app.state.selection = Some(mask);
-                        app.state.set_status("Magic Wand selection active");
-                    }
-                } else if tool == ToolType::Fill {
-                    if let Some(layer) = app.state.document.active_layer() {
-                        app.before_stroke_pixels = layer.pixels.clone();
-                        app.active_snapshot_taken = true;
-                    }
-                    let sel = app.state.selection.as_ref();
-                    if canvas_pos.x >= 0.0 && canvas_pos.y >= 0.0 {
-                        StrokeRasterizer::flood_fill(
-                            &mut app.state.document,
-                            canvas_pos.x as u32,
-                            canvas_pos.y as u32,
-                            app.state.brush.primary_color,
-                            sel,
-                            app.state.wand_tolerance,
-                        );
-                    }
-                } else if tool == ToolType::Gradient {
-                    if let Some(layer) = app.state.document.active_layer() {
-                        app.before_stroke_pixels = layer.pixels.clone();
-                        app.active_snapshot_taken = true;
-                    }
-                    app.state.drag_start_canvas_pos = Some(canvas_pos);
-                } else if tool == ToolType::Eyedropper {
-                    let flat = app.state.document.composite_layers(false);
-                    let cx = canvas_pos.x as i32;
-                    let cy = canvas_pos.y as i32;
-                    if cx >= 0 && cx < app.state.document.width as i32 && cy >= 0 && cy < app.state.document.height as i32 {
-                        let idx = ((cy * app.state.document.width as i32 + cx) * 4) as usize;
-                        if idx + 3 < flat.len() {
-                            let picked = hollow_core::color::Color::from_rgba8(flat[idx], flat[idx + 1], flat[idx + 2], flat[idx + 3]);
-                            app.state.brush.primary_color = picked;
-                            app.state.push_color_history(picked);
-                        }
-                    }
-                } else if tool == ToolType::Polygon {
-                    let pts_len = app.state.polygon_points.len();
-                    if pts_len >= 2 && app.state.polygon_points[0].distance(canvas_pos) < 15.0 {
-                        // Close polygon
-                        if let Some(layer) = app.state.document.active_layer() {
-                            app.before_stroke_pixels = layer.pixels.clone();
-                            app.active_snapshot_taken = true;
-                        }
-                        let pts = app.state.polygon_points.clone();
-                        let sel = app.state.selection.as_ref();
-                        StrokeRasterizer::rasterize_polygon(&mut app.state.document, &pts, &app.state.brush, &app.state.symmetry, sel);
-                        app.state.polygon_points.clear();
-                        app.state.set_status("Polygon committed");
-                    } else {
-                        app.state.polygon_points.push(canvas_pos);
-                        app.state.set_status(format!("Polygon: {} points", app.state.polygon_points.len()));
-                    }
-                } else if tool == ToolType::Lasso {
-                    app.state.lasso_points.clear();
-                    app.state.lasso_points.push(canvas_pos);
-                    app.state.set_status("Drawing Lasso selection loop...");
-                } else if tool == ToolType::Move {
-                    let is_ctrl = (GetKeyState(0x11) as i32 & 0x8000) != 0;
-                    if is_ctrl {
-                        if let Some(layer) = app.state.document.active_layer() {
-                            app.before_move_offset = (layer.offset_x, layer.offset_y);
-                        }
-                        app.last_canvas_pos = Some(canvas_pos);
-                    } else {
-                        app.last_canvas_pos = Some(screen_pos);
-                    }
-                } else if tool.is_shape_tool() || tool == ToolType::Marquee || tool == ToolType::Crop {
-                    if tool.is_shape_tool() {
-                        if let Some(layer) = app.state.document.active_layer() {
-                            app.before_stroke_pixels = layer.pixels.clone();
-                            app.active_snapshot_taken = true;
-                        }
-                    }
-                    app.state.drag_start_canvas_pos = Some(canvas_pos);
-                } else if tool.is_freehand_stroke_tool() {
-                    if let Some(layer) = app.state.document.active_layer() {
-                        app.before_stroke_pixels = layer.pixels.clone();
-                        app.active_snapshot_taken = true;
-                    }
-                    let point = BrushPoint::new(canvas_pos, 1.0);
-                    let sel = app.state.selection.as_ref();
-                    StrokeRasterizer::paint_dot(&mut app.state.document, point, &app.state.brush, &app.state.symmetry, sel);
                 }
+            } else if tool == ToolType::Wand {
+                if canvas_pos.x >= 0.0 && canvas_pos.y >= 0.0 {
+                    let mask = StrokeRasterizer::rasterize_magic_wand(
+                        &app.state.document,
+                        canvas_pos.x as u32,
+                        canvas_pos.y as u32,
+                        app.state.wand_tolerance,
+                        app.state.wand_contiguous,
+                        app.state.wand_sample_all_layers,
+                    );
+                    app.state.selection = Some(mask);
+                    app.state.set_status("Magic Wand selection active");
+                }
+            } else if tool == ToolType::Fill {
+                if let Some(layer) = app.state.document.active_layer() {
+                    app.before_stroke_pixels = layer.pixels.clone();
+                    app.active_snapshot_taken = true;
+                }
+                let sel = app.state.selection.as_ref();
+                if canvas_pos.x >= 0.0 && canvas_pos.y >= 0.0 {
+                    StrokeRasterizer::flood_fill(
+                        &mut app.state.document,
+                        canvas_pos.x as u32,
+                        canvas_pos.y as u32,
+                        app.state.brush.primary_color,
+                        sel,
+                        app.state.wand_tolerance,
+                    );
+                }
+            } else if tool == ToolType::Gradient {
+                if let Some(layer) = app.state.document.active_layer() {
+                    app.before_stroke_pixels = layer.pixels.clone();
+                    app.active_snapshot_taken = true;
+                }
+                app.state.drag_start_canvas_pos = Some(canvas_pos);
+            } else if tool == ToolType::Eyedropper {
+                let flat = app.state.document.composite_layers(false);
+                let cx = canvas_pos.x as i32;
+                let cy = canvas_pos.y as i32;
+                if cx >= 0 && cx < app.state.document.width as i32 && cy >= 0 && cy < app.state.document.height as i32 {
+                    let idx = ((cy * app.state.document.width as i32 + cx) * 4) as usize;
+                    if idx + 3 < flat.len() {
+                        let picked = hollow_core::color::Color::from_rgba8(flat[idx], flat[idx + 1], flat[idx + 2], flat[idx + 3]);
+                        app.state.brush.primary_color = picked;
+                        app.state.push_color_history(picked);
+                    }
+                }
+            } else if tool == ToolType::Polygon {
+                let pts_len = app.state.polygon_points.len();
+                if pts_len >= 2 && app.state.polygon_points[0].distance(canvas_pos) < 15.0 {
+                    // Close polygon
+                    if let Some(layer) = app.state.document.active_layer() {
+                        app.before_stroke_pixels = layer.pixels.clone();
+                        app.active_snapshot_taken = true;
+                    }
+                    let pts = app.state.polygon_points.clone();
+                    let sel = app.state.selection.as_ref();
+                    StrokeRasterizer::rasterize_polygon(&mut app.state.document, &pts, &app.state.brush, &app.state.symmetry, sel);
+                    app.state.polygon_points.clear();
+                    app.state.set_status("Polygon committed");
+                } else {
+                    app.state.polygon_points.push(canvas_pos);
+                    app.state.set_status(format!("Polygon: {} points", app.state.polygon_points.len()));
+                }
+            } else if tool == ToolType::Lasso {
+                app.state.lasso_points.clear();
+                app.state.lasso_points.push(canvas_pos);
+                app.state.set_status("Drawing Lasso selection loop...");
+            } else if tool == ToolType::Move {
+                let is_ctrl = (GetKeyState(0x11) as i32 & 0x8000) != 0;
+                if is_ctrl {
+                    if let Some(layer) = app.state.document.active_layer() {
+                        app.before_move_offset = (layer.offset_x, layer.offset_y);
+                    }
+                    app.last_canvas_pos = Some(canvas_pos);
+                } else {
+                    app.last_canvas_pos = Some(screen_pos);
+                }
+            } else if tool.is_shape_tool() || tool == ToolType::Marquee || tool == ToolType::Crop {
+                if tool.is_shape_tool() {
+                    if let Some(layer) = app.state.document.active_layer() {
+                        app.before_stroke_pixels = layer.pixels.clone();
+                        app.active_snapshot_taken = true;
+                    }
+                }
+                app.state.drag_start_canvas_pos = Some(canvas_pos);
+            } else if tool.is_freehand_stroke_tool() {
+                if let Some(layer) = app.state.document.active_layer() {
+                    app.before_stroke_pixels = layer.pixels.clone();
+                    app.active_snapshot_taken = true;
+                }
+                let point = BrushPoint::new(canvas_pos, 1.0);
+                let sel = app.state.selection.as_ref();
+                StrokeRasterizer::paint_dot(&mut app.state.document, point, &app.state.brush, &app.state.symmetry, sel);
             }
             InvalidateRect(hwnd, std::ptr::null(), 0);
             0
         }
         WM_LBUTTONUP => {
+            let was_drawing = app.is_drawing_on_canvas;
             app.is_pointer_down = false;
+            app.is_drawing_on_canvas = false;
             app.events.push(egui::Event::PointerButton {
                 pos: app.mouse_pos,
                 button: egui::PointerButton::Primary,
@@ -490,25 +543,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 modifiers: Default::default(),
             });
 
-            let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
-            let raw_y = ((lparam as u32 >> 16) & 0xFFFF) as i16 as f32;
-            let is_over_ui = if app.state.show_ui_panels {
-                raw_y < 38.0
-                    || raw_y > (app.win_h as f32 - 28.0)
-                    || raw_x < 218.0
-                    || raw_x > (app.win_w as f32 - 240.0)
-                    || ((app.state.show_ref_window || app.state.show_help || app.state.show_about_dialog || app.state.show_new_canvas_dialog || app.state.show_resize_canvas_dialog)
-                        && app.egui_ctx.is_pointer_over_area())
-            } else {
-                (raw_x < 250.0 && raw_y < 50.0)
-                    || ((app.state.show_ref_window || app.state.show_help || app.state.show_about_dialog || app.state.show_new_canvas_dialog || app.state.show_resize_canvas_dialog)
-                        && app.egui_ctx.is_pointer_over_area())
-            };
-
-            if is_over_ui {
-                // If releasing over UI, clear transient drawing points but preserve selections!
-                app.state.lasso_points.clear();
-                app.state.drag_start_canvas_pos = None;
+            if !was_drawing {
                 InvalidateRect(hwnd, std::ptr::null(), 0);
                 return 0;
             }
@@ -1194,6 +1229,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         win_w: initial_width,
         win_h: initial_height,
         is_pointer_down: false,
+        is_drawing_on_canvas: false,
         is_space_down: false,
         last_canvas_pos: None,
         stroke_points: Vec::new(),

@@ -443,9 +443,10 @@ mod tests {
         assert_eq!(mask.get_value(5, 5), 0);
 
         mask.feather(3);
-        // Interior remains high, boundary becomes smooth falloff
+        // Interior remains high, boundary becomes smooth falloff, and outside remains strictly 0
         assert!(mask.get_value(20, 20) > 200);
-        assert!(mask.get_value(9, 20) > 0);
+        assert!(mask.get_value(11, 20) > 0 && mask.get_value(11, 20) < 255);
+        assert_eq!(mask.get_value(9, 20), 0); // Strict confinement: never bleed outside
 
         let mut mask_morph = crate::selection::SelectionMask::from_rect(
             40,

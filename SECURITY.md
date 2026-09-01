@@ -26,7 +26,7 @@ Every official release distribution package (`.zip` and `.vpack`) undergoes auto
 ### How to Verify a Downloaded Release
 ```powershell
 # 1. Compute SHA-256 on Windows
-certutil -hashfile hollow-canvas-v0.8.3-windows-x86_64.zip SHA256
+certutil -hashfile hollow-canvas-v0.8.4-windows-x86_64.zip SHA256
 
 # 2. Check the VirusTotal analysis report directly in your browser:
 # https://www.virustotal.com/gui/file/<SHA256_HASH>

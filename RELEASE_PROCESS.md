@@ -40,21 +40,21 @@ $env:VIRUSTOTAL_API_KEY = "your-virustotal-api-key-here"
 
 ### Full Release (Build, Test, Package, VirusTotal & Publish)
 ```bash
-python scripts/pipeline.py v0.8.3
+python scripts/pipeline.py v0.8.4
 ```
 *or via Make:*
 ```bash
-make release TAG=v0.8.3
+make release TAG=v0.8.4
 ```
 
 ### Local Build & Package Only (No Upload)
 ```bash
-python scripts/pipeline.py v0.8.3 --no-publish
+python scripts/pipeline.py v0.8.4 --no-publish
 ```
 
 ### Create as GitHub Draft Release
 ```bash
-python scripts/pipeline.py v0.8.3 --draft
+python scripts/pipeline.py v0.8.4 --draft
 ```
 
 ---
@@ -62,10 +62,10 @@ python scripts/pipeline.py v0.8.3 --draft
 ## 4. Output Layout (`dist/`)
 
 ```text
-dist/v0.8.3/
+dist/v0.8.4/
 ├── windows-staging/                                # Temporary staging folder
-├── hollow-canvas-v0.8.3-windows-x86_64.zip         # Standard Zip distribution
-├── hollow-canvas-v0.8.3-windows-x86_64.vpack       # VPack distribution
+├── hollow-canvas-v0.8.4-windows-x86_64.zip         # Standard Zip distribution
+├── hollow-canvas-v0.8.4-windows-x86_64.vpack       # VPack distribution
 ├── SHA256SUMS.txt                                  # SHA-256 Checksums
 ├── release_notes.md                                # Release markdown body
 └── audit/
@@ -81,10 +81,10 @@ dist/v0.8.3/
 To verify released packages:
 ```bash
 # Check SHA-256
-certutil -hashfile hollow-canvas-v0.8.3-windows-x86_64.zip SHA256
+certutil -hashfile hollow-canvas-v0.8.4-windows-x86_64.zip SHA256
 
 # Verify VPACK integrity and CRC-32
-vpack test hollow-canvas-v0.8.3-windows-x86_64.vpack
+vpack test hollow-canvas-v0.8.4-windows-x86_64.vpack
 
 # Inspect VirusTotal Analysis
 # https://www.virustotal.com/gui/file/<SHA256_HASH>

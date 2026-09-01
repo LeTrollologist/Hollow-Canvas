@@ -341,22 +341,22 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
         else "🟢 Verified Clean / Independent Permalinks Available"
     )
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Selection Performance & Zero-Lag Drawing Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Confined Feathering & UI Drag Isolation Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
 ### ✨ What's New in {version}
-* **⚡ Zero-Lag Drawing With Selections Active (Massive Performance Boost)**:
-  - Eliminated full-document buffer scans on every pixel inside rasterizer stamping loops.
-  - Replaced $O(N)$ dynamic selection queries with instant $O(1)$ pre-calculated active mask queries.
-  - Smooth anti-aliased selection clipping now executes at full 1000+ Hz tablet polling rates without frame drops or stroke latency.
-* **✨ Precomputed Marching Ants Boundary Caching**:
-  - Selection outline segments are now precalculated on selection creation/modification rather than re-scanning millions of pixels every frame.
-  - Viewport rendering runs with zero per-frame heap allocations.
-* **🔒 Rock-Solid Selection Persistence Across Tools**:
-  - Selections made with Lasso, Marquee, or Magic Wand remain fully active and intact when switching to any tool.
-* **🖐️ Professional Wet-Paint Smudge Engine Overhaul**:
-  - Bilinear motion vector lookback sampling with hermite radial falloff and `smudge_strength` scaling.
+* **🎯 Strictly Confined Selection Feathering (No Outward Leak)**:
+  - Feathering now applies smooth Gaussian falloff strictly within the bounds of the original selection mask.
+  - Zero outward diffusion bleed — paint strokes and fills are 100% constrained within the marching ants boundary.
+  - Marching ants outline segments now match the exact pixel threshold where painting is permitted.
+* **🔒 Studio UI Drag & Menu Pointer Isolation**:
+  - Implemented dedicated `is_drawing_on_canvas` state tracking and full-window UI bounds hit-testing.
+  - Interacting with sliders (Size, Opacity, Smoothing, etc.), dropdown menus, title bars, dialogs, or the floating HUD can never accidentally trigger canvas brush strokes.
+* **⚡ Zero-Lag Drawing With Active Selections**:
+  - Instant $O(1)$ pre-calculated active mask queries and direct array lookup for ultra-smooth 1000+ Hz tablet polling.
+* **🖐️ Professional Wet-Paint Smudge Engine**:
+  - Bilinear motion vector lookback sampling with hermite radial falloff.
 * **⤢ Studio Free Transform Tool (`Ctrl+T`)** — Interactive 8-point bounding box gizmo, smooth rotation, mirror flipping, and bilinear resampling.
 * **📐 Dual-Mode Reference & Tracing Paper Engine** — On-canvas tracing paper underlay/overlay and detached floating lightbox dock.
 * **🎨 Studio Color Adjustments & Filters FX Suite** — HSL, Brightness/Contrast, Color Balance, Invert, Gaussian Blur, Sharpen, Film Grain, Vignette, and Lens Aberration.
