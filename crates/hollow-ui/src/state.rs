@@ -64,6 +64,12 @@ pub enum ActiveFilterModal {
     VignetteChromatic,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceMode {
+    FloatingWindow, // Detached separate lightbox dock
+    CanvasTracing,  // Pinned directly to canvas for tracing paper overlay/underlay
+}
+
 pub struct AppState {
     pub document: Document,
     pub history: HistoryStack,
@@ -109,7 +115,8 @@ pub struct AppState {
     pub wand_contiguous: bool,
     pub wand_sample_all_layers: bool,
 
-    // Reference Dock & Backlight
+    // Reference & Tracing System
+    pub reference_mode: ReferenceMode,
     pub reference_image: Option<(u32, u32, Vec<u8>)>,
     pub ref_texture: Option<egui::TextureHandle>,
     pub show_ref_window: bool,
@@ -117,6 +124,14 @@ pub struct AppState {
     pub ref_pan: Vec2,
     pub ref_backlight: bool,
     pub ref_backlight_mode: u8, // 0: Dark, 1: Lightbox Pure White, 2: Checkerboard
+
+    // On-Canvas Tracing Paper Controls
+    pub tracing_enabled: bool,
+    pub tracing_opacity: f32, // 0.05..=1.0
+    pub tracing_pos: Vec2,    // Canvas coordinate offset (X, Y)
+    pub tracing_scale: f32,   // Canvas scaling
+    pub tracing_as_underlay: bool, // true: underlay (light table), false: ghost overlay (tracing sheet)
+    pub tracing_locked: bool,
 
     // Painting state
     pub is_painting: bool,
@@ -216,6 +231,7 @@ impl AppState {
             wand_contiguous: true,
             wand_sample_all_layers: false,
 
+            reference_mode: ReferenceMode::CanvasTracing,
             reference_image: None,
             ref_texture: None,
             show_ref_window: false,
@@ -223,6 +239,13 @@ impl AppState {
             ref_pan: Vec2::ZERO,
             ref_backlight: false,
             ref_backlight_mode: 0,
+
+            tracing_enabled: false,
+            tracing_opacity: 0.5,
+            tracing_pos: Vec2::ZERO,
+            tracing_scale: 1.0,
+            tracing_as_underlay: false,
+            tracing_locked: false,
 
             is_painting: false,
             last_paint_pos: None,
@@ -327,6 +350,33 @@ impl AppState {
         let canvas_size = Vec2::new(self.document.width as f32, self.document.height as f32);
         let offset = (canvas_pos - canvas_size * 0.5) * self.zoom;
         center + offset
+    }
+
+    pub fn fit_tracing_to_canvas(&mut self) {
+        if let Some((rw, rh, _)) = self.reference_image {
+            let scale_x = self.document.width as f32 / rw as f32;
+            let scale_y = self.document.height as f32 / rh as f32;
+            self.tracing_scale = scale_x.min(scale_y);
+            let scaled_w = rw as f32 * self.tracing_scale;
+            let scaled_h = rh as f32 * self.tracing_scale;
+            self.tracing_pos = Vec2::new(
+                (self.document.width as f32 - scaled_w) * 0.5,
+                (self.document.height as f32 - scaled_h) * 0.5,
+            );
+            self.set_status("Tracing reference fit to canvas");
+        }
+    }
+
+    pub fn center_tracing_on_canvas(&mut self) {
+        if let Some((rw, rh, _)) = self.reference_image {
+            let scaled_w = rw as f32 * self.tracing_scale;
+            let scaled_h = rh as f32 * self.tracing_scale;
+            self.tracing_pos = Vec2::new(
+                (self.document.width as f32 - scaled_w) * 0.5,
+                (self.document.height as f32 - scaled_h) * 0.5,
+            );
+            self.set_status("Tracing reference centered");
+        }
     }
 
     /// Backs up the active layer's pixels before opening a filter dialog

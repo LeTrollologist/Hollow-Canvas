@@ -179,23 +179,20 @@ def stage_publish(version: str, tag_dir: Path, assets: list, draft: bool = False
     checksums_file = tag_dir / "SHA256SUMS.txt"
     upload_files = [str(a) for a in assets] + [str(checksums_file)]
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Adjustments & Filter FX Engine Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Dual Reference & Tracing Engine Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
 ### ✨ What's New in {version}
-* **🎨 Studio Color Adjustments Engine** — Full professional color grading suite with real-time live preview:
-  - **HSL Adjustments**: Shift Hue (-180° to +180°), Scale Saturation (0.0 to 2.5), and Shift Lightness.
-  - **Brightness & Contrast**: Smooth curve brightness and contrast expansion.
-  - **Color Balance**: Independent Cyan/Red, Magenta/Green, and Yellow/Blue chromatic channel biases.
-  - **Quick Color Filters**: One-click Invert Colors (`Ctrl+I`), Perceptual Grayscale, and Vintage Sepia photographic tone.
-  - **Posterize & B&W Threshold**: Quantize color steps (2 to 24 levels) or binary high-contrast thresholding.
-* **✨ Artistic Convolution & Spatial Filters**:
-  - **💧 Gaussian Blur**: High-performance separable 1D Gaussian kernel convolution with configurable radius (1..=32px).
-  - **🔪 Sharpen & Unsharp Mask**: Edge contrast enhancement with difference-of-Gaussian threshold gating.
-  - **📺 Film Grain & Analog Noise**: Procedural authentic film grain generator with monochrome and chromatic RGB modes.
-  - **🔍 Vignette & Lens Dispersion**: Radial edge luminance falloff and directional chromatic aberration (Red/Blue prism split).
-* **⚡ Live Interactive Dialogs & Undo Integration** — All adjustments include a real-time live canvas preview, selection mask clipping, and full Undo/Redo (`Ctrl+Z` / `Ctrl+Y`) support.
+* **📐 On-Canvas Tracing Paper Engine (Mode A)** — Pin and tie any reference image directly to the canvas viewport for lineart tracing, sketching, and anatomy studies:
+  - **Ghosting Opacity Slider**: Fine-tune transparency ($5\%$ to $100\%$) for seamless tracing.
+  - **Light Table Underlay vs. Ghost Overlay**: Render the reference as a glowing lightbox base beneath layers or as a semi-transparent tracing sheet floating above your artwork.
+  - **Full Transform Controls**: Scale ($0.05\times$ to $4.0\times$), translate ($X, Y$), with one-click `✦ Fit to Canvas`, `✛ Center`, and `1:1 Native` alignment.
+  - **Quick Flick Hotkey (`T`)**: Instantly toggle tracing overlay visibility on/off while drawing to inspect progress.
+  - **Position Lock (🔒)**: Lock reference in place to prevent accidental displacement.
+* **🖼 Upgraded Studio Lightbox Dock (Mode B)** — Detached side-by-side floating viewer with zoom, pan, 1:1, and Dark Obsidian, Pure White Lightbox, or Checkerboard backlights.
+* **⚡ Zero-Allocation High-Speed Compositing** — Fast integer fixed-point alpha blending directly integrated into the software renderer for 0ms lag.
+* **🎨 Complete Filters & Adjustments Suite** — HSL, Brightness/Contrast, Color Balance, Invert, Posterize, Gaussian Blur, Sharpen, Film Grain, Vignette, and Lens Aberration.
 * **📦 Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
 
 ### 📦 Downloads & Assets

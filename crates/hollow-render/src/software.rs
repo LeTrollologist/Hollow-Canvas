@@ -4,6 +4,17 @@ use glam::Vec2;
 use hollow_core::document::Document;
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, Copy)]
+pub struct TracingReferenceConfig<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: &'a [u8],
+    pub opacity: f32,
+    pub offset: Vec2,
+    pub scale: f32,
+    pub is_underlay: bool,
+}
+
 pub struct SoftwareRenderer {
     textures: HashMap<TextureId, (u32, u32, Vec<u8>)>,
     composite_buffer: Vec<u8>,
@@ -69,6 +80,7 @@ impl SoftwareRenderer {
         doc: &Document,
         pan: Vec2,
         zoom: f32,
+        tracing: Option<TracingReferenceConfig>,
     ) {
         if win_w == 0 || win_h == 0 || buffer.len() < win_w * win_h {
             return;
@@ -134,41 +146,91 @@ impl SoftwareRenderer {
                     continue;
                 }
 
-                let r = flat_pixels[src_idx];
-                let g = flat_pixels[src_idx + 1];
-                let b = flat_pixels[src_idx + 2];
-                let a = flat_pixels[src_idx + 3];
+                let lr = flat_pixels[src_idx];
+                let lg = flat_pixels[src_idx + 1];
+                let lb = flat_pixels[src_idx + 2];
+                let la = flat_pixels[src_idx + 3];
 
                 let pixel_idx = row_offset + screen_x;
                 if pixel_idx >= buffer.len() {
                     continue;
                 }
 
-                if doc.is_transparent {
+                // Base paper / background color
+                let (mut base_r, mut base_g, mut base_b) = if doc.is_transparent {
                     let tile_x = (doc_xi / 16) % 2;
                     let tile_y = (doc_yi / 16) % 2;
                     let is_dark = tile_x == tile_y;
                     let check_val = if is_dark { 18u8 } else { 28u8 };
-
-                    let alpha_f = a as f32 / 255.0;
-                    let inv_a = 1.0 - alpha_f;
-                    let final_r = ((r as f32 * alpha_f) + (check_val as f32 * inv_a)).round() as u32;
-                    let final_g = ((g as f32 * alpha_f) + (check_val as f32 * inv_a)).round() as u32;
-                    let final_b = ((b as f32 * alpha_f) + (check_val as f32 * inv_a)).round() as u32;
-
-                    buffer[pixel_idx] = 0xFF000000 | (final_r << 16) | (final_g << 8) | final_b;
+                    (check_val, check_val, check_val)
                 } else {
-                    if a == 255 {
-                        buffer[pixel_idx] = 0xFF000000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
-                    } else {
-                        let alpha_f = a as f32 / 255.0;
-                        let inv_a = 1.0 - alpha_f;
-                        let final_r = ((r as f32 * alpha_f) + (bg_val as f32 * inv_a)).round() as u32;
-                        let final_g = ((g as f32 * alpha_f) + (bg_val as f32 * inv_a)).round() as u32;
-                        let final_b = ((b as f32 * alpha_f) + (bg_val as f32 * inv_a)).round() as u32;
-                        buffer[pixel_idx] = 0xFF000000 | (final_r << 16) | (final_g << 8) | final_b;
+                    (bg_val, bg_val, bg_val)
+                };
+
+                // Tracing reference pixel sampling
+                let ref_px = tracing.and_then(|cfg| {
+                    if cfg.scale <= 0.001 || cfg.opacity <= 0.001 {
+                        return None;
+                    }
+                    let rx_f = (doc_xf - cfg.offset.x) / cfg.scale;
+                    let ry_f = (doc_yf - cfg.offset.y) / cfg.scale;
+                    let rx = rx_f.floor() as isize;
+                    let ry = ry_f.floor() as isize;
+                    if rx >= 0 && rx < cfg.width as isize && ry >= 0 && ry < cfg.height as isize {
+                        let idx = (ry as usize * cfg.width as usize + rx as usize) * 4;
+                        if idx + 3 < cfg.rgba.len() {
+                            let r = cfg.rgba[idx];
+                            let g = cfg.rgba[idx + 1];
+                            let b = cfg.rgba[idx + 2];
+                            let a = ((cfg.rgba[idx + 3] as f32) * cfg.opacity).clamp(0.0, 255.0) as u8;
+                            return Some((r, g, b, a));
+                        }
+                    }
+                    None
+                });
+
+                // 1. If Tracing as Underlay (Light Table): blend reference onto base first
+                if let Some((rr, rg, rb, ra)) = ref_px {
+                    if tracing.map_or(false, |t| t.is_underlay) && ra > 0 {
+                        let a_u = ra as u32;
+                        let inv_a = 255 - a_u;
+                        base_r = ((base_r as u32 * inv_a + rr as u32 * a_u) / 255) as u8;
+                        base_g = ((base_g as u32 * inv_a + rg as u32 * a_u) / 255) as u8;
+                        base_b = ((base_b as u32 * inv_a + rb as u32 * a_u) / 255) as u8;
                     }
                 }
+
+                // 2. Blend Document Layers on top of base
+                let (comp_r, comp_g, comp_b) = if la == 255 {
+                    (lr, lg, lb)
+                } else if la == 0 {
+                    (base_r, base_g, base_b)
+                } else {
+                    let la_u = la as u32;
+                    let inv_la = 255 - la_u;
+                    let r = ((base_r as u32 * inv_la + lr as u32 * la_u) / 255) as u8;
+                    let g = ((base_g as u32 * inv_la + lg as u32 * la_u) / 255) as u8;
+                    let b = ((base_b as u32 * inv_la + lb as u32 * la_u) / 255) as u8;
+                    (r, g, b)
+                };
+
+                // 3. If Tracing as Ghost Overlay (Tracing Sheet): blend reference on top
+                let (final_r, final_g, final_b) = if let Some((rr, rg, rb, ra)) = ref_px {
+                    if tracing.map_or(false, |t| !t.is_underlay) && ra > 0 {
+                        let a_u = ra as u32;
+                        let inv_a = 255 - a_u;
+                        let r = ((comp_r as u32 * inv_a + rr as u32 * a_u) / 255) as u8;
+                        let g = ((comp_g as u32 * inv_a + rg as u32 * a_u) / 255) as u8;
+                        let b = ((comp_b as u32 * inv_a + rb as u32 * a_u) / 255) as u8;
+                        (r, g, b)
+                    } else {
+                        (comp_r, comp_g, comp_b)
+                    }
+                } else {
+                    (comp_r, comp_g, comp_b)
+                };
+
+                buffer[pixel_idx] = 0xFF000000 | ((final_r as u32) << 16) | ((final_g as u32) << 8) | (final_b as u32);
             }
         }
     }

@@ -1,3 +1,3 @@
 pub mod software;
 
-pub use software::SoftwareRenderer;
+pub use software::{SoftwareRenderer, TracingReferenceConfig};

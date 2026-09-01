@@ -678,6 +678,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 0x45 => app.state.brush.tool = ToolType::Eraser,     // E
                 0x49 => app.state.brush.tool = ToolType::Eyedropper, // I
                 0x4D => app.state.brush.tool = ToolType::Marquee,    // M
+                0x54 => { // T (Toggle Canvas Tracing Reference)
+                    app.state.tracing_enabled = !app.state.tracing_enabled;
+                    app.state.set_status(if app.state.tracing_enabled { "Tracing Paper: ON" } else { "Tracing Paper: OFF" });
+                }
                 0x56 => app.state.brush.tool = ToolType::Move,       // V
                 0x0D => { // Enter (Commit polygon or crop)
                     if app.state.polygon_points.len() >= 3 {
@@ -738,8 +742,32 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     .map(|v| v.repaint_delay.is_zero())
                     .unwrap_or(false);
 
-                // 2. Render canvas layer composite with up-to-date state
-                app.renderer.render_canvas(&mut app.buffer, app.win_w, app.win_h, &app.state.document, app.state.pan, app.state.zoom);
+                // 2. Render canvas layer composite with up-to-date state and optional tracing paper reference
+                let tracing_cfg = if app.state.tracing_enabled {
+                    app.state.reference_image.as_ref().map(|(w, h, rgba)| {
+                        hollow_render::TracingReferenceConfig {
+                            width: *w,
+                            height: *h,
+                            rgba: rgba.as_slice(),
+                            opacity: app.state.tracing_opacity,
+                            offset: app.state.tracing_pos,
+                            scale: app.state.tracing_scale,
+                            is_underlay: app.state.tracing_as_underlay,
+                        }
+                    })
+                } else {
+                    None
+                };
+
+                app.renderer.render_canvas(
+                    &mut app.buffer,
+                    app.win_w,
+                    app.win_h,
+                    &app.state.document,
+                    app.state.pan,
+                    app.state.zoom,
+                    tracing_cfg,
+                );
 
                 // 3. Render toggleable grid with up-to-date state
                 if app.state.show_grid {

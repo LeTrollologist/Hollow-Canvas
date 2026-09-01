@@ -95,7 +95,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.5.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.6.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -329,8 +329,14 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             state.show_ui_panels = !state.show_ui_panels;
                         }
 
-                        let ref_label = if state.show_ref_window { "🖼 [ON]" } else { "🖼 Ref" };
-                        if ui.selectable_label(state.show_ref_window, ref_label).on_hover_text("Reference Image Viewer Lightbox").clicked() {
+                        let ref_label = if state.tracing_enabled {
+                            "📐 Trace [ON]"
+                        } else if state.show_ref_window {
+                            "🖼 Ref [ON]"
+                        } else {
+                            "🖼 Ref"
+                        };
+                        if ui.selectable_label(state.show_ref_window || state.tracing_enabled, ref_label).on_hover_text("Reference & On-Canvas Tracing Paper Studio").clicked() {
                             state.show_ref_window = !state.show_ref_window;
                         }
 
@@ -999,62 +1005,129 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
-    // ── 7. REFERENCE IMAGE FLOATING DOCK ──
+    // ── 7. STUDIO DUAL REFERENCE & TRACING SYSTEM DOCK ──
     if state.show_ref_window {
-        egui::Window::new("🖼 Reference Viewer")
-            .default_size(Vec2::new(360.0, 360.0))
+        egui::Window::new("🖼 Reference & Tracing Studio")
+            .default_size(Vec2::new(420.0, 440.0))
             .show(ctx, |ui| {
+                // Mode Switcher Segmented Bar
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Mode:").strong().color(Color32::from_rgb(150, 165, 195)));
+                    ui.selectable_value(&mut state.reference_mode, crate::state::ReferenceMode::CanvasTracing, "📐 Canvas Tracing Paper");
+                    ui.selectable_value(&mut state.reference_mode, crate::state::ReferenceMode::FloatingWindow, "🖼 Floating Lightbox");
+                });
+
+                ui.separator();
+
+                // Top Actions: Load Image & Status
                 ui.horizontal(|ui| {
                     if ui.button("📂 Load Image...").clicked() {
                         state.pending_file_action = Some(PendingFileAction::OpenReferenceImage);
                     }
-                    if ui.selectable_label(state.ref_backlight, "💡 Backlight").clicked() {
-                        state.ref_backlight = !state.ref_backlight;
-                    }
-                    if state.ref_backlight {
-                        ui.label("Mode:");
-                        ui.selectable_value(&mut state.ref_backlight_mode, 0, "Dark");
-                        ui.selectable_value(&mut state.ref_backlight_mode, 1, "White");
-                        ui.selectable_value(&mut state.ref_backlight_mode, 2, "Checker");
+                    if let Some((w, h, _)) = state.reference_image {
+                        ui.label(RichText::new(format!("{} × {} px", w, h)).size(10.0).color(accent_c32));
                     }
                 });
 
+                ui.add_space(4.0);
+
                 if let Some((w, h, _)) = state.reference_image {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("{} × {} px", w, h)).size(10.0).color(accent_c32));
-                        ui.add(egui::Slider::new(&mut state.ref_zoom, 0.1..=4.0).text("Zoom"));
-                        if ui.button("1:1").clicked() {
-                            state.ref_zoom = 1.0;
+                    match state.reference_mode {
+                        crate::state::ReferenceMode::CanvasTracing => {
+                            egui::Frame::none()
+                                .fill(Color32::from_rgba_unmultiplied(14, 20, 38, 220))
+                                .stroke(egui::Stroke::new(1.0_f32, accent_c32))
+                                .rounding(6.0)
+                                .inner_margin(8.0)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.checkbox(&mut state.tracing_enabled, RichText::new("✨ Enable On-Canvas Tracing").strong().color(accent_c32));
+                                        ui.checkbox(&mut state.tracing_locked, "🔒 Lock Position");
+                                    });
+
+                                    ui.add_space(4.0);
+                                    ui.add(egui::Slider::new(&mut state.tracing_opacity, 0.05..=1.0).text("Tracing Opacity (Ghosting)"));
+
+                                    ui.add_space(6.0);
+                                    ui.horizontal(|ui| {
+                                        ui.label("Placement:");
+                                        ui.selectable_value(&mut state.tracing_as_underlay, true, "💡 Underlay (Light Table)");
+                                        ui.selectable_value(&mut state.tracing_as_underlay, false, "👻 Ghost Overlay");
+                                    });
+
+                                    ui.add_space(6.0);
+                                    ui.separator();
+                                    ui.label(RichText::new("TRANSFORM & POSITION").size(9.0).strong().color(Color32::from_rgb(120, 135, 170)));
+
+                                    ui.add(egui::Slider::new(&mut state.tracing_scale, 0.05..=4.0).text("Scale"));
+
+                                    ui.horizontal(|ui| {
+                                        if ui.button("✦ Fit to Canvas").clicked() {
+                                            state.fit_tracing_to_canvas();
+                                        }
+                                        if ui.button("✛ Center Canvas").clicked() {
+                                            state.center_tracing_on_canvas();
+                                        }
+                                        if ui.button("1:1 Native").clicked() {
+                                            state.tracing_scale = 1.0;
+                                            state.tracing_pos = glam::Vec2::ZERO;
+                                        }
+                                    });
+
+                                    let doc_w_f = state.document.width as f32;
+                                    let doc_h_f = state.document.height as f32;
+                                    ui.add(egui::Slider::new(&mut state.tracing_pos.x, -doc_w_f..=doc_w_f).text("Offset X (px)"));
+                                    ui.add(egui::Slider::new(&mut state.tracing_pos.y, -doc_h_f..=doc_h_f).text("Offset Y (px)"));
+                                });
                         }
-                    });
 
-                    ui.separator();
-
-                    let bg_color = match state.ref_backlight_mode {
-                        1 => Color32::from_rgb(250, 250, 250), // Pure White Lightbox
-                        2 => Color32::from_rgb(120, 120, 120), // Neutral Checker / Gray
-                        _ => Color32::from_rgb(10, 14, 25),    // Dark studio
-                    };
-
-                    egui::Frame::none()
-                        .fill(bg_color)
-                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(40, 50, 80)))
-                        .rounding(4.0)
-                        .inner_margin(4.0)
-                        .show(ui, |ui| {
-                            ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                                if let Some(tex) = &state.ref_texture {
-                                    let img_size = Vec2::new(w as f32 * state.ref_zoom, h as f32 * state.ref_zoom);
-                                    ui.image((tex.id(), img_size));
+                        crate::state::ReferenceMode::FloatingWindow => {
+                            ui.horizontal(|ui| {
+                                if ui.selectable_label(state.ref_backlight, "💡 Backlight").clicked() {
+                                    state.ref_backlight = !state.ref_backlight;
+                                }
+                                if state.ref_backlight {
+                                    ui.label("Mode:");
+                                    ui.selectable_value(&mut state.ref_backlight_mode, 0, "Dark");
+                                    ui.selectable_value(&mut state.ref_backlight_mode, 1, "White");
+                                    ui.selectable_value(&mut state.ref_backlight_mode, 2, "Checker");
                                 }
                             });
-                        });
+
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Slider::new(&mut state.ref_zoom, 0.1..=4.0).text("Zoom"));
+                                if ui.button("1:1").clicked() {
+                                    state.ref_zoom = 1.0;
+                                }
+                            });
+
+                            let bg_color = match state.ref_backlight_mode {
+                                1 => Color32::from_rgb(250, 250, 250), // Pure White Lightbox
+                                2 => Color32::from_rgb(120, 120, 120), // Neutral Checker / Gray
+                                _ => Color32::from_rgb(10, 14, 25),    // Dark studio
+                            };
+
+                            egui::Frame::none()
+                                .fill(bg_color)
+                                .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(40, 50, 80)))
+                                .rounding(4.0)
+                                .inner_margin(4.0)
+                                .show(ui, |ui| {
+                                    ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                                        if let Some(tex) = &state.ref_texture {
+                                            let img_size = Vec2::new(w as f32 * state.ref_zoom, h as f32 * state.ref_zoom);
+                                            ui.image((tex.id(), img_size));
+                                        }
+                                    });
+                                });
+                        }
+                    }
                 } else {
                     ui.add_space(20.0);
                     ui.vertical_centered(|ui| {
                         ui.label(RichText::new("No reference image loaded.").size(12.0).color(Color32::from_rgb(180, 190, 220)));
                         ui.add_space(4.0);
-                        ui.label(RichText::new("Click '📂 Load Image...' to inspect lineart, textures, or character sheets.").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                        ui.label(RichText::new("Click '📂 Load Image...' to load a character sketch, lineart, anatomy reference, or color moodboard.").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                     });
                 }
             });
@@ -1541,7 +1614,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.5.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.6.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);
@@ -1601,6 +1674,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         ("Ctrl + Z", "Undo Action"),
                         ("Ctrl + Y / Ctrl+Shift+Z", "Redo Action"),
                         ("Ctrl + D", "Deselect"),
+                        ("T", "Toggle On-Canvas Tracing Paper"),
                         ("Ctrl + '", "Toggle Viewport Grid"),
                         ("Ctrl + R", "Toggle Viewport Rulers"),
                     ];
