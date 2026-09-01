@@ -490,6 +490,29 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 modifiers: Default::default(),
             });
 
+            let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
+            let raw_y = ((lparam as u32 >> 16) & 0xFFFF) as i16 as f32;
+            let is_over_ui = if app.state.show_ui_panels {
+                raw_y < 38.0
+                    || raw_y > (app.win_h as f32 - 28.0)
+                    || raw_x < 218.0
+                    || raw_x > (app.win_w as f32 - 240.0)
+                    || ((app.state.show_ref_window || app.state.show_help || app.state.show_about_dialog || app.state.show_new_canvas_dialog || app.state.show_resize_canvas_dialog)
+                        && app.egui_ctx.is_pointer_over_area())
+            } else {
+                (raw_x < 250.0 && raw_y < 50.0)
+                    || ((app.state.show_ref_window || app.state.show_help || app.state.show_about_dialog || app.state.show_new_canvas_dialog || app.state.show_resize_canvas_dialog)
+                        && app.egui_ctx.is_pointer_over_area())
+            };
+
+            if is_over_ui {
+                // If releasing over UI, clear transient drawing points but preserve selections!
+                app.state.lasso_points.clear();
+                app.state.drag_start_canvas_pos = None;
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+                return 0;
+            }
+
             let canvas_pos = app.state.cursor_canvas_pos;
             let tool = app.state.brush.tool;
 
@@ -515,19 +538,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             }
                         }
                         app.state.set_status("Subtracted from selection (Lasso)");
-                    } else {
-                        if new_mask.has_selection() {
-                            app.state.selection = Some(new_mask);
-                            app.state.set_status("Lasso selection created");
-                        } else {
-                            app.state.selection = None;
-                            app.state.set_status("Deselected");
-                        }
+                    } else if new_mask.has_selection() {
+                        app.state.selection = Some(new_mask);
+                        app.state.set_status("Lasso selection created");
                     }
-                } else if !is_shift && !is_alt {
-                    // Single click or tap with Lasso clears selection
-                    app.state.selection = None;
-                    app.state.set_status("Deselected");
                 }
             }
 
@@ -550,11 +564,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     ToolType::Marquee => {
                         let is_shift = (GetKeyState(0x10) as i32 & 0x8000) != 0;
                         let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0;
-                        if start.distance(canvas_pos) < 3.0 && !is_shift && !is_alt {
-                            // Single click clears selection
-                            app.state.selection = None;
-                            app.state.set_status("Deselected");
-                        } else {
+                        if start.distance(canvas_pos) >= 3.0 {
                             let mask = SelectionMask::from_rect(app.state.document.width, app.state.document.height, start, canvas_pos);
                             if is_shift {
                                 if let Some(existing) = &mut app.state.selection {
@@ -571,14 +581,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                                     }
                                 }
                                 app.state.set_status("Subtracted from selection (Marquee)");
-                            } else {
-                                if mask.has_selection() {
-                                    app.state.selection = Some(mask);
-                                    app.state.set_status("Selected area");
-                                } else {
-                                    app.state.selection = None;
-                                    app.state.set_status("Deselected");
-                                }
+                            } else if mask.has_selection() {
+                                app.state.selection = Some(mask);
+                                app.state.set_status("Selected area");
                             }
                         }
                     }

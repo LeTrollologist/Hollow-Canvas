@@ -58,18 +58,18 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 [**VPack Archiver**](https://github.com/LeTrollologist/vpack-archiver) is the high-performance universal archive manager for `.vpack` packages.
 
-1. Download [`hollow-canvas-v0.8.1-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v0.8.2-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the package with `vpack`:
    ```bash
    # Extract all files
-   vpack extract hollow-canvas-v0.8.1-windows-x86_64.vpack
+   vpack extract hollow-canvas-v0.8.2-windows-x86_64.vpack
 
    # Or extract to a custom directory
-   vpack extract hollow-canvas-v0.8.1-windows-x86_64.vpack -o ./HollowCanvas/
+   vpack extract hollow-canvas-v0.8.2-windows-x86_64.vpack -o ./HollowCanvas/
    ```
 3. *(Optional)* Verify CRC-32 integrity:
    ```bash
-   vpack test hollow-canvas-v0.8.1-windows-x86_64.vpack
+   vpack test hollow-canvas-v0.8.2-windows-x86_64.vpack
    ```
 4. Run `hollow-canvas.exe`.
 
@@ -79,10 +79,10 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 No additional archive tools required — works with standard Windows extraction:
 
-1. Download [`hollow-canvas-v0.8.1-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v0.8.2-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the zip file using PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\hollow-canvas-v0.8.1-windows-x86_64.zip -DestinationPath .\HollowCanvas
+   Expand-Archive -Path .\hollow-canvas-v0.8.2-windows-x86_64.zip -DestinationPath .\HollowCanvas
    ```
    3. Double-click `HollowCanvas\hollow-canvas.exe` to launch immediately.
 
