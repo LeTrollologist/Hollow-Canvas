@@ -96,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.8.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.8.1").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -1847,6 +1847,74 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
+    // ── 9.4 SELECTION BOUNDARY MARCHING ANTS OVERLAY ──
+    if let Some(mask) = &state.selection {
+        if mask.has_selection() {
+            let win_size = ctx.screen_rect().size();
+            let win_w = win_size.x;
+            let win_h = win_size.y;
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("selection_boundary_layer")));
+
+            let step = if mask.width > 2000 || mask.height > 2000 {
+                4
+            } else if mask.width > 1000 || mask.height > 1000 {
+                2
+            } else {
+                1
+            };
+
+            let segments = mask.get_boundary_segments(step);
+            let time = ctx.input(|i| i.time);
+            let phase = (time * 6.0).fract() as f32;
+            let c_pri = Color32::from_rgb(0, 240, 255);
+            let c_sec = Color32::from_rgb(255, 255, 255);
+
+            for (i, (p0, p1)) in segments.into_iter().enumerate() {
+                let s0 = state.canvas_to_screen(p0, win_w, win_h);
+                let s1 = state.canvas_to_screen(p1, win_w, win_h);
+                let is_pri = (((i as f32) * 0.5 + phase * 4.0) as usize) % 2 == 0;
+                let stroke_c = if is_pri { c_pri } else { c_sec };
+                painter.line_segment([egui::pos2(s0.x, s0.y), egui::pos2(s1.x, s1.y)], egui::Stroke::new(1.3_f32, stroke_c));
+            }
+            ctx.request_repaint();
+
+            // Floating Selection HUD (unless Transform tool is currently HUD-active)
+            if !state.transform_session.is_active && state.show_ui_panels {
+                let hud_pos = egui::pos2((win_w - 360.0) * 0.5, win_h - 60.0);
+                egui::Area::new("selection_hud_area".into())
+                    .fixed_pos(hud_pos)
+                    .order(egui::Order::Foreground)
+                    .show(ctx, |ui| {
+                        egui::Frame::none()
+                            .fill(Color32::from_rgba_unmultiplied(10, 14, 28, 240))
+                            .stroke(egui::Stroke::new(1.2_f32, Color32::from_rgb(0, 240, 255)))
+                            .rounding(7.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("✦ SELECTION").size(10.5).strong().color(Color32::from_rgb(0, 240, 255)));
+                                    ui.separator();
+                                    if ui.button(RichText::new("Fill").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                                        state.fill_selection_active_layer();
+                                    }
+                                    if ui.button("Stroke...").clicked() {
+                                        state.show_stroke_dialog = true;
+                                    }
+                                    if ui.button("Feather...").clicked() {
+                                        state.show_feather_dialog = true;
+                                    }
+                                    ui.separator();
+                                    if ui.button(RichText::new("✕ Deselect (Ctrl+D)").strong().color(Color32::from_rgb(255, 120, 120))).clicked() {
+                                        state.selection = None;
+                                        state.set_status("Deselected");
+                                    }
+                                });
+                            });
+                    });
+            }
+        }
+    }
+
     // ── 9.5 LASSO PREVIEW OVERLAY ──
     if !state.lasso_points.is_empty() {
         let win_size = ctx.screen_rect().size();
@@ -1986,7 +2054,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.8.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.8.1 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);

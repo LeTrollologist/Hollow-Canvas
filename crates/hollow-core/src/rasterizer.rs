@@ -13,6 +13,43 @@ fn hash21(x: u32, y: u32, seed: u32) -> f32 {
     (h as f32) / (u32::MAX as f32)
 }
 
+#[inline]
+pub fn sample_bilinear_rgba(pixels: &[u8], width: u32, height: u32, x: f32, y: f32) -> [u8; 4] {
+    if width == 0 || height == 0 || pixels.is_empty() {
+        return [0, 0, 0, 0];
+    }
+    let x0 = (x.floor() as i32).clamp(0, width as i32 - 1) as u32;
+    let y0 = (y.floor() as i32).clamp(0, height as i32 - 1) as u32;
+    let x1 = (x0 + 1).min(width - 1);
+    let y1 = (y0 + 1).min(height - 1);
+
+    let fx = (x - x.floor()).clamp(0.0, 1.0);
+    let fy = (y - y.floor()).clamp(0.0, 1.0);
+
+    let idx00 = ((y0 * width + x0) * 4) as usize;
+    let idx10 = ((y0 * width + x1) * 4) as usize;
+    let idx01 = ((y1 * width + x0) * 4) as usize;
+    let idx11 = ((y1 * width + x1) * 4) as usize;
+
+    if idx11 + 3 >= pixels.len() {
+        return [0, 0, 0, 0];
+    }
+
+    let mut out = [0u8; 4];
+    for c in 0..4 {
+        let v00 = pixels[idx00 + c] as f32;
+        let v10 = pixels[idx10 + c] as f32;
+        let v01 = pixels[idx01 + c] as f32;
+        let v11 = pixels[idx11 + c] as f32;
+
+        let top = v00 * (1.0 - fx) + v10 * fx;
+        let bot = v01 * (1.0 - fx) + v11 * fx;
+        let val = top * (1.0 - fy) + bot * fy;
+        out[c] = val.round().clamp(0.0, 255.0) as u8;
+    }
+    out
+}
+
 pub struct StrokeRasterizer;
 
 impl StrokeRasterizer {
@@ -181,14 +218,16 @@ impl StrokeRasterizer {
                         }
                         ToolType::Smudge => {
                             if let Some(prev) = prev_center {
-                                let sx = (x as f32 + (prev.x - stamp_center.x)).round() as i32;
-                                let sy = (y as f32 + (prev.y - stamp_center.y)).round() as i32;
-                                if sx >= 0 && sx < doc_w as i32 && sy >= 0 && sy < doc_h as i32 {
-                                    let s_idx = ((sy as u32 * doc_w + sx as u32) * 4) as usize;
-                                    [pixels[s_idx], pixels[s_idx + 1], pixels[s_idx + 2], pixels[s_idx + 3]]
+                                let drag_vec = stamp_center - prev;
+                                let drag_dist = drag_vec.length();
+                                let sample_pos = if drag_dist > 0.001 {
+                                    let dir = drag_vec / drag_dist;
+                                    let shift = (drag_dist * 1.5).min(radius * 0.9);
+                                    Vec2::new(x as f32 - dir.x * shift, y as f32 - dir.y * shift)
                                 } else {
-                                    dst
-                                }
+                                    Vec2::new(x as f32, y as f32)
+                                };
+                                sample_bilinear_rgba(pixels, doc_w, doc_h, sample_pos.x, sample_pos.y)
                             } else {
                                 dst
                             }
@@ -380,20 +419,55 @@ impl StrokeRasterizer {
         symmetry: &SymmetryConfig,
         selection: Option<&SelectionMask>,
     ) {
+        let (doc_w, doc_h, active_id, bg_col) = (
+            doc.width,
+            doc.height,
+            doc.active_layer_id,
+            doc.background_color(),
+        );
+
+        let layer = match doc.get_layer_mut(active_id) {
+            Some(l) if !l.locked => l,
+            _ => return,
+        };
+
+        let layer_offset = Vec2::new(layer.offset_x as f32, layer.offset_y as f32);
+        let alpha_locked = layer.alpha_locked;
+
         let approx_len = p1.position.distance(p2.position);
         let avg_size = (brush.effective_size(p1.pressure) + brush.effective_size(p2.pressure)) * 0.5;
         let spacing = (avg_size * brush.spacing).max(0.5);
-        let steps = (approx_len / spacing).ceil().max(2.0) as usize;
+        let steps = (approx_len / spacing).ceil().max(1.0) as usize;
 
-        let mut prev_pt = p1;
+        let mut prev_pos = p1.position;
         for i in 1..=steps {
             let t = i as f32 / steps as f32;
             let pos = Self::catmull_rom_eval(p0.position, p1.position, p2.position, p3.position, t);
             let pressure = p1.pressure + (p2.pressure - p1.pressure) * t;
-            let cur_pt = BrushPoint::new(pos, pressure);
+            let radius = brush.effective_size(pressure) * 0.5;
 
-            Self::paint_segment(doc, prev_pt, cur_pt, brush, symmetry, selection);
-            prev_pt = cur_pt;
+            let sym_points = symmetry.transform_points(pos, doc_w as f32, doc_h as f32);
+            let prev_sym_points = symmetry.transform_points(prev_pos, doc_w as f32, doc_h as f32);
+
+            for (s_idx, sp) in sym_points.into_iter().enumerate() {
+                let prev_sp = Some(prev_sym_points[s_idx] - layer_offset);
+                let local_sp = sp - layer_offset;
+                Self::blend_stamp(
+                    doc_w,
+                    doc_h,
+                    &mut layer.pixels,
+                    selection,
+                    local_sp,
+                    prev_sp,
+                    radius,
+                    brush,
+                    layer.blend_mode,
+                    alpha_locked,
+                    if brush.eraser_to_background { bg_col } else { Color::TRANSPARENT },
+                    i.wrapping_add(s_idx * 1000),
+                );
+            }
+            prev_pos = pos;
         }
     }
 

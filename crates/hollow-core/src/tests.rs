@@ -493,4 +493,56 @@ mod tests {
         let border_idx = (5 * 20 + 5) * 4;
         assert!(stroke_pixels[border_idx + 1] > 0);
     }
+
+    #[test]
+    fn test_sample_bilinear_rgba() {
+        let w = 2;
+        let h = 2;
+        let mut pixels = vec![0u8; 16];
+        // (0,0) = Red, (1,0) = Blue
+        pixels[0] = 255; pixels[3] = 255; // Red
+        pixels[4] = 0; pixels[6] = 255; pixels[7] = 255; // Blue
+
+        let mid = crate::rasterizer::sample_bilinear_rgba(&pixels, w, h, 0.5, 0.0);
+        // Halfway between Red and Blue
+        assert!(mid[0] > 100 && mid[0] < 150);
+        assert!(mid[2] > 100 && mid[2] < 150);
+    }
+
+    #[test]
+    fn test_smudge_tool_blend() {
+        let mut doc = crate::document::Document::new(50, 50);
+        // Paint red square on layer (10..30, 10..30)
+        let red = [255, 0, 0, 255];
+        if let Some(layer) = doc.active_layer_mut() {
+            for y in 10..30 {
+                for x in 10..30 {
+                    let idx = (y * 50 + x) * 4;
+                    layer.pixels[idx..idx + 4].copy_from_slice(&red);
+                }
+            }
+        }
+
+        // Smudge from (25, 20) outward to (35, 20)
+        let mut brush = crate::brush::BrushSettings::default();
+        brush.tool = crate::brush::ToolType::Smudge;
+        brush.size = 10.0;
+        brush.smudge_strength = 0.8;
+        let sym = crate::symmetry::SymmetryConfig::default();
+
+        crate::rasterizer::StrokeRasterizer::paint_segment(
+            &mut doc,
+            crate::brush::BrushPoint::new(Vec2::new(25.0, 20.0), 1.0),
+            crate::brush::BrushPoint::new(Vec2::new(35.0, 20.0), 1.0),
+            &brush,
+            &sym,
+            None,
+        );
+
+        // Pixel at (33, 20) should now have smudged red paint
+        if let Some(layer) = doc.active_layer() {
+            let idx = (20 * 50 + 33) * 4;
+            assert!(layer.pixels[idx] > 0, "Smudge should push red pixels to (33, 20)");
+        }
+    }
 }

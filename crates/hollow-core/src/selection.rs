@@ -47,10 +47,26 @@ impl SelectionMask {
             return sm;
         }
 
-        // Ray casting point-in-polygon fill
-        for y in 0..height {
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
+        for p in points {
+            min_x = min_x.min(p.x);
+            min_y = min_y.min(p.y);
+            max_x = max_x.max(p.x);
+            max_y = max_y.max(p.y);
+        }
+
+        let start_x = (min_x.floor().max(0.0) as u32).min(width);
+        let end_x = (max_x.ceil().max(0.0) as u32).min(width);
+        let start_y = (min_y.floor().max(0.0) as u32).min(height);
+        let end_y = (max_y.ceil().max(0.0) as u32).min(height);
+
+        // Ray casting point-in-polygon fill within bounding box
+        for y in start_y..end_y {
             let py = y as f32 + 0.5;
-            for x in 0..width {
+            for x in start_x..end_x {
                 let px = x as f32 + 0.5;
                 let mut inside = false;
                 let mut j = points.len() - 1;
@@ -71,6 +87,44 @@ impl SelectionMask {
             }
         }
         sm
+    }
+
+    /// Extracts boundary line segments of the selection mask for viewport marching ants / outline rendering
+    pub fn get_boundary_segments(&self, step: usize) -> Vec<(Vec2, Vec2)> {
+        let mut segments = Vec::new();
+        let w = self.width;
+        let h = self.height;
+        let step = step.max(1);
+
+        for y in (0..h).step_by(step) {
+            for x in (0..w).step_by(step) {
+                let idx = (y * w + x) as usize;
+                if self.mask[idx] > 32 {
+                    let left_empty = x == 0 || self.mask[idx - 1] <= 32;
+                    let right_empty = x + 1 >= w || self.mask[idx + 1] <= 32;
+                    let top_empty = y == 0 || self.mask[idx - (w as usize)] <= 32;
+                    let bottom_empty = y + 1 >= h || self.mask[idx + (w as usize)] <= 32;
+
+                    let fx = x as f32;
+                    let fy = y as f32;
+                    let sz = step as f32;
+
+                    if top_empty {
+                        segments.push((Vec2::new(fx, fy), Vec2::new(fx + sz, fy)));
+                    }
+                    if right_empty {
+                        segments.push((Vec2::new(fx + sz, fy), Vec2::new(fx + sz, fy + sz)));
+                    }
+                    if bottom_empty {
+                        segments.push((Vec2::new(fx + sz, fy + sz), Vec2::new(fx, fy + sz)));
+                    }
+                    if left_empty {
+                        segments.push((Vec2::new(fx, fy + sz), Vec2::new(fx, fy)));
+                    }
+                }
+            }
+        }
+        segments
     }
 
     pub fn from_mask_vec(width: u32, height: u32, mask: Vec<u8>) -> Self {

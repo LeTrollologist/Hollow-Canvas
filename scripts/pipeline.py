@@ -179,22 +179,21 @@ def stage_publish(version: str, tag_dir: Path, assets: list, draft: bool = False
     checksums_file = tag_dir / "SHA256SUMS.txt"
     upload_files = [str(a) for a in assets] + [str(checksums_file)]
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Advanced Selection Toolset & Mask Modifiers Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Smudge Engine Overhaul & Selection Marching Ants Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
 ### ✨ What's New in {version}
-* **🪢 Freehand Lasso Selection Tool (`L`)** — Draw fluid, organic freehand selection loops alongside the Marquee and Magic Wand:
-  - **Live Canvas Loop Preview**: Real-time connected selection outline feedback while drawing.
-  - **Modifier Key Combinations**: Hold `Shift` to add / union with existing selection, or hold `Alt` to subtract from selection.
-* **🪄 Advanced Selection Modifiers & Dialogs**:
-  - **Feather Selection...**: Soften selection edges with a configurable radius ($1$ to $50$ px) using separable 2-pass blurring.
-  - **Expand Selection...**: Grow selection boundaries outward by $N$ pixels ($1$ to $50$ px) via morphological dilation.
-  - **Contract Selection...**: Shrink selection boundaries inward by $N$ pixels ($1$ to $50$ px) via morphological erosion.
-  - **Select All (`Ctrl+A`) & Deselect (`Ctrl+D`) & Invert (`Ctrl+Shift+I`)**: Fast global selection shortcuts.
-* **🎨 Selection Fill & Stroke Operations**:
-  - **Fill Selection (`Shift+F5` / `Alt+Backspace`)**: Fill active selection directly with primary color on the current layer with alpha blending.
-  - **Stroke Selection...**: Outline selection perimeter with configurable stroke width ($1$ to $50$ px) and placement options (`Center`, `Inside`, `Outside`).
+* **🖐️ Professional Wet-Paint Smudge Engine Overhaul** — Completely redesigned smudge tool rasterizer:
+  - **Bilinear Motion Lookback Sampling**: Smoothly drags and blends colors along actual stroke vectors without pixelation or step quantization.
+  - **Hermite Radial Falloff & Strength Scaling**: Natural organic paint pushing with configurable `smudge_strength` and brush opacity.
+  - **High-Rate Spline Evaluation**: Instant, lag-free smudge strokes with Catmull-Rom curve interpolation.
+* **✨ Visible Animated Selection Marching Ants & On-Canvas HUD**:
+  - **Dynamic Selection Boundary**: Real-time marching ants boundary outline rendered directly on canvas so you always know where active selections are.
+  - **One-Click Click-to-Deselect**: Single click with Lasso or Marquee immediately clears selection (standard Photoshop/CSP workflow).
+  - **Floating Selection HUD**: Fast on-canvas shortcuts for `[Fill]`, `[Stroke...]`, `[Feather...]`, and `[✕ Deselect (Ctrl+D)]`.
+  - **Multi-Selection Modifiers for Marquee & Lasso**: Hold `Shift` to add / union, hold `Alt` to subtract from selection.
+  - **Polygon Bounding Box Acceleration**: Ultra-fast raycast rasterization within bounding box for instant loop completion.
 * **⤢ Studio Free Transform Tool (`Ctrl+T`)** — Interactive 8-point bounding box gizmo, smooth rotation, mirror flipping, and bilinear resampling.
 * **📐 Dual-Mode Reference & Tracing Paper Engine** — On-canvas tracing paper underlay/overlay and detached floating lightbox dock.
 * **🎨 Studio Color Adjustments & Filters FX Suite** — HSL, Brightness/Contrast, Color Balance, Invert, Gaussian Blur, Sharpen, Film Grain, Vignette, and Lens Aberration.

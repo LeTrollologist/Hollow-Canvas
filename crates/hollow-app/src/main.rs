@@ -495,27 +495,39 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
             if tool == ToolType::Lasso {
                 let pts = std::mem::take(&mut app.state.lasso_points);
+                let is_shift = (GetKeyState(0x10) as i32 & 0x8000) != 0;
+                let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0;
+
                 if pts.len() >= 3 {
                     let new_mask = SelectionMask::from_polygon(app.state.document.width, app.state.document.height, &pts);
-                    let is_shift = (GetKeyState(0x10) as i32 & 0x8000) != 0;
-                    let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0;
-
                     if is_shift {
                         if let Some(existing) = &mut app.state.selection {
                             existing.union(&new_mask);
-                        } else {
+                        } else if new_mask.has_selection() {
                             app.state.selection = Some(new_mask);
                         }
                         app.state.set_status("Added to selection (Lasso)");
                     } else if is_alt {
                         if let Some(existing) = &mut app.state.selection {
                             existing.subtract(&new_mask);
+                            if !existing.has_selection() {
+                                app.state.selection = None;
+                            }
                         }
                         app.state.set_status("Subtracted from selection (Lasso)");
                     } else {
-                        app.state.selection = Some(new_mask);
-                        app.state.set_status("Lasso selection created");
+                        if new_mask.has_selection() {
+                            app.state.selection = Some(new_mask);
+                            app.state.set_status("Lasso selection created");
+                        } else {
+                            app.state.selection = None;
+                            app.state.set_status("Deselected");
+                        }
                     }
+                } else if !is_shift && !is_alt {
+                    // Single click or tap with Lasso clears selection
+                    app.state.selection = None;
+                    app.state.set_status("Deselected");
                 }
             }
 
@@ -536,9 +548,39 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.state.set_status("Gradient applied");
                     }
                     ToolType::Marquee => {
-                        let mask = SelectionMask::from_rect(app.state.document.width, app.state.document.height, start, canvas_pos);
-                        app.state.selection = Some(mask);
-                        app.state.set_status("Selected area");
+                        let is_shift = (GetKeyState(0x10) as i32 & 0x8000) != 0;
+                        let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0;
+                        if start.distance(canvas_pos) < 3.0 && !is_shift && !is_alt {
+                            // Single click clears selection
+                            app.state.selection = None;
+                            app.state.set_status("Deselected");
+                        } else {
+                            let mask = SelectionMask::from_rect(app.state.document.width, app.state.document.height, start, canvas_pos);
+                            if is_shift {
+                                if let Some(existing) = &mut app.state.selection {
+                                    existing.union(&mask);
+                                } else if mask.has_selection() {
+                                    app.state.selection = Some(mask);
+                                }
+                                app.state.set_status("Added to selection (Marquee)");
+                            } else if is_alt {
+                                if let Some(existing) = &mut app.state.selection {
+                                    existing.subtract(&mask);
+                                    if !existing.has_selection() {
+                                        app.state.selection = None;
+                                    }
+                                }
+                                app.state.set_status("Subtracted from selection (Marquee)");
+                            } else {
+                                if mask.has_selection() {
+                                    app.state.selection = Some(mask);
+                                    app.state.set_status("Selected area");
+                                } else {
+                                    app.state.selection = None;
+                                    app.state.set_status("Deselected");
+                                }
+                            }
+                        }
                     }
                     ToolType::Crop => {
                         app.state.crop_box = Some((start, canvas_pos));
