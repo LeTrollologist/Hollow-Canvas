@@ -96,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.8.2").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.8.3").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -1855,21 +1855,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             let win_h = win_size.y;
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("selection_boundary_layer")));
 
-            let step = if mask.width > 2000 || mask.height > 2000 {
-                4
-            } else if mask.width > 1000 || mask.height > 1000 {
-                2
-            } else {
-                1
-            };
-
-            let segments = mask.get_boundary_segments(step);
             let time = ctx.input(|i| i.time);
             let phase = (time * 6.0).fract() as f32;
             let c_pri = Color32::from_rgb(0, 240, 255);
             let c_sec = Color32::from_rgb(255, 255, 255);
 
-            for (i, (p0, p1)) in segments.into_iter().enumerate() {
+            for (i, &(p0, p1)) in mask.cached_boundary.iter().enumerate() {
                 let s0 = state.canvas_to_screen(p0, win_w, win_h);
                 let s1 = state.canvas_to_screen(p1, win_w, win_h);
                 let is_pri = (((i as f32) * 0.5 + phase * 4.0) as usize) % 2 == 0;
@@ -2054,7 +2045,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.8.2 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.8.3 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);

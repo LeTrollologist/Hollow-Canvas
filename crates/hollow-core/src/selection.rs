@@ -13,6 +13,10 @@ pub struct SelectionMask {
     pub width: u32,
     pub height: u32,
     pub mask: Vec<u8>, // 0..=255 mask intensity
+    #[serde(default)]
+    pub has_active_selection: bool,
+    #[serde(skip)]
+    pub cached_boundary: Vec<(Vec2, Vec2)>,
 }
 
 impl SelectionMask {
@@ -22,6 +26,60 @@ impl SelectionMask {
             width,
             height,
             mask: vec![0; size],
+            has_active_selection: false,
+            cached_boundary: Vec::new(),
+        }
+    }
+
+    pub fn compute_boundary_segments(width: u32, height: u32, mask: &[u8]) -> Vec<(Vec2, Vec2)> {
+        let mut segments = Vec::new();
+        let w = width;
+        let h = height;
+        let step = if w > 2000 || h > 2000 {
+            4
+        } else if w > 1000 || h > 1000 {
+            2
+        } else {
+            1
+        };
+
+        for y in (0..h).step_by(step) {
+            for x in (0..w).step_by(step) {
+                let idx = (y * w + x) as usize;
+                if idx < mask.len() && mask[idx] > 32 {
+                    let left_empty = x == 0 || mask[idx - 1] <= 32;
+                    let right_empty = x + 1 >= w || mask[idx + 1] <= 32;
+                    let top_empty = y == 0 || mask[idx - (w as usize)] <= 32;
+                    let bottom_empty = y + 1 >= h || mask[idx + (w as usize)] <= 32;
+
+                    let fx = x as f32;
+                    let fy = y as f32;
+                    let sz = step as f32;
+
+                    if top_empty {
+                        segments.push((Vec2::new(fx, fy), Vec2::new(fx + sz, fy)));
+                    }
+                    if right_empty {
+                        segments.push((Vec2::new(fx + sz, fy), Vec2::new(fx + sz, fy + sz)));
+                    }
+                    if bottom_empty {
+                        segments.push((Vec2::new(fx + sz, fy + sz), Vec2::new(fx, fy + sz)));
+                    }
+                    if left_empty {
+                        segments.push((Vec2::new(fx, fy + sz), Vec2::new(fx, fy)));
+                    }
+                }
+            }
+        }
+        segments
+    }
+
+    pub fn recompute_metadata(&mut self) {
+        self.has_active_selection = self.mask.iter().any(|&v| v > 8);
+        if self.has_active_selection {
+            self.cached_boundary = Self::compute_boundary_segments(self.width, self.height, &self.mask);
+        } else {
+            self.cached_boundary.clear();
         }
     }
 
@@ -38,6 +96,7 @@ impl SelectionMask {
                 sm.mask[idx] = 255;
             }
         }
+        sm.recompute_metadata();
         sm
     }
 
@@ -86,72 +145,60 @@ impl SelectionMask {
                 }
             }
         }
+        sm.recompute_metadata();
         sm
     }
 
     /// Extracts boundary line segments of the selection mask for viewport marching ants / outline rendering
-    pub fn get_boundary_segments(&self, step: usize) -> Vec<(Vec2, Vec2)> {
-        let mut segments = Vec::new();
-        let w = self.width;
-        let h = self.height;
-        let step = step.max(1);
-
-        for y in (0..h).step_by(step) {
-            for x in (0..w).step_by(step) {
-                let idx = (y * w + x) as usize;
-                if self.mask[idx] > 32 {
-                    let left_empty = x == 0 || self.mask[idx - 1] <= 32;
-                    let right_empty = x + 1 >= w || self.mask[idx + 1] <= 32;
-                    let top_empty = y == 0 || self.mask[idx - (w as usize)] <= 32;
-                    let bottom_empty = y + 1 >= h || self.mask[idx + (w as usize)] <= 32;
-
-                    let fx = x as f32;
-                    let fy = y as f32;
-                    let sz = step as f32;
-
-                    if top_empty {
-                        segments.push((Vec2::new(fx, fy), Vec2::new(fx + sz, fy)));
-                    }
-                    if right_empty {
-                        segments.push((Vec2::new(fx + sz, fy), Vec2::new(fx + sz, fy + sz)));
-                    }
-                    if bottom_empty {
-                        segments.push((Vec2::new(fx + sz, fy + sz), Vec2::new(fx, fy + sz)));
-                    }
-                    if left_empty {
-                        segments.push((Vec2::new(fx, fy + sz), Vec2::new(fx, fy)));
-                    }
-                }
-            }
+    pub fn get_boundary_segments(&self, _step: usize) -> Vec<(Vec2, Vec2)> {
+        if self.cached_boundary.is_empty() && self.has_selection() {
+            Self::compute_boundary_segments(self.width, self.height, &self.mask)
+        } else {
+            self.cached_boundary.clone()
         }
-        segments
     }
 
     pub fn from_mask_vec(width: u32, height: u32, mask: Vec<u8>) -> Self {
-        Self { width, height, mask }
+        let mut sm = Self {
+            width,
+            height,
+            mask,
+            has_active_selection: false,
+            cached_boundary: Vec::new(),
+        };
+        sm.recompute_metadata();
+        sm
     }
 
     pub fn select_all(width: u32, height: u32) -> Self {
         let size = (width as usize) * (height as usize);
-        Self {
+        let mut sm = Self {
             width,
             height,
             mask: vec![255; size],
-        }
+            has_active_selection: true,
+            cached_boundary: Vec::new(),
+        };
+        sm.recompute_metadata();
+        sm
     }
 
+    #[inline]
     pub fn has_selection(&self) -> bool {
-        self.mask.iter().any(|&v| v > 8)
+        self.has_active_selection
     }
 
     pub fn invert(&mut self) {
         for v in &mut self.mask {
             *v = 255 - *v;
         }
+        self.recompute_metadata();
     }
 
     pub fn clear(&mut self) {
         self.mask.fill(0);
+        self.has_active_selection = false;
+        self.cached_boundary.clear();
     }
 
     pub fn union(&mut self, other: &SelectionMask) {
@@ -161,6 +208,7 @@ impl SelectionMask {
         for (a, &b) in self.mask.iter_mut().zip(other.mask.iter()) {
             *a = (*a).max(b);
         }
+        self.recompute_metadata();
     }
 
     pub fn subtract(&mut self, other: &SelectionMask) {
@@ -170,6 +218,7 @@ impl SelectionMask {
         for (a, &b) in self.mask.iter_mut().zip(other.mask.iter()) {
             *a = a.saturating_sub(b);
         }
+        self.recompute_metadata();
     }
 
     #[inline]
@@ -234,6 +283,7 @@ impl SelectionMask {
         }
 
         self.mask = tmp;
+        self.recompute_metadata();
     }
 
     pub fn expand(&mut self, radius: u32) {
@@ -260,6 +310,7 @@ impl SelectionMask {
                 }
             }
         }
+        self.recompute_metadata();
     }
 
     pub fn contract(&mut self, radius: u32) {
@@ -290,6 +341,7 @@ impl SelectionMask {
                 }
             }
         }
+        self.recompute_metadata();
     }
 
     /// Fills the selected region on a pixel buffer with the given RGBA color

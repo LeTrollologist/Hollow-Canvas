@@ -72,6 +72,8 @@ impl StrokeRasterizer {
         let opacity = brush.opacity;
         let hardness = brush.hardness;
 
+        let active_mask = selection.filter(|s| s.has_selection());
+
         if tool == ToolType::Spray {
             let density = (radius * radius * brush.spray_density * 0.4).max(6.0) as usize;
             let seed = (step_index as u32).wrapping_mul(1013904223);
@@ -90,8 +92,8 @@ impl StrokeRasterizer {
                     let uix = ix as u32;
                     let uiy = iy as u32;
 
-                    if let Some(mask) = selection {
-                        if mask.has_selection() && mask.get_value(uix, uiy) < 8 {
+                    if let Some(mask) = active_mask {
+                        if mask.get_value(uix, uiy) < 8 {
                             continue;
                         }
                     }
@@ -114,52 +116,64 @@ impl StrokeRasterizer {
             return;
         }
 
-        let min_x = ((stamp_center.x - radius).floor().max(0.0) as u32).min(doc_w);
-        let max_x = ((stamp_center.x + radius).ceil().max(0.0) as u32).min(doc_w);
-        let min_y = ((stamp_center.y - radius).floor().max(0.0) as u32).min(doc_h);
-        let max_y = ((stamp_center.y + radius).ceil().max(0.0) as u32).min(doc_h);
-
-        let r_sq = radius * radius;
-        let clamped_hardness = hardness.clamp(0.05, 1.0);
+        let radius_sq = radius * radius;
+        let clamped_hardness = hardness.clamp(0.0, 0.999);
         let inner_radius_sq = (radius * clamped_hardness) * (radius * clamped_hardness);
-        let seed = (step_index as u32).wrapping_mul(2654435761);
+        let radius_i = radius.ceil() as i32;
 
-        for y in min_y..max_y {
-            let dy = y as f32 + 0.5 - stamp_center.y;
-            let dy_sq = dy * dy;
+        let center_x_i = stamp_center.x.round() as i32;
+        let center_y_i = stamp_center.y.round() as i32;
 
-            for x in min_x..max_x {
-                let dx = x as f32 + 0.5 - stamp_center.x;
-                let d_sq = dx * dx + dy_sq;
+        for dy in -radius_i..=radius_i {
+            let py_i = center_y_i + dy;
+            if py_i < 0 || py_i >= doc_h as i32 {
+                continue;
+            }
+            let y = py_i as u32;
+            let dy_f = (y as f32 + 0.5) - stamp_center.y;
+            let dy_sq = dy_f * dy_f;
 
-                if d_sq <= r_sq {
+            if dy_sq > radius_sq {
+                continue;
+            }
+
+            for dx in -radius_i..=radius_i {
+                let px_i = center_x_i + dx;
+                if px_i < 0 || px_i >= doc_w as i32 {
+                    continue;
+                }
+                let x = px_i as u32;
+                let dx_f = (x as f32 + 0.5) - stamp_center.x;
+                let d_sq = dx_f * dx_f + dy_sq;
+
+                if d_sq <= radius_sq {
                     let d = d_sq.sqrt();
                     let mut alpha = match tool {
-                        ToolType::Pencil => {
-                            if d <= radius {
-                                let edge_fade = (1.0 - (d / radius).powi(4)).clamp(0.0, 1.0);
-                                let noise = 0.85 + 0.15 * hash21(x, y, 777);
-                                edge_fade * noise * opacity
+                        ToolType::Pencil => opacity,
+                        ToolType::Chalk => {
+                            let noise = hash21(x, y, (step_index as u32).wrapping_mul(2654435761));
+                            if noise > 0.45 {
+                                let edge_fade = 1.0 - (d / radius).powi(2);
+                                (noise * 0.9 + 0.1) * edge_fade * opacity
                             } else {
                                 0.0
                             }
                         }
                         ToolType::Watercolor => {
-                            let wetness = brush.watercolor_wetness.clamp(0.1, 1.0);
-                            let normalized_d = d / radius;
-                            let wet_edge = 1.0 + 0.4 * (normalized_d - 0.7).max(0.0);
-                            let falloff = (1.0 - normalized_d).powf(0.85) * wet_edge;
-                            falloff.clamp(0.0, 1.0) * opacity * (0.35 + 0.45 * wetness)
-                        }
-                        ToolType::Chalk => {
-                            let grain = brush.chalk_grain.clamp(0.1, 1.0);
-                            let noise = hash21(x, y, seed);
-                            if noise < (1.0 - grain * 0.7) {
-                                let falloff = (1.0 - (d / radius)).clamp(0.0, 1.0);
-                                falloff * opacity * (0.5 + 0.5 * noise)
+                            let t = d / radius;
+                            let wet_profile = if t < 0.7 {
+                                0.35 + 0.25 * (t / 0.7)
                             } else {
-                                0.0
-                            }
+                                0.6 + 0.4 * ((t - 0.7) / 0.3)
+                            };
+                            let noise = hash21(x, y, (step_index as u32).wrapping_mul(1234567));
+                            wet_profile * (0.8 + 0.2 * noise) * opacity * 0.45
+                        }
+                        ToolType::Smudge => {
+                            let t = d / radius;
+                            let falloff = (1.0 - t * t).max(0.0);
+                            let factor = falloff * falloff * (3.0 - 2.0 * falloff);
+                            (factor * brush.smudge_strength).clamp(0.0, 1.0) * opacity
                         }
                         ToolType::Eraser => match brush.eraser_mode {
                             EraserMode::HardPixel => {
@@ -190,11 +204,12 @@ impl StrokeRasterizer {
                         }
                     };
 
-                    if let Some(mask) = selection {
-                        if mask.has_selection() {
-                            let mask_val = mask.get_value(x, y) as f32 / 255.0;
-                            alpha *= mask_val;
+                    if let Some(mask) = active_mask {
+                        let mask_val = mask.get_value(x, y);
+                        if mask_val <= 8 {
+                            continue;
                         }
+                        alpha *= mask_val as f32 / 255.0;
                     }
 
                     if alpha <= 0.001 {
@@ -503,6 +518,8 @@ impl StrokeRasterizer {
             _ => return,
         };
 
+        let active_mask = selection.filter(|s| s.has_selection());
+
         let mode = brush.shape_fill_mode;
         let stroke_w = (brush.size * 0.5).max(1.0);
 
@@ -519,8 +536,8 @@ impl StrokeRasterizer {
                 let fill_col = brush.secondary_color.to_rgba8();
                 for y in by0..by1 {
                     for x in bx0..bx1 {
-                        if let Some(mask) = selection {
-                            if mask.has_selection() && mask.get_value(x, y) < 8 {
+                        if let Some(mask) = active_mask {
+                            if mask.get_value(x, y) < 8 {
                                 continue;
                             }
                         }
@@ -570,6 +587,7 @@ impl StrokeRasterizer {
             _ => return,
         };
 
+        let active_mask = selection.filter(|s| s.has_selection());
         let mode = brush.shape_fill_mode;
         let stroke_w = (brush.size * 0.5).max(1.0);
         let sym_centers = symmetry.transform_points(center, doc_w as f32, doc_h as f32);
@@ -622,8 +640,8 @@ impl StrokeRasterizer {
                     };
 
                     if should_paint && alpha > 0.001 {
-                        if let Some(mask) = selection {
-                            if mask.has_selection() && mask.get_value(x, y) < 8 {
+                        if let Some(mask) = active_mask {
+                            if mask.get_value(x, y) < 8 {
                                 continue;
                             }
                         }
@@ -649,6 +667,7 @@ impl StrokeRasterizer {
             return;
         }
 
+        let active_mask = selection.filter(|s| s.has_selection());
         let mode = brush.shape_fill_mode;
         if (mode == ShapeFillMode::Fill || mode == ShapeFillMode::Both) && points.len() >= 3 {
             let mask = SelectionMask::from_polygon(doc.width, doc.height, points);
@@ -662,8 +681,8 @@ impl StrokeRasterizer {
             for y in 0..doc_h {
                 for x in 0..doc_w {
                     if mask.get_value(x, y) > 8 {
-                        if let Some(sel) = selection {
-                            if sel.has_selection() && sel.get_value(x, y) < 8 {
+                        if let Some(sel) = active_mask {
+                            if sel.get_value(x, y) < 8 {
                                 continue;
                             }
                         }
@@ -698,6 +717,7 @@ impl StrokeRasterizer {
             _ => return,
         };
 
+        let active_mask = selection.filter(|s| s.has_selection());
         let col0 = brush.primary_color;
         let col1 = brush.secondary_color;
         let diff = end - start;
@@ -708,8 +728,8 @@ impl StrokeRasterizer {
 
         for y in 0..doc_h {
             for x in 0..doc_w {
-                if let Some(mask) = selection {
-                    if mask.has_selection() && mask.get_value(x, y) < 8 {
+                if let Some(mask) = active_mask {
+                    if mask.get_value(x, y) < 8 {
                         continue;
                     }
                 }
@@ -836,6 +856,7 @@ impl StrokeRasterizer {
             }
         }
 
+        mask.recompute_metadata();
         mask
     }
 
@@ -886,6 +907,8 @@ impl StrokeRasterizer {
                 && (px[3] as i32 - target_px[3] as i32).abs() <= tolerance as i32
         };
 
+        let active_mask = selection.filter(|s| s.has_selection());
+
         while let Some((x, y)) = queue.pop() {
             let pos = (y * doc_w + x) as usize;
             if visited[pos] {
@@ -893,8 +916,8 @@ impl StrokeRasterizer {
             }
             visited[pos] = true;
 
-            if let Some(mask) = selection {
-                if mask.has_selection() && mask.get_value(x, y) < 8 {
+            if let Some(mask) = active_mask {
+                if mask.get_value(x, y) < 8 {
                     continue;
                 }
             }
