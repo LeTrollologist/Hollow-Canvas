@@ -217,6 +217,17 @@ pub fn draw_tool_icon(painter: &Painter, rect: Rect, tool: ToolType, color: Colo
             painter.line_segment([pos2(cx, cy + r * 0.75_f32), pos2(cx + r * 0.3_f32, cy + r * 0.45_f32)], stroke);
         }
 
+        ToolType::Transform => {
+            // Transform bounding box with corner anchor nodes
+            let box_rect = Rect::from_center_size(rect.center(), Vec2::new(r * 1.3_f32, r * 1.3_f32));
+            painter.rect(box_rect, 1.0_f32, fill, stroke);
+            let hs = 3.0_f32;
+            painter.rect_filled(Rect::from_center_size(box_rect.left_top(), Vec2::splat(hs)), 0.5_f32, color);
+            painter.rect_filled(Rect::from_center_size(box_rect.right_top(), Vec2::splat(hs)), 0.5_f32, color);
+            painter.rect_filled(Rect::from_center_size(box_rect.right_bottom(), Vec2::splat(hs)), 0.5_f32, color);
+            painter.rect_filled(Rect::from_center_size(box_rect.left_bottom(), Vec2::splat(hs)), 0.5_f32, color);
+        }
+
         ToolType::Crop => {
             // Framing crop corners
             let c_rect = Rect::from_center_size(rect.center(), Vec2::new(r * 1.4_f32, r * 1.4_f32));

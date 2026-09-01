@@ -95,7 +95,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.6.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.7.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -134,6 +134,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 if let Some(desc) = state.history.redo(&mut state.document) {
                                     state.set_status(format!("Redo: {}", desc));
                                 }
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            if ui.button("⤢ Free Transform (Ctrl+T)").clicked() {
+                                state.brush.tool = ToolType::Transform;
+                                state.begin_transform_session();
                                 ui.close_menu();
                             }
                             ui.separator();
@@ -451,6 +457,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         (ToolType::Polygon, "Poly"),
                         (ToolType::Marquee, "Select"),
                         (ToolType::Move, "Move"),
+                        (ToolType::Transform, "Trans"),
                         (ToolType::Crop, "Crop"),
                         (ToolType::Eyedropper, "Pick"),
                     ];
@@ -608,6 +615,45 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 });
                             } else {
                                 ui.label(RichText::new("Drag box to crop canvas").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                            }
+                        }
+                        ToolType::Transform => {
+                            if !state.transform_session.is_active {
+                                if ui.button(RichText::new("✦ Start Free Transform (Ctrl+T)").strong().color(accent_c32)).clicked() {
+                                    state.begin_transform_session();
+                                }
+                            } else {
+                                ui.horizontal(|ui| {
+                                    if ui.button(RichText::new("✓ Apply (Enter)").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                                        state.commit_transform_session();
+                                    }
+                                    if ui.button(RichText::new("✕ Cancel (Esc)").strong().color(Color32::from_rgb(250, 120, 120))).clicked() {
+                                        state.cancel_transform_session();
+                                    }
+                                });
+                                ui.add_space(4.0);
+                                let mut rot_deg = state.transform_session.transform.rotation_rad.to_degrees();
+                                if ui.add(egui::Slider::new(&mut rot_deg, -180.0..=180.0).text("Angle (°)")).changed() {
+                                    state.transform_session.transform.rotation_rad = rot_deg.to_radians();
+                                    state.update_transform_preview();
+                                }
+                                let mut scale_pct = state.transform_session.transform.scale.x * 100.0;
+                                if ui.add(egui::Slider::new(&mut scale_pct, 5.0..=400.0).text("Scale (%)")).changed() {
+                                    let s = scale_pct / 100.0;
+                                    state.transform_session.transform.scale = glam::Vec2::new(s, s);
+                                    state.update_transform_preview();
+                                }
+                                ui.horizontal(|ui| {
+                                    if ui.button("⇄ Flip H").clicked() {
+                                        state.transform_session.transform.flip_h = !state.transform_session.transform.flip_h;
+                                        state.update_transform_preview();
+                                    }
+                                    if ui.button("⇅ Flip V").clicked() {
+                                        state.transform_session.transform.flip_v = !state.transform_session.transform.flip_v;
+                                        state.update_transform_preview();
+                                    }
+                                });
+                                ui.checkbox(&mut state.transform_session.is_bilinear, "Smooth Bilinear");
                             }
                         }
                         _ => {}
@@ -1603,6 +1649,156 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         ActiveFilterModal::None => {}
     }
 
+    // ── 9. FREE TRANSFORM 8-POINT GIZMO & FLOATING HUD ──
+    if state.transform_session.is_active {
+        let win_size = ctx.screen_rect().size();
+        let win_w = win_size.x;
+        let win_h = win_size.y;
+
+        let to_screen_pos = |cv_pt: glam::Vec2| -> egui::Pos2 {
+            let s_pt = state.canvas_to_screen(cv_pt, win_w, win_h);
+            egui::pos2(s_pt.x, s_pt.y)
+        };
+
+        let pw = state.transform_session.patch_w as f32;
+        let ph = state.transform_session.patch_h as f32;
+        let origin = state.transform_session.patch_origin;
+        let tf = &state.transform_session.transform;
+
+        let local_corners = [
+            origin,
+            origin + glam::Vec2::new(pw, 0.0),
+            origin + glam::Vec2::new(pw, ph),
+            origin + glam::Vec2::new(0.0, ph),
+        ];
+
+        let screen_corners = [
+            to_screen_pos(tf.forward(local_corners[0])),
+            to_screen_pos(tf.forward(local_corners[1])),
+            to_screen_pos(tf.forward(local_corners[2])),
+            to_screen_pos(tf.forward(local_corners[3])),
+        ];
+
+        let screen_tc = egui::pos2(
+            (screen_corners[0].x + screen_corners[1].x) * 0.5,
+            (screen_corners[0].y + screen_corners[1].y) * 0.5,
+        );
+        let screen_mr = egui::pos2(
+            (screen_corners[1].x + screen_corners[2].x) * 0.5,
+            (screen_corners[1].y + screen_corners[2].y) * 0.5,
+        );
+        let screen_bc = egui::pos2(
+            (screen_corners[2].x + screen_corners[3].x) * 0.5,
+            (screen_corners[2].y + screen_corners[3].y) * 0.5,
+        );
+        let screen_ml = egui::pos2(
+            (screen_corners[3].x + screen_corners[0].x) * 0.5,
+            (screen_corners[3].y + screen_corners[0].y) * 0.5,
+        );
+
+        let stem_dir = (screen_tc - screen_bc).normalized();
+        let screen_stem = screen_tc + stem_dir * 28.0;
+        let screen_pivot = to_screen_pos(tf.pivot + tf.translation);
+
+        // Render Gizmo lines & handles using foreground painter
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("transform_gizmo_layer")));
+
+        let border_stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255));
+        painter.line_segment([screen_corners[0], screen_corners[1]], border_stroke);
+        painter.line_segment([screen_corners[1], screen_corners[2]], border_stroke);
+        painter.line_segment([screen_corners[2], screen_corners[3]], border_stroke);
+        painter.line_segment([screen_corners[3], screen_corners[0]], border_stroke);
+
+        let stem_stroke = egui::Stroke::new(1.2_f32, Color32::from_rgb(0, 200, 255));
+        painter.line_segment([screen_tc, screen_stem], stem_stroke);
+
+        let handle_fill = Color32::from_rgb(10, 18, 36);
+        let handle_stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255));
+        let handle_size = 8.0_f32;
+
+        let draw_square_handle = |p: egui::Pos2| {
+            let r = egui::Rect::from_center_size(p, egui::vec2(handle_size, handle_size));
+            painter.rect_filled(r, 1.5_f32, handle_fill);
+            painter.rect_stroke(r, 1.5_f32, handle_stroke);
+        };
+
+        draw_square_handle(screen_corners[0]);
+        draw_square_handle(screen_tc);
+        draw_square_handle(screen_corners[1]);
+        draw_square_handle(screen_mr);
+        draw_square_handle(screen_corners[2]);
+        draw_square_handle(screen_bc);
+        draw_square_handle(screen_corners[3]);
+        draw_square_handle(screen_ml);
+
+        // Rotation Handle (Circle)
+        painter.circle_filled(screen_stem, 5.5_f32, Color32::from_rgb(0, 240, 255));
+        painter.circle_stroke(screen_stem, 5.5_f32, egui::Stroke::new(1.5_f32, Color32::from_rgb(255, 255, 255)));
+
+        // Pivot Handle (Crosshair circle)
+        painter.circle_stroke(screen_pivot, 6.0_f32, egui::Stroke::new(1.2_f32, Color32::from_rgb(255, 180, 0)));
+        painter.line_segment(
+            [screen_pivot - egui::vec2(8.0, 0.0), screen_pivot + egui::vec2(8.0, 0.0)],
+            egui::Stroke::new(1.2_f32, Color32::from_rgb(255, 180, 0)),
+        );
+        painter.line_segment(
+            [screen_pivot - egui::vec2(0.0, 8.0), screen_pivot + egui::vec2(0.0, 8.0)],
+            egui::Stroke::new(1.2_f32, Color32::from_rgb(255, 180, 0)),
+        );
+
+        // Floating Transform HUD Toolbar at Bottom-Center
+        let hud_pos = egui::pos2((win_w - 480.0) * 0.5, win_h - 90.0);
+        egui::Area::new("transform_hud_area".into())
+            .fixed_pos(hud_pos)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::none()
+                    .fill(Color32::from_rgba_unmultiplied(10, 14, 28, 245))
+                    .stroke(egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)))
+                    .rounding(8.0)
+                    .inner_margin(8.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("✦ TRANSFORM").strong().color(Color32::from_rgb(0, 240, 255)));
+                            ui.separator();
+
+                            if ui.button(RichText::new("✓ Apply (Enter)").strong().color(Color32::from_rgb(80, 240, 140))).clicked() {
+                                state.commit_transform_session();
+                                return;
+                            }
+                            if ui.button(RichText::new("✕ Cancel (Esc)").strong().color(Color32::from_rgb(255, 100, 100))).clicked() {
+                                state.cancel_transform_session();
+                                return;
+                            }
+
+                            ui.separator();
+
+                            let mut rot_deg = state.transform_session.transform.rotation_rad.to_degrees();
+                            if ui.add(egui::DragValue::new(&mut rot_deg).speed(0.5).prefix("Angle: ").suffix("°")).changed() {
+                                state.transform_session.transform.rotation_rad = rot_deg.to_radians();
+                                state.update_transform_preview();
+                            }
+
+                            let mut scale_pct = state.transform_session.transform.scale.x * 100.0;
+                            if ui.add(egui::DragValue::new(&mut scale_pct).speed(1.0).range(5.0..=500.0).prefix("Scale: ").suffix("%")).changed() {
+                                let s = scale_pct / 100.0;
+                                state.transform_session.transform.scale = glam::Vec2::new(s, s);
+                                state.update_transform_preview();
+                            }
+
+                            if ui.button("⇄ Flip H").clicked() {
+                                state.transform_session.transform.flip_h = !state.transform_session.transform.flip_h;
+                                state.update_transform_preview();
+                            }
+                            if ui.button("⇅ Flip V").clicked() {
+                                state.transform_session.transform.flip_v = !state.transform_session.transform.flip_v;
+                                state.update_transform_preview();
+                            }
+                        });
+                    });
+            });
+    }
+
     // ── 9. ABOUT HOLLOW CANVAS MODAL ──
     if state.show_about_dialog {
         egui::Window::new("About Hollow Canvas")
@@ -1614,7 +1810,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.6.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.7.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);
@@ -1670,6 +1866,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         ("Ctrl + S", "Save Project (.hcv)"),
                         ("Ctrl + O", "Open Project (.hcv)"),
                         ("Ctrl + E", "Export PNG Image"),
+                        ("Ctrl + T", "Free Transform Layer / Selection"),
                         ("Ctrl + I", "Invert Layer Colors"),
                         ("Ctrl + Z", "Undo Action"),
                         ("Ctrl + Y / Ctrl+Shift+Z", "Redo Action"),

@@ -664,11 +664,30 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.state.set_status("Inverted Colors");
                     }
                 }
+                0x54 if is_ctrl => { // Ctrl+T (Free Transform)
+                    if app.state.transform_session.is_active {
+                        app.state.commit_transform_session();
+                    } else {
+                        app.state.begin_transform_session();
+                    }
+                }
                 0x52 if is_ctrl => { // Ctrl+R (Toggle Rulers)
                     app.state.show_rulers = !app.state.show_rulers;
                 }
                 0xDE if is_ctrl => { // Ctrl+' (Toggle Grid)
                     app.state.show_grid = !app.state.show_grid;
+                }
+                0x1B => { // Esc (Cancel Transform or selection/crop)
+                    if app.state.transform_session.is_active {
+                        app.state.cancel_transform_session();
+                    } else if app.state.crop_box.is_some() {
+                        app.state.crop_box = None;
+                        app.state.set_status("Canceled Crop");
+                    } else if app.state.polygon_points.len() > 0 {
+                        app.state.polygon_points.clear();
+                        app.state.set_status("Canceled Polygon");
+                    }
+                    app.state.drag_start_canvas_pos = None;
                 }
                 0x58 => app.state.swap_colors(),                     // X (Swap colors)
                 0x42 => app.state.brush.tool = ToolType::Brush,      // B
@@ -683,19 +702,29 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.state.set_status(if app.state.tracing_enabled { "Tracing Paper: ON" } else { "Tracing Paper: OFF" });
                 }
                 0x56 => app.state.brush.tool = ToolType::Move,       // V
-                0x0D => { // Enter (Commit polygon or crop)
-                    if app.state.polygon_points.len() >= 3 {
+                0x0D => { // Enter (Commit transform, polygon or crop)
+                    if app.state.transform_session.is_active {
+                        app.state.commit_transform_session();
+                    } else if app.state.polygon_points.len() >= 3 {
                         let pts = app.state.polygon_points.clone();
                         let sel = app.state.selection.as_ref();
                         StrokeRasterizer::rasterize_polygon(&mut app.state.document, &pts, &app.state.brush, &app.state.symmetry, sel);
                         app.state.polygon_points.clear();
                         app.state.set_status("Polygon committed");
+                    } else if let Some((min_p, max_p)) = app.state.crop_box {
+                        let min_x = min_p.x.min(max_p.x).max(0.0) as u32;
+                        let min_y = min_p.y.min(max_p.y).max(0.0) as u32;
+                        let max_x = min_p.x.max(max_p.x).min(app.state.document.width as f32) as u32;
+                        let max_y = min_p.y.max(max_p.y).min(app.state.document.height as f32) as u32;
+                        let w = max_x.saturating_sub(min_x);
+                        let h = max_y.saturating_sub(min_y);
+                        if w > 10 && h > 10 {
+                            app.state.document.resize_canvas(w, h, -(min_x as i32), -(min_y as i32));
+                            app.state.crop_box = None;
+                            app.state.brush.tool = ToolType::Brush;
+                            app.state.set_status(format!("Cropped canvas to {}×{}", w, h));
+                        }
                     }
-                }
-                0x1B => { // Esc
-                    app.state.polygon_points.clear();
-                    app.state.crop_box = None;
-                    app.state.drag_start_canvas_pos = None;
                 }
                 _ => {}
             }

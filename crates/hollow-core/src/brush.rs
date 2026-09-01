@@ -23,6 +23,7 @@ pub enum ToolType {
     Lasso,
     Wand,
     Move,
+    Transform,
     Crop,
     Eyedropper,
 }
@@ -48,6 +49,7 @@ impl ToolType {
             Self::Lasso => "Lasso",
             Self::Wand => "Wand",
             Self::Move => "Move",
+            Self::Transform => "Transform",
             Self::Crop => "Crop",
             Self::Eyedropper => "Eyedropper",
         }
@@ -73,6 +75,7 @@ impl ToolType {
             Self::Lasso => "⟳",
             Self::Wand => "★",
             Self::Move => "✛",
+            Self::Transform => "⤢",
             Self::Crop => "⛶",
             Self::Eyedropper => "◉",
         }

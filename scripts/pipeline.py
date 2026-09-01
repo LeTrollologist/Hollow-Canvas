@@ -179,20 +179,21 @@ def stage_publish(version: str, tag_dir: Path, assets: list, draft: bool = False
     checksums_file = tag_dir / "SHA256SUMS.txt"
     upload_files = [str(a) for a in assets] + [str(checksums_file)]
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Dual Reference & Tracing Engine Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Free Transform Engine Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
 ### ✨ What's New in {version}
-* **📐 On-Canvas Tracing Paper Engine (Mode A)** — Pin and tie any reference image directly to the canvas viewport for lineart tracing, sketching, and anatomy studies:
-  - **Ghosting Opacity Slider**: Fine-tune transparency ($5\%$ to $100\%$) for seamless tracing.
-  - **Light Table Underlay vs. Ghost Overlay**: Render the reference as a glowing lightbox base beneath layers or as a semi-transparent tracing sheet floating above your artwork.
-  - **Full Transform Controls**: Scale ($0.05\times$ to $4.0\times$), translate ($X, Y$), with one-click `✦ Fit to Canvas`, `✛ Center`, and `1:1 Native` alignment.
-  - **Quick Flick Hotkey (`T`)**: Instantly toggle tracing overlay visibility on/off while drawing to inspect progress.
-  - **Position Lock (🔒)**: Lock reference in place to prevent accidental displacement.
-* **🖼 Upgraded Studio Lightbox Dock (Mode B)** — Detached side-by-side floating viewer with zoom, pan, 1:1, and Dark Obsidian, Pure White Lightbox, or Checkerboard backlights.
-* **⚡ Zero-Allocation High-Speed Compositing** — Fast integer fixed-point alpha blending directly integrated into the software renderer for 0ms lag.
-* **🎨 Complete Filters & Adjustments Suite** — HSL, Brightness/Contrast, Color Balance, Invert, Posterize, Gaussian Blur, Sharpen, Film Grain, Vignette, and Lens Aberration.
+* **⤢ Studio Free Transform Tool (`Ctrl+T` / `Trans` Tool)** — Comprehensive transformation engine for full layers and active selections:
+  - **Interactive 8-Point Bounding Box Gizmo**: 4 Corner scaling nodes ($TL, TR, BR, BL$), 4 edge nodes ($TC, MR, BC, ML$), top rotation stem, and customizable center pivot crosshair.
+  - **Arbitrary Degree Rotation**: Smooth continuous rotation around custom pivot center with fine numeric degree adjustment.
+  - **High-Fidelity Bilinear & Nearest Resampling**: Smooth anti-aliased sub-pixel interpolation or crisp pixel-art mode.
+  - **Selection-Aware Transform**: Automatically crops and transforms only selected regions (Marquee, Magic Wand, Lasso) with transparent blending.
+  - **Instant Mirror Flip (`⇄ Flip H`, `⇅ Flip V`)**: Quick horizontal and vertical flips.
+  - **Floating HUD & Live Canvas Preview**: Real-time canvas updating during transform with `[✓ Apply (Enter)]` and `[✕ Cancel (Esc)]` controls.
+  - **Full Undo/Redo (`Ctrl+Z` / `Ctrl+Y`)**: Seamless history rollback and restoration.
+* **📐 Dual-Mode Reference & Tracing Paper Engine** — On-canvas tracing paper underlay/overlay and detached floating lightbox dock.
+* **🎨 Studio Color Adjustments & Filters FX Suite** — HSL, Brightness/Contrast, Color Balance, Invert, Gaussian Blur, Sharpen, Film Grain, Vignette, and Lens Aberration.
 * **📦 Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
 
 ### 📦 Downloads & Assets

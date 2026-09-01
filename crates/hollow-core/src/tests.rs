@@ -345,4 +345,60 @@ mod tests {
         let adj_idx = (5 * 10 + 6) * 4;
         assert!(pixels[adj_idx] > 0);
     }
+
+    #[test]
+    fn test_affine_transform_forward_and_inverse() {
+        let pivot = Vec2::new(50.0, 50.0);
+        let mut tf = crate::transform::AffineTransform2D::new(pivot);
+        tf.translation = Vec2::new(10.0, -5.0);
+        tf.rotation_rad = std::f32::consts::FRAC_PI_2; // 90 deg CW
+        tf.scale = Vec2::new(2.0, 2.0);
+
+        let pt = Vec2::new(60.0, 50.0);
+        let transformed = tf.forward(pt);
+        let inverted = tf.inverse(transformed);
+
+        assert!((inverted.x - pt.x).abs() < 1e-4);
+        assert!((inverted.y - pt.y).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_render_transformed_patch_scale_and_rotate() {
+        let patch_w = 4;
+        let patch_h = 4;
+        let mut patch = vec![0u8; (patch_w * patch_h * 4) as usize];
+        // Fill patch with red pixels
+        for i in 0..(patch_w * patch_h) as usize {
+            patch[i * 4] = 255;
+            patch[i * 4 + 1] = 0;
+            patch[i * 4 + 2] = 0;
+            patch[i * 4 + 3] = 255;
+        }
+
+        let doc_w = 16;
+        let doc_h = 16;
+        let mut dst = vec![0u8; (doc_w * doc_h * 4) as usize];
+
+        let origin = Vec2::new(4.0, 4.0);
+        let center = Vec2::new(6.0, 6.0);
+        let mut tf = crate::transform::AffineTransform2D::new(center);
+        tf.scale = Vec2::new(2.0, 2.0); // 2x scale (4x4 -> 8x8)
+
+        crate::transform::render_transformed_patch(
+            &patch,
+            patch_w,
+            patch_h,
+            origin,
+            &tf,
+            true,
+            &mut dst,
+            doc_w,
+            doc_h,
+        );
+
+        // Center pixel should be solid red
+        let center_idx = (6 * doc_w + 6) as usize * 4;
+        assert_eq!(dst[center_idx], 255);
+        assert_eq!(dst[center_idx + 3], 255);
+    }
 }

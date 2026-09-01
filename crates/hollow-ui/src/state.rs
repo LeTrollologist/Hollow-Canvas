@@ -5,6 +5,57 @@ use hollow_core::document::Document;
 use hollow_core::history::HistoryStack;
 use hollow_core::selection::SelectionMask;
 use hollow_core::symmetry::SymmetryConfig;
+use hollow_core::transform::{AffineTransform2D, render_transformed_patch};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransformHandle {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    MidRight,
+    BottomRight,
+    BottomCenter,
+    BottomLeft,
+    MidLeft,
+    RotateStem,
+    Pivot,
+    BodyTranslate,
+}
+
+#[derive(Debug, Clone)]
+pub struct TransformSession {
+    pub is_active: bool,
+    pub original_layer_pixels: Vec<u8>,
+    pub extracted_patch: Vec<u8>,
+    pub patch_w: u32,
+    pub patch_h: u32,
+    pub patch_origin: Vec2,
+    pub transform: AffineTransform2D,
+    pub is_bilinear: bool,
+    pub active_handle: Option<TransformHandle>,
+    pub drag_start_canvas_pos: Vec2,
+    pub initial_transform: AffineTransform2D,
+    pub lock_aspect: bool,
+}
+
+impl Default for TransformSession {
+    fn default() -> Self {
+        Self {
+            is_active: false,
+            original_layer_pixels: Vec::new(),
+            extracted_patch: Vec::new(),
+            patch_w: 0,
+            patch_h: 0,
+            patch_origin: Vec2::ZERO,
+            transform: AffineTransform2D::default(),
+            is_bilinear: true,
+            active_handle: None,
+            drag_start_canvas_pos: Vec2::ZERO,
+            initial_transform: AffineTransform2D::default(),
+            lock_aspect: false,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CanvasPreset {
@@ -178,6 +229,9 @@ pub struct AppState {
 
     pub filter_chromatic_shift: f32,
     pub filter_chromatic_angle: f32,
+
+    // ── Free Transform Session ──
+    pub transform_session: TransformSession,
 }
 
 impl AppState {
@@ -291,6 +345,8 @@ impl AppState {
 
             filter_chromatic_shift: 4.0,
             filter_chromatic_angle: 0.0,
+
+            transform_session: TransformSession::default(),
         }
     }
 
@@ -415,6 +471,205 @@ impl AppState {
             }
         }
         self.active_filter_modal = ActiveFilterModal::None;
+    }
+
+    /// Starts a Free Transform session on the active layer (or active selection mask)
+    pub fn begin_transform_session(&mut self) {
+        if let Some(layer) = self.document.active_layer() {
+            let doc_w = self.document.width;
+            let doc_h = self.document.height;
+
+            // Determine content bounding box
+            let mut min_x = doc_w;
+            let mut max_x = 0;
+            let mut min_y = doc_h;
+            let mut max_y = 0;
+
+            if let Some(sel) = &self.selection {
+                for y in 0..doc_h {
+                    for x in 0..doc_w {
+                        if sel.is_selected(x, y) {
+                            let idx = (y * doc_w + x) as usize * 4;
+                            if layer.pixels[idx + 3] > 0 {
+                                min_x = min_x.min(x);
+                                max_x = max_x.max(x);
+                                min_y = min_y.min(y);
+                                max_y = max_y.max(y);
+                            }
+                        }
+                    }
+                }
+            } else {
+                for y in 0..doc_h {
+                    for x in 0..doc_w {
+                        let idx = (y * doc_w + x) as usize * 4;
+                        if layer.pixels[idx + 3] > 0 {
+                            min_x = min_x.min(x);
+                            max_x = max_x.max(x);
+                            min_y = min_y.min(y);
+                            max_y = max_y.max(y);
+                        }
+                    }
+                }
+            }
+
+            if min_x > max_x || min_y > max_y {
+                // If entire layer is empty, default to canvas center 200x200
+                min_x = (doc_w.saturating_sub(200)) / 2;
+                max_x = (min_x + 200).min(doc_w.saturating_sub(1));
+                min_y = (doc_h.saturating_sub(200)) / 2;
+                max_y = (min_y + 200).min(doc_h.saturating_sub(1));
+            }
+
+            let patch_w = (max_x - min_x + 1).max(1);
+            let patch_h = (max_y - min_y + 1).max(1);
+            let mut patch = vec![0u8; (patch_w * patch_h * 4) as usize];
+
+            let sel_opt = self.selection.as_ref();
+            for py in 0..patch_h {
+                let sy = min_y + py;
+                for px in 0..patch_w {
+                    let sx = min_x + px;
+                    let should_extract = sel_opt.map_or(true, |s| s.is_selected(sx, sy));
+                    if should_extract {
+                        let src_idx = (sy * doc_w + sx) as usize * 4;
+                        let dst_idx = (py * patch_w + px) as usize * 4;
+                        patch[dst_idx..dst_idx + 4].copy_from_slice(&layer.pixels[src_idx..src_idx + 4]);
+                    }
+                }
+            }
+
+            let patch_origin = Vec2::new(min_x as f32, min_y as f32);
+            let center = patch_origin + Vec2::new(patch_w as f32 * 0.5, patch_h as f32 * 0.5);
+
+            let mut transform = AffineTransform2D::new(center);
+            transform.pivot = center;
+
+            self.transform_session = TransformSession {
+                is_active: true,
+                original_layer_pixels: layer.pixels.clone(),
+                extracted_patch: patch,
+                patch_w,
+                patch_h,
+                patch_origin,
+                transform,
+                is_bilinear: true,
+                active_handle: None,
+                drag_start_canvas_pos: Vec2::ZERO,
+                initial_transform: transform,
+                lock_aspect: false,
+            };
+
+            // Clear extracted pixels from active layer so transformed patch replaces them cleanly during preview
+            if let Some(layer_mut) = self.document.active_layer_mut() {
+                for py in 0..patch_h {
+                    let sy = min_y + py;
+                    for px in 0..patch_w {
+                        let sx = min_x + px;
+                        let should_clear = sel_opt.map_or(true, |s| s.is_selected(sx, sy));
+                        if should_clear {
+                            let idx = (sy * doc_w + sx) as usize * 4;
+                            layer_mut.pixels[idx] = 0;
+                            layer_mut.pixels[idx + 1] = 0;
+                            layer_mut.pixels[idx + 2] = 0;
+                            layer_mut.pixels[idx + 3] = 0;
+                        }
+                    }
+                }
+            }
+
+            self.update_transform_preview();
+            self.set_status("Free Transform: Drag handles to Scale/Rotate/Translate | Enter to Apply, Esc to Cancel");
+        }
+    }
+
+    /// Re-renders the transformed patch onto active layer for live canvas preview
+    pub fn update_transform_preview(&mut self) {
+        if !self.transform_session.is_active {
+            return;
+        }
+        let doc_w = self.document.width;
+        let doc_h = self.document.height;
+        let session = &self.transform_session;
+        let orig = &session.original_layer_pixels;
+        let patch = &session.extracted_patch;
+        let pw = session.patch_w;
+        let ph = session.patch_h;
+        let origin = session.patch_origin;
+        let transform = session.transform;
+        let bilinear = session.is_bilinear;
+        let sel_opt = self.selection.as_ref();
+
+        if let Some(layer) = self.document.active_layer_mut() {
+            // Start from original pixels with source patch cleared
+            layer.pixels.copy_from_slice(orig);
+            for py in 0..ph {
+                let sy = origin.y as u32 + py;
+                for px in 0..pw {
+                    let sx = origin.x as u32 + px;
+                    if sx < doc_w && sy < doc_h {
+                        let should_clear = sel_opt.map_or(true, |s| s.is_selected(sx, sy));
+                        if should_clear {
+                            let idx = (sy * doc_w + sx) as usize * 4;
+                            layer.pixels[idx] = 0;
+                            layer.pixels[idx + 1] = 0;
+                            layer.pixels[idx + 2] = 0;
+                            layer.pixels[idx + 3] = 0;
+                        }
+                    }
+                }
+            }
+
+            render_transformed_patch(
+                patch,
+                pw,
+                ph,
+                origin,
+                &transform,
+                bilinear,
+                &mut layer.pixels,
+                doc_w,
+                doc_h,
+            );
+        }
+    }
+
+    /// Commits the transformation to layer and registers in history
+    pub fn commit_transform_session(&mut self) {
+        if !self.transform_session.is_active {
+            return;
+        }
+        self.update_transform_preview();
+        if let Some(layer) = self.document.active_layer() {
+            let before = self.transform_session.original_layer_pixels.clone();
+            let after = layer.pixels.clone();
+            if before != after {
+                let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                    layer_id: layer.id,
+                    description: "Free Transform",
+                    before_pixels: before,
+                    after_pixels: after,
+                });
+                self.history.push(cmd);
+                self.set_status("Committed Free Transform");
+            }
+        }
+        self.transform_session.is_active = false;
+        self.transform_session.original_layer_pixels.clear();
+        self.transform_session.extracted_patch.clear();
+    }
+
+    /// Cancels transformation and restores original layer pixels
+    pub fn cancel_transform_session(&mut self) {
+        if !self.transform_session.is_active {
+            return;
+        }
+        if let Some(layer) = self.document.active_layer_mut() {
+            layer.pixels = std::mem::take(&mut self.transform_session.original_layer_pixels);
+        }
+        self.transform_session.is_active = false;
+        self.transform_session.extracted_patch.clear();
+        self.set_status("Canceled Transform");
     }
 }
 
