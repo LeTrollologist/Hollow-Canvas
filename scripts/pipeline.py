@@ -341,22 +341,33 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
         else "🟢 Verified Clean / Independent Permalinks Available"
     )
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Confined Feathering & UI Drag Isolation Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Velocity Dynamics, Calligraphy & Preset Shelf Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
-### ✨ What's New in {version}
-* **🎯 Strictly Confined Selection Feathering (No Outward Leak)**:
-  - Feathering now applies smooth Gaussian falloff strictly within the bounds of the original selection mask.
-  - Zero outward diffusion bleed — paint strokes and fills are 100% constrained within the marching ants boundary.
-  - Marching ants outline segments now match the exact pixel threshold where painting is permitted.
-* **🔒 Studio UI Drag & Menu Pointer Isolation**:
-  - Implemented dedicated `is_drawing_on_canvas` state tracking and full-window UI bounds hit-testing.
-  - Interacting with sliders (Size, Opacity, Smoothing, etc.), dropdown menus, title bars, dialogs, or the floating HUD can never accidentally trigger canvas brush strokes.
-* **⚡ Zero-Lag Drawing With Active Selections**:
-  - Instant $O(1)$ pre-calculated active mask queries and direct array lookup for ultra-smooth 1000+ Hz tablet polling.
-* **🖐️ Professional Wet-Paint Smudge Engine**:
-  - Bilinear motion vector lookback sampling with hermite radial falloff.
+### ✨ What's New in {version} (🌟 Track 4)
+* **⚡ Speed & Velocity-Sensitive Pressure Simulation**:
+  - Automatically simulates natural pen pressure curves on any mouse or graphics tablet by measuring pointer velocity.
+  - Swift flicks and fast inking strokes smoothly taper into needle-sharp tips (ideal for manga lineart, comic inking, crosshatching, and calligraphy).
+  - Fully customizable `velocity_dynamics`, `velocity_taper_strength`, and `velocity_min_size`.
+* **✒️ Calligraphy Chisel & Ribbon Nib Dynamics**:
+  - Configurable `calligraphy_angle` (0°..=180°) and `calligraphy_weight` (0.0..=1.0).
+  - Modulates stroke width in real-time based on the angle between stroke motion and the chisel nib.
+* **≋ Wet Edge Watercolor Pigment Pooling**:
+  - Realistic pigment concentration simulation where watercolor and marker inks pool darker at the outer perimeter of stamps.
+* **📚 Studio Brush Preset Shelf**:
+  - Dedicated preset shelf in the sidebar featuring 8 hand-crafted studio presets:
+    - ✒️ **G-Pen Inker**: Crisp manga lineart with sharp velocity release.
+    - ✎ **Studio Pencil (2B)**: Graphite grain with organic pressure taper.
+    - 🖋 **Calligraphy Nib**: 45° Chisel ribbon with angle modulation.
+    - ☁ **Soft Airbrush**: Ultra-soft diffuse gradient shading.
+    - ≋ **Wet Watercolor**: Authentic pigment flow with dark wet-edge fringes.
+    - 🎨 **Concept Oil**: Rich impasto oil blending with edge retention.
+    - ░ **Rough Charcoal**: Heavy chalk grain with velocity response.
+    - 🖊 **Copic Marker**: Flat semi-transparent layering marker with slight fringe.
+  - Built-in **Custom Preset Saving** dialog so artists can store and switch between custom presets during work.
+* **🎯 Strictly Confined Feathering & UI Drag Isolation**:
+  - 100% leak-free feathered selections and complete mouse event isolation during slider/menu drags.
 * **⤢ Studio Free Transform Tool (`Ctrl+T`)** — Interactive 8-point bounding box gizmo, smooth rotation, mirror flipping, and bilinear resampling.
 * **📐 Dual-Mode Reference & Tracing Paper Engine** — On-canvas tracing paper underlay/overlay and detached floating lightbox dock.
 * **🎨 Studio Color Adjustments & Filters FX Suite** — HSL, Brightness/Contrast, Color Balance, Invert, Gaussian Blur, Sharpen, Film Grain, Vignette, and Lens Aberration.

@@ -173,6 +173,8 @@ struct HollowCanvasDesktopApp {
     before_move_offset: (i32, i32),
     active_snapshot_taken: bool,
     mouse_pos: egui::Pos2,
+    last_point_time: Instant,
+    current_velocity: f32,
 }
 
 impl HollowCanvasDesktopApp {
@@ -335,6 +337,30 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 } else if tool.is_shape_tool() || tool == ToolType::Marquee || tool == ToolType::Crop || tool == ToolType::Polygon || tool == ToolType::Eyedropper || tool == ToolType::Fill {
                     // Explicitly NEVER paint continuous brush strokes when non-freehand tools are active
                 } else if tool.is_freehand_stroke_tool() {
+                    let now = Instant::now();
+                    let dt = now.duration_since(app.last_point_time).as_secs_f32().max(0.001);
+                    app.last_point_time = now;
+
+                    let dist = if let Some(&last_pt) = app.stroke_points.last() {
+                        last_pt.position.distance(canvas_pos)
+                    } else {
+                        0.0
+                    };
+
+                    let instant_speed = (dist / dt).min(5000.0);
+                    app.current_velocity = app.current_velocity * 0.65 + instant_speed * 0.35;
+
+                    // Compute velocity dynamic pressure
+                    let pressure = if app.state.brush.velocity_dynamics {
+                        let speed_ratio = (app.current_velocity / 1400.0).clamp(0.0, 1.0);
+                        let taper = app.state.brush.velocity_taper_strength.clamp(0.0, 1.0);
+                        let min_size = app.state.brush.velocity_min_size.clamp(0.05, 1.0);
+                        let speed_factor = 1.0 - speed_ratio * (1.0 - min_size);
+                        (1.0 - taper * (1.0 - speed_factor)).clamp(min_size, 1.0)
+                    } else {
+                        1.0
+                    };
+
                     // Smooth Catmull-Rom spline curve interpolation with stabilization
                     let smoothing = app.state.brush.smoothing;
                     let smoothed_pos = if let Some(&last_pt) = app.stroke_points.last() {
@@ -344,7 +370,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         canvas_pos
                     };
 
-                    let pt = BrushPoint::new(smoothed_pos, 1.0);
+                    let pt = BrushPoint::new(smoothed_pos, pressure);
                     app.stroke_points.push(pt);
                     let n = app.stroke_points.len();
                     let sel = app.state.selection.as_ref();
@@ -413,6 +439,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             }
 
             app.is_drawing_on_canvas = true;
+            app.last_point_time = Instant::now();
+            app.current_velocity = 0.0;
             let canvas_pos = app.state.screen_to_canvas(screen_pos, app.win_w as f32, app.win_h as f32);
             app.last_canvas_pos = Some(canvas_pos);
             app.stroke_points.clear();
@@ -1237,6 +1265,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         before_move_offset: (0, 0),
         active_snapshot_taken: false,
         mouse_pos: egui::Pos2::ZERO,
+        last_point_time: Instant::now(),
+        current_velocity: 0.0,
     });
 
     unsafe {

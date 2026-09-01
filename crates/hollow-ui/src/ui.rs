@@ -96,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.8.4").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.9.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -504,7 +504,40 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         }
                     });
 
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
+                    ui.separator();
+
+                    // ── PRESET SHELF ──
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("PRESET SHELF").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("＋ Save").on_hover_text("Save current brush settings as a new custom preset").clicked() {
+                                state.show_save_preset_dialog = true;
+                                state.new_preset_name = format!("Preset {}", state.presets.len() + 1);
+                            }
+                        });
+                    });
+
+                    egui::Grid::new("preset_shelf_grid").num_columns(2).spacing([4.0, 4.0]).show(ui, |ui| {
+                        let num_presets = state.presets.len();
+                        for i in 0..num_presets {
+                            let is_active = state.active_preset_idx == Some(i);
+                            let p = &state.presets[i];
+                            let label = format!("{} {}", p.icon, p.name);
+                            let btn = egui::Button::new(RichText::new(label).size(10.0))
+                                .fill(if is_active { accent_c32.linear_multiply(0.35) } else { Color32::from_rgb(18, 24, 40) })
+                                .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else { Color32::from_rgb(45, 55, 80) }))
+                                .min_size(Vec2::new(98.0, 22.0));
+                            if ui.add(btn).on_hover_text(&p.description).clicked() {
+                                state.select_preset(i);
+                            }
+                            if i % 2 == 1 {
+                                ui.end_row();
+                            }
+                        }
+                    });
+
+                    ui.add_space(6.0);
                     ui.separator();
 
                     // Tool-specific properties
@@ -714,6 +747,25 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.add(egui::Slider::new(&mut state.brush.smoothing, 0.0..=0.95).text("Smoothing"));
                     ui.add(egui::Slider::new(&mut state.brush.hardness, 0.05..=1.0).text("Hardness"));
                     ui.add(egui::Slider::new(&mut state.brush.spacing, 0.05..=1.0).text("Spacing"));
+
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut state.brush.velocity_dynamics, "⚡ Velocity Taper");
+                    if state.brush.velocity_dynamics {
+                        ui.add(egui::Slider::new(&mut state.brush.velocity_taper_strength, 0.0..=1.0).text("Taper Sharpness"));
+                        ui.add(egui::Slider::new(&mut state.brush.velocity_min_size, 0.05..=0.8).text("Min Tip Ratio"));
+                    }
+
+                    ui.add_space(4.0);
+                    ui.add(egui::Slider::new(&mut state.brush.calligraphy_weight, 0.0..=1.0).text("Calligraphy Chisel"));
+                    if state.brush.calligraphy_weight > 0.001 {
+                        ui.add(egui::Slider::new(&mut state.brush.calligraphy_angle, 0.0..=180.0).text("Chisel Angle (°)"));
+                    }
+
+                    ui.add_space(4.0);
+                    ui.add(egui::Slider::new(&mut state.brush.wet_edge_strength, 0.0..=1.0).text("Wet Edge Pooling"));
+                    if state.brush.wet_edge_strength > 0.001 {
+                        ui.add(egui::Slider::new(&mut state.brush.wet_edge_fringe_width, 0.05..=0.5).text("Fringe Width"));
+                    }
 
                     ui.add_space(8.0);
                     ui.separator();
@@ -2034,6 +2086,30 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
+    // ── Save Brush Preset Modal ──
+    if state.show_save_preset_dialog {
+        egui::Window::new("💾 Save Custom Brush Preset")
+            .fixed_size(Vec2::new(320.0, 140.0))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Preset Name:").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.text_edit_singleline(&mut state.new_preset_name);
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("✓ Save Preset").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                        let name = state.new_preset_name.clone();
+                        state.save_current_as_preset(&name);
+                        state.show_save_preset_dialog = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.show_save_preset_dialog = false;
+                    }
+                });
+            });
+    }
+
     // ── 9. ABOUT HOLLOW CANVAS MODAL ──
     if state.show_about_dialog {
         egui::Window::new("About Hollow Canvas")
@@ -2045,7 +2121,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.8.4 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.9.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);

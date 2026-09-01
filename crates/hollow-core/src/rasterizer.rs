@@ -204,6 +204,21 @@ impl StrokeRasterizer {
                         }
                     };
 
+                    // Apply Wet Edge Watercolor Pigment Pooling effect
+                    if brush.wet_edge_strength > 0.001 && tool != ToolType::Eraser && tool != ToolType::Smudge {
+                        let t = (d / radius).clamp(0.0, 1.0);
+                        let fringe_w = brush.wet_edge_fringe_width.clamp(0.05, 0.5);
+                        let fringe_start = 1.0 - fringe_w;
+                        let pooling = if t >= fringe_start {
+                            let ft = (t - fringe_start) / fringe_w;
+                            ft * (2.0 - ft) * brush.wet_edge_strength * 1.75
+                        } else {
+                            0.0
+                        };
+                        let center_fade = 1.0 - (brush.wet_edge_strength * 0.35) * (1.0 - t * t);
+                        alpha = (alpha * center_fade * (1.0 + pooling)).clamp(0.0, 1.0);
+                    }
+
                     if let Some(mask) = active_mask {
                         let mask_val = mask.get_value(x, y);
                         if mask_val <= 8 {
@@ -372,7 +387,9 @@ impl StrokeRasterizer {
         let layer_offset = Vec2::new(layer.offset_x as f32, layer.offset_y as f32);
         let alpha_locked = layer.alpha_locked;
         let dist = p0.position.distance(p1.position);
-        let avg_size = (brush.effective_size(p0.pressure) + brush.effective_size(p1.pressure)) * 0.5;
+        let tangent = if dist > 0.001 { Some(p1.position - p0.position) } else { None };
+        let cal_factor = brush.calligraphy_factor(tangent);
+        let avg_size = (brush.effective_size(p0.pressure) + brush.effective_size(p1.pressure)) * 0.5 * cal_factor;
         let spacing = (avg_size * brush.spacing).max(0.5);
         let steps = (dist / spacing).ceil().max(1.0) as usize;
 
@@ -386,7 +403,7 @@ impl StrokeRasterizer {
                 Some(p0.position)
             };
             let pressure = p0.pressure + (p1.pressure - p0.pressure) * t;
-            let radius = brush.effective_size(pressure) * 0.5;
+            let radius = brush.effective_size(pressure) * 0.5 * cal_factor;
 
             let sym_points = symmetry.transform_points(pos, doc_w as f32, doc_h as f32);
             let prev_sym_points = prev_pos.map(|pp| symmetry.transform_points(pp, doc_w as f32, doc_h as f32));
@@ -458,8 +475,14 @@ impl StrokeRasterizer {
         for i in 1..=steps {
             let t = i as f32 / steps as f32;
             let pos = Self::catmull_rom_eval(p0.position, p1.position, p2.position, p3.position, t);
+            let tangent = if pos.distance(prev_pos) > 0.001 {
+                Some(pos - prev_pos)
+            } else {
+                Some(p2.position - p1.position)
+            };
+            let cal_factor = brush.calligraphy_factor(tangent);
             let pressure = p1.pressure + (p2.pressure - p1.pressure) * t;
-            let radius = brush.effective_size(pressure) * 0.5;
+            let radius = brush.effective_size(pressure) * 0.5 * cal_factor;
 
             let sym_points = symmetry.transform_points(pos, doc_w as f32, doc_h as f32);
             let prev_sym_points = symmetry.transform_points(prev_pos, doc_w as f32, doc_h as f32);

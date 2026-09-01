@@ -193,6 +193,15 @@ pub struct BrushSettings {
     pub watercolor_wetness: f32,
     pub chalk_grain: f32,
     pub smudge_strength: f32,
+    // ── Velocity Dynamics & Calligraphy ──
+    pub velocity_dynamics: bool,
+    pub velocity_taper_strength: f32, // 0.0 ..= 1.0 (how sharply fast strokes thin out)
+    pub velocity_min_size: f32,        // 0.05 ..= 1.0 (minimum tip ratio under max speed)
+    pub calligraphy_angle: f32,        // 0.0 ..= 180.0 degrees (chisel nib orientation)
+    pub calligraphy_weight: f32,       // 0.0 ..= 1.0 (0.0 = round, 1.0 = sharp flat chisel)
+    // ── Wet Edge Watercolor Effect ──
+    pub wet_edge_strength: f32,        // 0.0 ..= 1.0 (dark pigment pooling at stroke boundaries)
+    pub wet_edge_fringe_width: f32,    // 0.05 ..= 0.5 (fringe band thickness ratio)
 }
 
 impl Default for BrushSettings {
@@ -217,6 +226,13 @@ impl Default for BrushSettings {
             watercolor_wetness: 0.65,
             chalk_grain: 0.75,
             smudge_strength: 0.6,
+            velocity_dynamics: true,
+            velocity_taper_strength: 0.6,
+            velocity_min_size: 0.15,
+            calligraphy_angle: 45.0,
+            calligraphy_weight: 0.0,
+            wet_edge_strength: 0.0,
+            wet_edge_fringe_width: 0.2,
         }
     }
 }
@@ -234,7 +250,195 @@ impl BrushSettings {
             }
             ToolType::Spray => self.size * 1.5,
             ToolType::Watercolor => self.size * (0.7 + pressure * 0.6),
-            _ => self.size * (0.5 + pressure * 0.9),
+            _ => (self.size * (0.4 + pressure * 0.9)).max(1.0),
         }
+    }
+
+    /// Calculate chisel ribbon width factor (0.1 ..= 1.0) based on stroke tangent direction vs calligraphy angle
+    pub fn calligraphy_factor(&self, tangent: Option<Vec2>) -> f32 {
+        if self.calligraphy_weight <= 0.001 {
+            return 1.0;
+        }
+        let dir = match tangent {
+            Some(d) if d.length_squared() > 0.0001 => d.normalize(),
+            _ => return 1.0,
+        };
+
+        let chisel_rad = self.calligraphy_angle.to_radians();
+        let chisel_vec = Vec2::new(chisel_rad.cos(), chisel_rad.sin());
+
+        // When moving parallel to chisel vector, stroke is thin; perpendicular is thick
+        let dot = (dir.x * chisel_vec.x + dir.y * chisel_vec.y).abs();
+        let min_factor = 1.0 - self.calligraphy_weight * 0.85;
+        (min_factor + (1.0 - dot) * (1.0 - min_factor)).clamp(0.1, 1.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BrushPreset {
+    pub name: String,
+    pub icon: String,
+    pub category: String,
+    pub description: String,
+    pub settings: BrushSettings,
+}
+
+impl BrushPreset {
+    pub fn default_library() -> Vec<Self> {
+        vec![
+            Self {
+                name: "G-Pen Inker".to_string(),
+                icon: "✒".to_string(),
+                category: "Inking".to_string(),
+                description: "Crisp manga & comic lineart pen with sharp velocity tapering".to_string(),
+                settings: BrushSettings {
+                    tool: ToolType::Brush,
+                    size: 6.0,
+                    opacity: 1.0,
+                    hardness: 0.95,
+                    smoothing: 0.65,
+                    spacing: 0.15,
+                    velocity_dynamics: true,
+                    velocity_taper_strength: 0.85,
+                    velocity_min_size: 0.1,
+                    calligraphy_weight: 0.0,
+                    wet_edge_strength: 0.0,
+                    ..Default::default()
+                },
+            },
+            Self {
+                name: "Studio Pencil (2B)".to_string(),
+                icon: "✎".to_string(),
+                category: "Sketching".to_string(),
+                description: "Graphite texture with organic pressure response".to_string(),
+                settings: BrushSettings {
+                    tool: ToolType::Pencil,
+                    size: 4.0,
+                    opacity: 0.85,
+                    hardness: 0.85,
+                    smoothing: 0.35,
+                    chalk_grain: 0.4,
+                    velocity_dynamics: true,
+                    velocity_taper_strength: 0.7,
+                    velocity_min_size: 0.2,
+                    ..Default::default()
+                },
+            },
+            Self {
+                name: "Calligraphy Nib".to_string(),
+                icon: "🖋".to_string(),
+                category: "Calligraphy".to_string(),
+                description: "45° Chisel ribbon nib with velocity-sensitive stroke width".to_string(),
+                settings: BrushSettings {
+                    tool: ToolType::Brush,
+                    size: 14.0,
+                    opacity: 0.95,
+                    hardness: 0.9,
+                    smoothing: 0.55,
+                    spacing: 0.12,
+                    calligraphy_angle: 45.0,
+                    calligraphy_weight: 0.8,
+                    velocity_dynamics: true,
+                    velocity_taper_strength: 0.5,
+                    velocity_min_size: 0.2,
+                    ..Default::default()
+                },
+            },
+            Self {
+                name: "Soft Airbrush".to_string(),
+                icon: "☁".to_string(),
+                category: "Painting".to_string(),
+                description: "Ultra-smooth diffuse gradient shading brush".to_string(),
+                settings: BrushSettings {
+                    tool: ToolType::Brush,
+                    size: 36.0,
+                    opacity: 0.35,
+                    hardness: 0.05,
+                    spacing: 0.12,
+                    smoothing: 0.4,
+                    velocity_dynamics: false,
+                    wet_edge_strength: 0.0,
+                    ..Default::default()
+                },
+            },
+            Self {
+                name: "Wet Watercolor".to_string(),
+                icon: "≋".to_string(),
+                category: "Painting".to_string(),
+                description: "Fluid watercolor with dark wet-edge pigment pooling".to_string(),
+                settings: BrushSettings {
+                    tool: ToolType::Watercolor,
+                    size: 22.0,
+                    opacity: 0.55,
+                    hardness: 0.5,
+                    watercolor_wetness: 0.8,
+                    wet_edge_strength: 0.75,
+                    wet_edge_fringe_width: 0.25,
+                    velocity_dynamics: true,
+                    velocity_taper_strength: 0.4,
+                    velocity_min_size: 0.3,
+                    ..Default::default()
+                },
+            },
+            Self {
+                name: "Concept Oil".to_string(),
+                icon: "🎨".to_string(),
+                category: "Painting".to_string(),
+                description: "Rich impasto oil blending with subtle edge definition".to_string(),
+                settings: BrushSettings {
+                    tool: ToolType::Brush,
+                    size: 18.0,
+                    opacity: 0.9,
+                    hardness: 0.75,
+                    smoothing: 0.5,
+                    smudge_strength: 0.5,
+                    wet_edge_strength: 0.4,
+                    wet_edge_fringe_width: 0.15,
+                    velocity_dynamics: true,
+                    velocity_taper_strength: 0.35,
+                    velocity_min_size: 0.25,
+                    ..Default::default()
+                },
+            },
+            Self {
+                name: "Rough Charcoal".to_string(),
+                icon: "░".to_string(),
+                category: "Sketching".to_string(),
+                description: "Heavy grainy charcoal texture with expressive velocity response".to_string(),
+                settings: BrushSettings {
+                    tool: ToolType::Chalk,
+                    size: 16.0,
+                    opacity: 0.85,
+                    chalk_grain: 0.85,
+                    hardness: 0.6,
+                    smoothing: 0.3,
+                    velocity_dynamics: true,
+                    velocity_taper_strength: 0.5,
+                    velocity_min_size: 0.2,
+                    ..Default::default()
+                },
+            },
+            Self {
+                name: "Copic Marker".to_string(),
+                icon: "🖊".to_string(),
+                category: "Design".to_string(),
+                description: "Semi-transparent layering marker with slight wet edge fringe".to_string(),
+                settings: BrushSettings {
+                    tool: ToolType::Brush,
+                    size: 18.0,
+                    opacity: 0.4,
+                    hardness: 0.8,
+                    spacing: 0.18,
+                    calligraphy_angle: 60.0,
+                    calligraphy_weight: 0.45,
+                    wet_edge_strength: 0.35,
+                    wet_edge_fringe_width: 0.2,
+                    velocity_dynamics: true,
+                    velocity_taper_strength: 0.3,
+                    velocity_min_size: 0.35,
+                    ..Default::default()
+                },
+            },
+        ]
     }
 }

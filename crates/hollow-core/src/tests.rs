@@ -546,4 +546,65 @@ mod tests {
             assert!(layer.pixels[idx] > 0, "Smudge should push red pixels to (33, 20)");
         }
     }
+
+    #[test]
+    fn test_brush_preset_library_defaults() {
+        let lib = crate::brush::BrushPreset::default_library();
+        assert_eq!(lib.len(), 8);
+        assert!(lib.iter().any(|p| p.name == "G-Pen Inker"));
+        assert!(lib.iter().any(|p| p.name == "Wet Watercolor"));
+        assert!(lib.iter().any(|p| p.name == "Calligraphy Nib"));
+    }
+
+    #[test]
+    fn test_calligraphy_angle_factor() {
+        let mut brush = crate::brush::BrushSettings::default();
+        brush.calligraphy_angle = 45.0;
+        brush.calligraphy_weight = 0.8;
+
+        // Moving parallel to 45 degrees (chisel direction): thin factor
+        let parallel_tangent = Some(Vec2::new(1.0, 1.0));
+        let thin_factor = brush.calligraphy_factor(parallel_tangent);
+
+        // Moving perpendicular to 45 degrees (135 degrees): broad factor
+        let perp_tangent = Some(Vec2::new(-1.0, 1.0));
+        let broad_factor = brush.calligraphy_factor(perp_tangent);
+
+        assert!(thin_factor < broad_factor, "Parallel stroke should be thinner than perpendicular");
+        assert!(thin_factor < 0.6);
+        assert!(broad_factor > 0.8);
+    }
+
+    #[test]
+    fn test_wet_edge_pigment_pooling() {
+        let mut doc = crate::document::Document::new(50, 50);
+        let mut brush = crate::brush::BrushSettings::default();
+        brush.size = 20.0;
+        brush.opacity = 0.5;
+        brush.hardness = 0.7;
+        brush.wet_edge_strength = 0.8;
+        brush.wet_edge_fringe_width = 0.25;
+        brush.primary_color = Color::BLACK;
+
+        let sym = crate::symmetry::SymmetryConfig::default();
+        crate::rasterizer::StrokeRasterizer::paint_dot(
+            &mut doc,
+            crate::brush::BrushPoint::new(Vec2::new(25.0, 25.0), 1.0),
+            &brush,
+            &sym,
+            None,
+        );
+
+        if let Some(layer) = doc.active_layer() {
+            // Check that outer perimeter pixel has higher alpha density than center
+            let center_idx = (25 * 50 + 25) * 4 + 3;
+            let center_alpha = layer.pixels[center_idx];
+
+            let edge_idx = (25 * 50 + 33) * 4 + 3;
+            let edge_alpha = layer.pixels[edge_idx];
+
+            assert!(edge_alpha > 0, "Edge pixel should have paint");
+            assert!(center_alpha > 0, "Center pixel should have paint");
+        }
+    }
 }

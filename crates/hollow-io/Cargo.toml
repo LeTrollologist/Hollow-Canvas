@@ -1,6 +1,6 @@
 [package]
 name = "hollow-io"
-version = "0.8.4"
+version = "0.9.0"
 edition = "2021"
 description = "Native binary .hcv project format and flat image exporter"
 

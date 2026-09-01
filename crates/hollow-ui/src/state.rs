@@ -244,6 +244,12 @@ pub struct AppState {
     pub show_stroke_dialog: bool,
     pub stroke_width: u32,
     pub stroke_position: u8, // 0: Center, 1: Inside, 2: Outside
+
+    // ── Brush Preset Shelf ──
+    pub presets: Vec<hollow_core::brush::BrushPreset>,
+    pub active_preset_idx: Option<usize>,
+    pub show_save_preset_dialog: bool,
+    pub new_preset_name: String,
 }
 
 impl AppState {
@@ -370,7 +376,57 @@ impl AppState {
             show_stroke_dialog: false,
             stroke_width: 3,
             stroke_position: 0, // Center
+
+            presets: hollow_core::brush::BrushPreset::default_library(),
+            active_preset_idx: Some(0),
+            show_save_preset_dialog: false,
+            new_preset_name: String::new(),
         }
+    }
+
+    pub fn select_preset(&mut self, idx: usize) {
+        if idx < self.presets.len() {
+            let p = &self.presets[idx];
+            let prim = self.brush.primary_color;
+            let sec = self.brush.secondary_color;
+            self.brush = p.settings.clone();
+            self.brush.primary_color = prim;
+            self.brush.secondary_color = sec;
+            self.active_preset_idx = Some(idx);
+            self.set_status(format!("Loaded brush preset: {}", p.name));
+        }
+    }
+
+    pub fn save_current_as_preset(&mut self, name: &str) {
+        let name_trimmed = name.trim();
+        if name_trimmed.is_empty() {
+            return;
+        }
+        let icon = match self.brush.tool {
+            hollow_core::brush::ToolType::Pencil => "✎",
+            hollow_core::brush::ToolType::Watercolor => "≋",
+            hollow_core::brush::ToolType::Chalk => "░",
+            hollow_core::brush::ToolType::Spray => "⁕",
+            hollow_core::brush::ToolType::Smudge => "≈",
+            _ => "✦",
+        };
+        let new_preset = hollow_core::brush::BrushPreset {
+            name: name_trimmed.to_string(),
+            icon: icon.to_string(),
+            category: "Custom".to_string(),
+            description: format!("Custom user preset (Size: {:.1}px)", self.brush.size),
+            settings: self.brush.clone(),
+        };
+        self.presets.push(new_preset);
+        self.active_preset_idx = Some(self.presets.len() - 1);
+        self.set_status(format!("Saved custom preset: {}", name_trimmed));
+    }
+
+    pub fn reset_presets_to_default(&mut self) {
+        self.presets = hollow_core::brush::BrushPreset::default_library();
+        self.active_preset_idx = Some(0);
+        self.select_preset(0);
+        self.set_status("Reset preset shelf to factory defaults");
     }
 
     pub fn from_document(doc: Document) -> Self {
