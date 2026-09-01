@@ -265,6 +265,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         }
                         app.last_canvas_pos = Some(screen_pos);
                     }
+                } else if tool == ToolType::Lasso {
+                    let should_add = match app.state.lasso_points.last() {
+                        Some(&last_pt) => last_pt.distance(canvas_pos) >= 2.0,
+                        None => true,
+                    };
+                    if should_add {
+                        app.state.lasso_points.push(canvas_pos);
+                    }
                 } else if tool.is_shape_tool() || tool == ToolType::Marquee || tool == ToolType::Crop || tool == ToolType::Polygon || tool == ToolType::Eyedropper || tool == ToolType::Fill {
                     // Explicitly NEVER paint continuous brush strokes when non-freehand tools are active
                 } else if tool.is_freehand_stroke_tool() {
@@ -438,6 +446,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.state.polygon_points.push(canvas_pos);
                         app.state.set_status(format!("Polygon: {} points", app.state.polygon_points.len()));
                     }
+                } else if tool == ToolType::Lasso {
+                    app.state.lasso_points.clear();
+                    app.state.lasso_points.push(canvas_pos);
+                    app.state.set_status("Drawing Lasso selection loop...");
                 } else if tool == ToolType::Move {
                     let is_ctrl = (GetKeyState(0x11) as i32 & 0x8000) != 0;
                     if is_ctrl {
@@ -480,6 +492,32 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
             let canvas_pos = app.state.cursor_canvas_pos;
             let tool = app.state.brush.tool;
+
+            if tool == ToolType::Lasso {
+                let pts = std::mem::take(&mut app.state.lasso_points);
+                if pts.len() >= 3 {
+                    let new_mask = SelectionMask::from_polygon(app.state.document.width, app.state.document.height, &pts);
+                    let is_shift = (GetKeyState(0x10) as i32 & 0x8000) != 0;
+                    let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0;
+
+                    if is_shift {
+                        if let Some(existing) = &mut app.state.selection {
+                            existing.union(&new_mask);
+                        } else {
+                            app.state.selection = Some(new_mask);
+                        }
+                        app.state.set_status("Added to selection (Lasso)");
+                    } else if is_alt {
+                        if let Some(existing) = &mut app.state.selection {
+                            existing.subtract(&new_mask);
+                        }
+                        app.state.set_status("Subtracted from selection (Lasso)");
+                    } else {
+                        app.state.selection = Some(new_mask);
+                        app.state.set_status("Lasso selection created");
+                    }
+                }
+            }
 
             if let Some(start) = app.state.drag_start_canvas_pos.take() {
                 let sel = app.state.selection.as_ref();
@@ -674,10 +712,20 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 0x52 if is_ctrl => { // Ctrl+R (Toggle Rulers)
                     app.state.show_rulers = !app.state.show_rulers;
                 }
+                0x41 if is_ctrl => { // Ctrl+A (Select All)
+                    app.state.selection = Some(SelectionMask::select_all(app.state.document.width, app.state.document.height));
+                    app.state.set_status("Selected All");
+                }
+                0x74 if is_shift => { // Shift+F5 (Fill Selection)
+                    app.state.fill_selection_active_layer();
+                }
+                0x08 if (GetKeyState(0x12) as i32 & 0x8000) != 0 => { // Alt+Backspace (Fill Selection)
+                    app.state.fill_selection_active_layer();
+                }
                 0xDE if is_ctrl => { // Ctrl+' (Toggle Grid)
                     app.state.show_grid = !app.state.show_grid;
                 }
-                0x1B => { // Esc (Cancel Transform or selection/crop)
+                0x1B => { // Esc (Cancel Transform, selection or crop)
                     if app.state.transform_session.is_active {
                         app.state.cancel_transform_session();
                     } else if app.state.crop_box.is_some() {
@@ -686,6 +734,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     } else if app.state.polygon_points.len() > 0 {
                         app.state.polygon_points.clear();
                         app.state.set_status("Canceled Polygon");
+                    } else if app.state.lasso_points.len() > 0 {
+                        app.state.lasso_points.clear();
+                        app.state.set_status("Canceled Lasso");
                     }
                     app.state.drag_start_canvas_pos = None;
                 }
@@ -697,6 +748,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 0x45 => app.state.brush.tool = ToolType::Eraser,     // E
                 0x49 => app.state.brush.tool = ToolType::Eyedropper, // I
                 0x4D => app.state.brush.tool = ToolType::Marquee,    // M
+                0x4C => app.state.brush.tool = ToolType::Lasso,      // L
                 0x54 => { // T (Toggle Canvas Tracing Reference)
                     app.state.tracing_enabled = !app.state.tracing_enabled;
                     app.state.set_status(if app.state.tracing_enabled { "Tracing Paper: ON" } else { "Tracing Paper: OFF" });

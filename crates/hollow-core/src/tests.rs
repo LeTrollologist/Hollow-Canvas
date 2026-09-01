@@ -401,4 +401,96 @@ mod tests {
         assert_eq!(dst[center_idx], 255);
         assert_eq!(dst[center_idx + 3], 255);
     }
+
+    #[test]
+    fn test_selection_from_polygon_and_union_subtract() {
+        let pts = vec![
+            Vec2::new(10.0, 10.0),
+            Vec2::new(30.0, 10.0),
+            Vec2::new(30.0, 30.0),
+            Vec2::new(10.0, 30.0),
+        ];
+        let mut mask1 = crate::selection::SelectionMask::from_polygon(50, 50, &pts);
+        assert!(mask1.is_selected(20, 20));
+        assert!(!mask1.is_selected(5, 5));
+
+        let rect_pts = vec![
+            Vec2::new(25.0, 25.0),
+            Vec2::new(45.0, 25.0),
+            Vec2::new(45.0, 45.0),
+            Vec2::new(25.0, 45.0),
+        ];
+        let mask2 = crate::selection::SelectionMask::from_polygon(50, 50, &rect_pts);
+
+        mask1.union(&mask2);
+        assert!(mask1.is_selected(20, 20));
+        assert!(mask1.is_selected(40, 40));
+
+        mask1.subtract(&mask2);
+        assert!(mask1.is_selected(15, 15));
+        assert!(!mask1.is_selected(40, 40));
+    }
+
+    #[test]
+    fn test_selection_feather_expand_contract() {
+        let mut mask = crate::selection::SelectionMask::from_rect(
+            40,
+            40,
+            Vec2::new(10.0, 10.0),
+            Vec2::new(30.0, 30.0),
+        );
+        assert_eq!(mask.get_value(20, 20), 255);
+        assert_eq!(mask.get_value(5, 5), 0);
+
+        mask.feather(3);
+        // Interior remains high, boundary becomes smooth falloff
+        assert!(mask.get_value(20, 20) > 200);
+        assert!(mask.get_value(9, 20) > 0);
+
+        let mut mask_morph = crate::selection::SelectionMask::from_rect(
+            40,
+            40,
+            Vec2::new(15.0, 15.0),
+            Vec2::new(25.0, 25.0),
+        );
+        mask_morph.expand(3);
+        assert!(mask_morph.is_selected(13, 20));
+
+        mask_morph.contract(4);
+        assert!(!mask_morph.is_selected(13, 20));
+    }
+
+    #[test]
+    fn test_selection_fill_and_stroke() {
+        let mask = crate::selection::SelectionMask::from_rect(
+            20,
+            20,
+            Vec2::new(5.0, 5.0),
+            Vec2::new(15.0, 15.0),
+        );
+        let mut pixels = vec![0u8; 20 * 20 * 4];
+        let red = [255, 0, 0, 255];
+        mask.fill_selection(&mut pixels, 20, 20, red);
+
+        let center_idx = (10 * 20 + 10) * 4;
+        assert_eq!(pixels[center_idx], 255);
+        assert_eq!(pixels[center_idx + 3], 255);
+
+        let outside_idx = (2 * 20 + 2) * 4;
+        assert_eq!(pixels[outside_idx + 3], 0);
+
+        let mut stroke_pixels = vec![0u8; 20 * 20 * 4];
+        let green = [0, 255, 0, 255];
+        mask.stroke_selection(
+            &mut stroke_pixels,
+            20,
+            20,
+            green,
+            2,
+            crate::selection::StrokePosition::Center,
+        );
+        // Border pixel (5, 5) should have green stroke
+        let border_idx = (5 * 20 + 5) * 4;
+        assert!(stroke_pixels[border_idx + 1] > 0);
+    }
 }

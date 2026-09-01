@@ -1,6 +1,13 @@
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StrokePosition {
+    Center,
+    Inside,
+    Outside,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelectionMask {
     pub width: u32,
@@ -70,6 +77,15 @@ impl SelectionMask {
         Self { width, height, mask }
     }
 
+    pub fn select_all(width: u32, height: u32) -> Self {
+        let size = (width as usize) * (height as usize);
+        Self {
+            width,
+            height,
+            mask: vec![255; size],
+        }
+    }
+
     pub fn has_selection(&self) -> bool {
         self.mask.iter().any(|&v| v > 8)
     }
@@ -82,6 +98,24 @@ impl SelectionMask {
 
     pub fn clear(&mut self) {
         self.mask.fill(0);
+    }
+
+    pub fn union(&mut self, other: &SelectionMask) {
+        if self.width != other.width || self.height != other.height {
+            return;
+        }
+        for (a, &b) in self.mask.iter_mut().zip(other.mask.iter()) {
+            *a = (*a).max(b);
+        }
+    }
+
+    pub fn subtract(&mut self, other: &SelectionMask) {
+        if self.width != other.width || self.height != other.height {
+            return;
+        }
+        for (a, &b) in self.mask.iter_mut().zip(other.mask.iter()) {
+            *a = a.saturating_sub(b);
+        }
     }
 
     #[inline]
@@ -102,7 +136,7 @@ impl SelectionMask {
         if radius == 0 || !self.has_selection() {
             return;
         }
-        let r = radius.min(24) as i32;
+        let r = radius.min(50) as i32;
         let w = self.width as i32;
         let h = self.height as i32;
         let mut tmp = self.mask.clone();
@@ -152,7 +186,7 @@ impl SelectionMask {
         if radius == 0 {
             return;
         }
-        let r = radius as i32;
+        let r = radius.min(50) as i32;
         let w = self.width as i32;
         let h = self.height as i32;
         let src = self.mask.clone();
@@ -178,7 +212,7 @@ impl SelectionMask {
         if radius == 0 {
             return;
         }
-        let r = radius as i32;
+        let r = radius.min(50) as i32;
         let w = self.width as i32;
         let h = self.height as i32;
         let src = self.mask.clone();
@@ -199,6 +233,159 @@ impl SelectionMask {
                 }
                 if all_set {
                     self.mask[(y * w + x) as usize] = 255;
+                }
+            }
+        }
+    }
+
+    /// Fills the selected region on a pixel buffer with the given RGBA color
+    pub fn fill_selection(&self, pixels: &mut [u8], width: u32, height: u32, fill_color: [u8; 4]) {
+        let max_w = width.min(self.width);
+        let max_h = height.min(self.height);
+
+        let src_r = fill_color[0] as f32;
+        let src_g = fill_color[1] as f32;
+        let src_b = fill_color[2] as f32;
+        let src_a_base = fill_color[3] as f32 / 255.0;
+
+        for y in 0..max_h {
+            for x in 0..max_w {
+                let mask_val = self.get_value(x, y);
+                if mask_val > 0 {
+                    let weight = (mask_val as f32 / 255.0) * src_a_base;
+                    let idx = (y as usize * width as usize + x as usize) * 4;
+                    if idx + 3 < pixels.len() {
+                        let dst_r = pixels[idx] as f32;
+                        let dst_g = pixels[idx + 1] as f32;
+                        let dst_b = pixels[idx + 2] as f32;
+                        let dst_a = pixels[idx + 3] as f32 / 255.0;
+
+                        let out_a = weight + dst_a * (1.0 - weight);
+                        if out_a > 0.0 {
+                            let out_r = (src_r * weight + dst_r * dst_a * (1.0 - weight)) / out_a;
+                            let out_g = (src_g * weight + dst_g * dst_a * (1.0 - weight)) / out_a;
+                            let out_b = (src_b * weight + dst_b * dst_a * (1.0 - weight)) / out_a;
+
+                            pixels[idx] = out_r.round().clamp(0.0, 255.0) as u8;
+                            pixels[idx + 1] = out_g.round().clamp(0.0, 255.0) as u8;
+                            pixels[idx + 2] = out_b.round().clamp(0.0, 255.0) as u8;
+                            pixels[idx + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Strokes the selection border onto a pixel buffer with configurable width and position
+    pub fn stroke_selection(
+        &self,
+        pixels: &mut [u8],
+        width: u32,
+        height: u32,
+        stroke_color: [u8; 4],
+        stroke_width: u32,
+        position: StrokePosition,
+    ) {
+        if stroke_width == 0 || !self.has_selection() {
+            return;
+        }
+
+        let w = self.width as i32;
+        let h = self.height as i32;
+        let r = (stroke_width as f32 * 0.5).max(0.5);
+        let r_ceil = r.ceil() as i32 + 1;
+
+        // 1. Find border pixels of the selection
+        let mut border_pts = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                if self.is_selected(x as u32, y as u32) {
+                    let is_border = x == 0
+                        || x == w - 1
+                        || y == 0
+                        || y == h - 1
+                        || !self.is_selected((x - 1) as u32, y as u32)
+                        || !self.is_selected((x + 1) as u32, y as u32)
+                        || !self.is_selected(x as u32, (y - 1) as u32)
+                        || !self.is_selected(x as u32, (y + 1) as u32);
+                    if is_border {
+                        border_pts.push((x, y));
+                    }
+                }
+            }
+        }
+
+        if border_pts.is_empty() {
+            return;
+        }
+
+        // 2. Generate stroke coverage mask
+        let mut stroke_mask = vec![0.0f32; (w * h) as usize];
+        for (bx, by) in border_pts {
+            let bxf = bx as f32 + 0.5;
+            let byf = by as f32 + 0.5;
+
+            for dy in -r_ceil..=r_ceil {
+                for dx in -r_ceil..=r_ceil {
+                    let nx = bx + dx;
+                    let ny = by + dy;
+                    if nx >= 0 && nx < w && ny >= 0 && ny < h {
+                        let is_inside = self.is_selected(nx as u32, ny as u32);
+                        let is_valid_pos = match position {
+                            StrokePosition::Center => true,
+                            StrokePosition::Inside => is_inside,
+                            StrokePosition::Outside => !is_inside,
+                        };
+
+                        if is_valid_pos {
+                            let pxf = nx as f32 + 0.5;
+                            let pyf = ny as f32 + 0.5;
+                            let dist = ((pxf - bxf).powi(2) + (pyf - byf).powi(2)).sqrt();
+                            if dist <= r + 0.5 {
+                                let cov = (1.0 - (dist - (r - 0.5)).clamp(0.0, 1.0)).clamp(0.0, 1.0);
+                                let idx = (ny * w + nx) as usize;
+                                stroke_mask[idx] = stroke_mask[idx].max(cov);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Composite stroke onto target pixels
+        let src_r = stroke_color[0] as f32;
+        let src_g = stroke_color[1] as f32;
+        let src_b = stroke_color[2] as f32;
+        let src_a_base = stroke_color[3] as f32 / 255.0;
+
+        let max_w = width.min(self.width) as i32;
+        let max_h = height.min(self.height) as i32;
+
+        for y in 0..max_h {
+            for x in 0..max_w {
+                let mask_cov = stroke_mask[(y * w + x) as usize];
+                if mask_cov > 0.0 {
+                    let weight = mask_cov * src_a_base;
+                    let idx = (y as usize * width as usize + x as usize) * 4;
+                    if idx + 3 < pixels.len() {
+                        let dst_r = pixels[idx] as f32;
+                        let dst_g = pixels[idx + 1] as f32;
+                        let dst_b = pixels[idx + 2] as f32;
+                        let dst_a = pixels[idx + 3] as f32 / 255.0;
+
+                        let out_a = weight + dst_a * (1.0 - weight);
+                        if out_a > 0.0 {
+                            let out_r = (src_r * weight + dst_r * dst_a * (1.0 - weight)) / out_a;
+                            let out_g = (src_g * weight + dst_g * dst_a * (1.0 - weight)) / out_a;
+                            let out_b = (src_b * weight + dst_b * dst_a * (1.0 - weight)) / out_a;
+
+                            pixels[idx] = out_r.round().clamp(0.0, 255.0) as u8;
+                            pixels[idx + 1] = out_g.round().clamp(0.0, 255.0) as u8;
+                            pixels[idx + 2] = out_b.round().clamp(0.0, 255.0) as u8;
+                            pixels[idx + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+                        }
+                    }
                 }
             }
         }

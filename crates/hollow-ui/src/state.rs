@@ -3,7 +3,7 @@ use hollow_core::brush::BrushSettings;
 use hollow_core::color::{Color, DEFAULT_PALETTE};
 use hollow_core::document::Document;
 use hollow_core::history::HistoryStack;
-use hollow_core::selection::SelectionMask;
+use hollow_core::selection::{SelectionMask, StrokePosition};
 use hollow_core::symmetry::SymmetryConfig;
 use hollow_core::transform::{AffineTransform2D, render_transformed_patch};
 
@@ -232,6 +232,18 @@ pub struct AppState {
 
     // ── Free Transform Session ──
     pub transform_session: TransformSession,
+
+    // ── Lasso & Selection Modifiers ──
+    pub lasso_points: Vec<Vec2>,
+    pub show_feather_dialog: bool,
+    pub feather_radius: u32,
+    pub show_expand_dialog: bool,
+    pub expand_radius: u32,
+    pub show_contract_dialog: bool,
+    pub contract_radius: u32,
+    pub show_stroke_dialog: bool,
+    pub stroke_width: u32,
+    pub stroke_position: u8, // 0: Center, 1: Inside, 2: Outside
 }
 
 impl AppState {
@@ -347,6 +359,17 @@ impl AppState {
             filter_chromatic_angle: 0.0,
 
             transform_session: TransformSession::default(),
+
+            lasso_points: Vec::new(),
+            show_feather_dialog: false,
+            feather_radius: 5,
+            show_expand_dialog: false,
+            expand_radius: 5,
+            show_contract_dialog: false,
+            contract_radius: 5,
+            show_stroke_dialog: false,
+            stroke_width: 3,
+            stroke_position: 0, // Center
         }
     }
 
@@ -670,6 +693,78 @@ impl AppState {
         self.transform_session.is_active = false;
         self.transform_session.extracted_patch.clear();
         self.set_status("Canceled Transform");
+    }
+
+    pub fn feather_selection(&mut self, radius: u32) {
+        if let Some(mask) = &mut self.selection {
+            mask.feather(radius);
+            self.set_status(format!("Feathered selection ({}px)", radius));
+        }
+    }
+
+    pub fn expand_selection(&mut self, radius: u32) {
+        if let Some(mask) = &mut self.selection {
+            mask.expand(radius);
+            self.set_status(format!("Expanded selection ({}px)", radius));
+        }
+    }
+
+    pub fn contract_selection(&mut self, radius: u32) {
+        if let Some(mask) = &mut self.selection {
+            mask.contract(radius);
+            self.set_status(format!("Contracted selection ({}px)", radius));
+        }
+    }
+
+    pub fn fill_selection_active_layer(&mut self) {
+        if let Some(mask) = &self.selection {
+            let doc_w = self.document.width;
+            let doc_h = self.document.height;
+            let color = self.brush.primary_color.to_rgba8();
+            if let Some(layer) = self.document.active_layer_mut() {
+                let before = layer.pixels.clone();
+                mask.fill_selection(&mut layer.pixels, doc_w, doc_h, color);
+                let after = layer.pixels.clone();
+                if before != after {
+                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                        layer_id: layer.id,
+                        description: "Fill Selection",
+                        before_pixels: before,
+                        after_pixels: after,
+                    });
+                    self.history.push(cmd);
+                    self.set_status("Filled selection with primary color");
+                }
+            }
+        }
+    }
+
+    pub fn stroke_selection_active_layer(&mut self, width: u32, position: u8) {
+        if let Some(mask) = &self.selection {
+            let doc_w = self.document.width;
+            let doc_h = self.document.height;
+            let color = self.brush.primary_color.to_rgba8();
+            let pos = match position {
+                1 => StrokePosition::Inside,
+                2 => StrokePosition::Outside,
+                _ => StrokePosition::Center,
+            };
+            if let Some(layer) = self.document.active_layer_mut() {
+                let before = layer.pixels.clone();
+                mask.stroke_selection(&mut layer.pixels, doc_w, doc_h, color, width, pos);
+                let after = layer.pixels.clone();
+                if before != after {
+                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                        layer_id: layer.id,
+                        description: "Stroke Selection",
+                        before_pixels: before,
+                        after_pixels: after,
+                    });
+                    self.history.push(cmd);
+                    self.set_status(format!("Stroked selection ({}px)", width));
+                }
+            }
+        }
     }
 }
 

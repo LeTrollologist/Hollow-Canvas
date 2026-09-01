@@ -17,7 +17,7 @@ pub use document::Document;
 pub use history::{Command, HistoryStack, LayerPixelsSnapshotCommand};
 pub use layer::{Layer, LayerId};
 pub use rasterizer::StrokeRasterizer;
-pub use selection::SelectionMask;
+pub use selection::{SelectionMask, StrokePosition};
 pub use symmetry::{SymmetryConfig, SymmetryMode};
 pub use transform::{AffineTransform2D, render_transformed_patch, sample_bilinear, sample_nearest};
 

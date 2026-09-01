@@ -3,6 +3,7 @@ use crate::state::{ActiveFilterModal, AppState, CanvasPreset, PendingFileAction}
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Stroke, Vec2};
 use hollow_core::brush::{EraserMode, GradientType, ShapeFillMode, ToolType};
 use hollow_core::color::{Color, DEFAULT_PALETTE};
+use hollow_core::selection::SelectionMask;
 use hollow_core::symmetry::SymmetryMode;
 
 /// Helper to render a custom studio tool button with a crisp vector-drawn icon
@@ -95,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.7.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.8.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -150,6 +151,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         });
 
                         ui.menu_button("Select", |ui| {
+                            if ui.button("Select All (Ctrl+A)").clicked() {
+                                state.selection = Some(SelectionMask::select_all(state.document.width, state.document.height));
+                                state.set_status("Selected All");
+                                ui.close_menu();
+                            }
                             if ui.button("Invert Selection (Ctrl+Shift+I)").clicked() {
                                 if let Some(mask) = &mut state.selection {
                                     mask.invert();
@@ -160,6 +166,28 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             if ui.button("✕ Deselect (Ctrl+D)").clicked() {
                                 state.selection = None;
                                 state.set_status("Deselected");
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            if ui.button("Feather Selection...").clicked() {
+                                state.show_feather_dialog = true;
+                                ui.close_menu();
+                            }
+                            if ui.button("Expand Selection...").clicked() {
+                                state.show_expand_dialog = true;
+                                ui.close_menu();
+                            }
+                            if ui.button("Contract Selection...").clicked() {
+                                state.show_contract_dialog = true;
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            if ui.button("Fill Selection (Shift+F5 / Alt+Bksp)").clicked() {
+                                state.fill_selection_active_layer();
+                                ui.close_menu();
+                            }
+                            if ui.button("Stroke Selection...").clicked() {
+                                state.show_stroke_dialog = true;
                                 ui.close_menu();
                             }
                         });
@@ -456,6 +484,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         (ToolType::Ellipse, "Oval"),
                         (ToolType::Polygon, "Poly"),
                         (ToolType::Marquee, "Select"),
+                        (ToolType::Lasso, "Lasso"),
                         (ToolType::Move, "Move"),
                         (ToolType::Transform, "Trans"),
                         (ToolType::Crop, "Crop"),
@@ -588,6 +617,25 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             if do_deselect {
                                 state.selection = None;
                                 state.set_status("Deselected");
+                            }
+                        }
+                        ToolType::Lasso => {
+                            ui.label(RichText::new("Draw freehand loop to select").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                            ui.label(RichText::new("Shift: Add · Alt: Subtract").size(8.5).color(accent_c32));
+                            if let Some(mask) = &state.selection {
+                                if mask.has_selection() {
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Feather...").clicked() {
+                                            state.show_feather_dialog = true;
+                                        }
+                                        if ui.button("Fill").clicked() {
+                                            state.fill_selection_active_layer();
+                                        }
+                                        if ui.button("✕ Deselect").clicked() {
+                                            state.selection = None;
+                                        }
+                                    });
+                                }
                             }
                         }
                         ToolType::Crop => {
@@ -1799,6 +1847,134 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
+    // ── 9.5 LASSO PREVIEW OVERLAY ──
+    if !state.lasso_points.is_empty() {
+        let win_size = ctx.screen_rect().size();
+        let win_w = win_size.x;
+        let win_h = win_size.y;
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("lasso_preview_layer")));
+        let stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255));
+
+        for i in 0..state.lasso_points.len() - 1 {
+            let p0 = state.canvas_to_screen(state.lasso_points[i], win_w, win_h);
+            let p1 = state.canvas_to_screen(state.lasso_points[i + 1], win_w, win_h);
+            painter.line_segment([egui::pos2(p0.x, p0.y), egui::pos2(p1.x, p1.y)], stroke);
+        }
+        if state.lasso_points.len() >= 3 {
+            let p_last = state.canvas_to_screen(*state.lasso_points.last().unwrap(), win_w, win_h);
+            let p_first = state.canvas_to_screen(state.lasso_points[0], win_w, win_h);
+            painter.line_segment(
+                [egui::pos2(p_last.x, p_last.y), egui::pos2(p_first.x, p_first.y)],
+                egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(0, 240, 255, 120)),
+            );
+        }
+    }
+
+    // ── 9.6 SELECTION MODIFIER MODALS ──
+    // Feather Selection Modal
+    if state.show_feather_dialog {
+        egui::Window::new("Feather Selection")
+            .fixed_size(Vec2::new(320.0, 150.0))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Feather Radius (px):").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.add(egui::Slider::new(&mut state.feather_radius, 1..=50).text("px"));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("✓ Apply Feather").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                        let r = state.feather_radius;
+                        state.feather_selection(r);
+                        state.show_feather_dialog = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.show_feather_dialog = false;
+                    }
+                });
+            });
+    }
+
+    // Expand Selection Modal
+    if state.show_expand_dialog {
+        egui::Window::new("Expand Selection")
+            .fixed_size(Vec2::new(320.0, 150.0))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Expand By (px):").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.add(egui::Slider::new(&mut state.expand_radius, 1..=50).text("px"));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("✓ Apply Expand").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                        let r = state.expand_radius;
+                        state.expand_selection(r);
+                        state.show_expand_dialog = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.show_expand_dialog = false;
+                    }
+                });
+            });
+    }
+
+    // Contract Selection Modal
+    if state.show_contract_dialog {
+        egui::Window::new("Contract Selection")
+            .fixed_size(Vec2::new(320.0, 150.0))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Contract By (px):").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.add(egui::Slider::new(&mut state.contract_radius, 1..=50).text("px"));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("✓ Apply Contract").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                        let r = state.contract_radius;
+                        state.contract_selection(r);
+                        state.show_contract_dialog = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.show_contract_dialog = false;
+                    }
+                });
+            });
+    }
+
+    // Stroke Selection Modal
+    if state.show_stroke_dialog {
+        egui::Window::new("Stroke Selection")
+            .fixed_size(Vec2::new(340.0, 200.0))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Stroke Width (px):").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.add(egui::Slider::new(&mut state.stroke_width, 1..=50).text("px"));
+                ui.add_space(6.0);
+                ui.label(RichText::new("Location:").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut state.stroke_position, 0, "Center");
+                    ui.radio_value(&mut state.stroke_position, 1, "Inside");
+                    ui.radio_value(&mut state.stroke_position, 2, "Outside");
+                });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("✓ Apply Stroke").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                        let w = state.stroke_width;
+                        let pos = state.stroke_position;
+                        state.stroke_selection_active_layer(w, pos);
+                        state.show_stroke_dialog = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.show_stroke_dialog = false;
+                    }
+                });
+            });
+    }
+
     // ── 9. ABOUT HOLLOW CANVAS MODAL ──
     if state.show_about_dialog {
         egui::Window::new("About Hollow Canvas")
@@ -1810,7 +1986,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.7.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.8.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);
@@ -1859,6 +2035,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         ("I / Alt+Click", "Eyedropper Color Picker"),
                         ("V", "Move Layer Tool"),
                         ("M", "Marquee Selection Tool"),
+                        ("L", "Freehand Lasso Selection Tool"),
                         ("X", "Swap Primary & Secondary Colors"),
                         ("Space + Drag", "Pan Canvas Viewport"),
                         ("Mouse Wheel", "Zoom Canvas In / Out"),
@@ -1867,10 +2044,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         ("Ctrl + O", "Open Project (.hcv)"),
                         ("Ctrl + E", "Export PNG Image"),
                         ("Ctrl + T", "Free Transform Layer / Selection"),
+                        ("Ctrl + A", "Select All"),
                         ("Ctrl + I", "Invert Layer Colors"),
                         ("Ctrl + Z", "Undo Action"),
                         ("Ctrl + Y / Ctrl+Shift+Z", "Redo Action"),
                         ("Ctrl + D", "Deselect"),
+                        ("Shift + F5", "Fill Selection with Primary Color"),
                         ("T", "Toggle On-Canvas Tracing Paper"),
                         ("Ctrl + '", "Toggle Viewport Grid"),
                         ("Ctrl + R", "Toggle Viewport Rulers"),

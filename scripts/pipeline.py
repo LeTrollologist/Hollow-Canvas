@@ -179,19 +179,23 @@ def stage_publish(version: str, tag_dir: Path, assets: list, draft: bool = False
     checksums_file = tag_dir / "SHA256SUMS.txt"
     upload_files = [str(a) for a in assets] + [str(checksums_file)]
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Free Transform Engine Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Advanced Selection Toolset & Mask Modifiers Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
 ### ✨ What's New in {version}
-* **⤢ Studio Free Transform Tool (`Ctrl+T` / `Trans` Tool)** — Comprehensive transformation engine for full layers and active selections:
-  - **Interactive 8-Point Bounding Box Gizmo**: 4 Corner scaling nodes ($TL, TR, BR, BL$), 4 edge nodes ($TC, MR, BC, ML$), top rotation stem, and customizable center pivot crosshair.
-  - **Arbitrary Degree Rotation**: Smooth continuous rotation around custom pivot center with fine numeric degree adjustment.
-  - **High-Fidelity Bilinear & Nearest Resampling**: Smooth anti-aliased sub-pixel interpolation or crisp pixel-art mode.
-  - **Selection-Aware Transform**: Automatically crops and transforms only selected regions (Marquee, Magic Wand, Lasso) with transparent blending.
-  - **Instant Mirror Flip (`⇄ Flip H`, `⇅ Flip V`)**: Quick horizontal and vertical flips.
-  - **Floating HUD & Live Canvas Preview**: Real-time canvas updating during transform with `[✓ Apply (Enter)]` and `[✕ Cancel (Esc)]` controls.
-  - **Full Undo/Redo (`Ctrl+Z` / `Ctrl+Y`)**: Seamless history rollback and restoration.
+* **🪢 Freehand Lasso Selection Tool (`L`)** — Draw fluid, organic freehand selection loops alongside the Marquee and Magic Wand:
+  - **Live Canvas Loop Preview**: Real-time connected selection outline feedback while drawing.
+  - **Modifier Key Combinations**: Hold `Shift` to add / union with existing selection, or hold `Alt` to subtract from selection.
+* **🪄 Advanced Selection Modifiers & Dialogs**:
+  - **Feather Selection...**: Soften selection edges with a configurable radius ($1$ to $50$ px) using separable 2-pass blurring.
+  - **Expand Selection...**: Grow selection boundaries outward by $N$ pixels ($1$ to $50$ px) via morphological dilation.
+  - **Contract Selection...**: Shrink selection boundaries inward by $N$ pixels ($1$ to $50$ px) via morphological erosion.
+  - **Select All (`Ctrl+A`) & Deselect (`Ctrl+D`) & Invert (`Ctrl+Shift+I`)**: Fast global selection shortcuts.
+* **🎨 Selection Fill & Stroke Operations**:
+  - **Fill Selection (`Shift+F5` / `Alt+Backspace`)**: Fill active selection directly with primary color on the current layer with alpha blending.
+  - **Stroke Selection...**: Outline selection perimeter with configurable stroke width ($1$ to $50$ px) and placement options (`Center`, `Inside`, `Outside`).
+* **⤢ Studio Free Transform Tool (`Ctrl+T`)** — Interactive 8-point bounding box gizmo, smooth rotation, mirror flipping, and bilinear resampling.
 * **📐 Dual-Mode Reference & Tracing Paper Engine** — On-canvas tracing paper underlay/overlay and detached floating lightbox dock.
 * **🎨 Studio Color Adjustments & Filters FX Suite** — HSL, Brightness/Contrast, Color Balance, Invert, Gaussian Blur, Sharpen, Film Grain, Vignette, and Lens Aberration.
 * **📦 Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
