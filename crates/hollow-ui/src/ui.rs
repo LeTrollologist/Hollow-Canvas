@@ -96,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.9.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.10.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -120,6 +120,10 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             ui.separator();
                             if ui.button("📤 Export Flat PNG... (Ctrl+E)").clicked() {
                                 state.pending_file_action = Some(PendingFileAction::ExportPng);
+                                ui.close_menu();
+                            }
+                            if ui.button("🎬 Export Animation...").clicked() {
+                                state.show_export_animation_dialog = true;
                                 ui.close_menu();
                             }
                         });
@@ -323,6 +327,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             if ui.checkbox(&mut state.show_rulers, "📏 Toggle Rulers (Ctrl+R)").clicked() {
                                 ui.close_menu();
                             }
+                            if ui.checkbox(&mut state.timeline.is_enabled, "🎞 Animation Timeline").clicked() {
+                                ui.close_menu();
+                            }
                             ui.separator();
                             if ui.checkbox(&mut state.show_ui_panels, "👁 Studio Panels (Tab)").clicked() {
                                 ui.close_menu();
@@ -335,6 +342,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                         ui.menu_button("Window", |ui| {
                             if ui.checkbox(&mut state.show_ref_window, "🖼 Reference Viewer").clicked() {
+                                ui.close_menu();
+                            }
+                            if ui.checkbox(&mut state.timeline.is_enabled, "🎞 Animation Timeline Strip").clicked() {
                                 ui.close_menu();
                             }
                             ui.separator();
@@ -419,6 +429,91 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             }
                         });
                     });
+            });
+    }
+
+    // ── 2. BOTTOM TIMELINE STRIP PANEL ──
+    if state.show_ui_panels && state.timeline.is_enabled {
+        egui::TopBottomPanel::bottom("animation_timeline_panel")
+            .frame(egui::Frame::none().fill(Color32::from_rgba_unmultiplied(8, 11, 22, 252)).inner_margin(egui::Margin::symmetric(8.0, 6.0)))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    // Playback Controls
+                    let play_icon = if state.timeline.is_playing { "⏸ Pause" } else { "▶ Play" };
+                    if ui.button(RichText::new(play_icon).size(11.0).strong().color(if state.timeline.is_playing { Color32::from_rgb(255, 200, 80) } else { Color32::from_rgb(100, 240, 150) })).clicked() {
+                        state.toggle_animation_playback();
+                    }
+                    if ui.button("⏮").on_hover_text("Previous Frame ([)").clicked() {
+                        state.step_prev_frame();
+                    }
+                    if ui.button("⏭").on_hover_text("Next Frame (])").clicked() {
+                        state.step_next_frame();
+                    }
+                    if ui.selectable_label(state.timeline.loop_playback, "🔁 Loop").clicked() {
+                        state.timeline.loop_playback = !state.timeline.loop_playback;
+                    }
+
+                    ui.separator();
+
+                    // FPS slider
+                    ui.label(RichText::new("FPS:").size(10.5).color(Color32::from_rgb(150, 165, 195)));
+                    ui.add(egui::DragValue::new(&mut state.timeline.fps).range(1..=60).speed(0.5));
+
+                    ui.separator();
+
+                    // Onion Skin toggle & settings
+                    let onion_active = state.timeline.onion_skin_enabled;
+                    let onion_btn = egui::Button::new(RichText::new("🧅 Onion Skin (O)").size(10.5).color(if onion_active { accent_c32 } else { Color32::from_rgb(140, 150, 175) }))
+                        .fill(if onion_active { accent_c32.linear_multiply(0.2) } else { Color32::from_rgb(20, 26, 44) });
+                    if ui.add(onion_btn).on_hover_text("Toggle Ghost Onion Skinning (O)").clicked() {
+                        state.toggle_onion_skin();
+                    }
+
+                    if onion_active {
+                        ui.label(RichText::new("Prev:").size(9.5).color(Color32::from_rgb(255, 120, 120)));
+                        ui.add(egui::DragValue::new(&mut state.timeline.onion_skin_prev_count).range(1..=5).speed(0.1));
+                        ui.label(RichText::new("Next:").size(9.5).color(Color32::from_rgb(120, 255, 150)));
+                        ui.add(egui::DragValue::new(&mut state.timeline.onion_skin_next_count).range(1..=5).speed(0.1));
+                        ui.label(RichText::new("Opacity:").size(9.5).color(Color32::from_rgb(160, 170, 195)));
+                        ui.add(egui::Slider::new(&mut state.timeline.onion_skin_opacity, 0.1..=1.0).show_value(false));
+                    }
+
+                    ui.separator();
+
+                    // Actions
+                    if ui.button(RichText::new("＋ Add Frame").strong().color(accent_c32)).clicked() {
+                        state.add_animation_frame();
+                    }
+                    if ui.button("Duplicate").on_hover_text("Duplicate Active Frame").clicked() {
+                        state.duplicate_animation_frame();
+                    }
+                    if ui.button("🗑 Delete").on_hover_text("Delete Active Frame").clicked() {
+                        state.delete_animation_frame();
+                    }
+                    if ui.button("🎬 Export...").on_hover_text("Export Animated GIF / WebP").clicked() {
+                        state.show_export_animation_dialog = true;
+                    }
+                });
+
+                ui.add_space(4.0);
+
+                // Frame Reel Strip
+                ScrollArea::horizontal().show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let total_frames = state.timeline.frames.len();
+                        for i in 0..total_frames {
+                            let is_current = i == state.timeline.current_frame_idx;
+                            let frame_name = format!("{}: {}", i + 1, state.timeline.frames[i].name);
+                            let chip = egui::Button::new(RichText::new(frame_name).size(10.5).strong())
+                                .fill(if is_current { accent_c32.linear_multiply(0.4) } else { Color32::from_rgb(16, 22, 36) })
+                                .stroke(egui::Stroke::new(1.0_f32, if is_current { accent_c32 } else { Color32::from_rgb(40, 50, 75) }))
+                                .min_size(Vec2::new(76.0, 24.0));
+                            if ui.add(chip).clicked() {
+                                state.select_animation_frame(i);
+                            }
+                        }
+                    });
+                });
             });
     }
 
@@ -2110,6 +2205,76 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
+    // ── Export Animation Modal ──
+    if state.show_export_animation_dialog {
+        egui::Window::new("🎬 Export Flipbook Animation")
+            .fixed_size(Vec2::new(360.0, 240.0))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Export Multi-Frame Animation").size(12.0).strong().color(Color32::from_rgb(235, 242, 255)));
+                ui.add_space(6.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Total Frames:").size(11.0).color(Color32::from_rgb(180, 190, 215)));
+                    ui.label(RichText::new(format!("{}", state.timeline.frames.len())).strong().color(accent_c32));
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Playback FPS:").size(11.0).color(Color32::from_rgb(180, 190, 215)));
+                    ui.add(egui::DragValue::new(&mut state.export_anim_fps).range(1..=60).suffix(" fps"));
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Format:").size(11.0).color(Color32::from_rgb(180, 190, 215)));
+                    ui.radio_value(&mut state.export_anim_format, 0, "GIF (.gif)");
+                    ui.radio_value(&mut state.export_anim_format, 1, "PNG Sequence");
+                });
+
+                ui.checkbox(&mut state.export_anim_loop, "Infinite Loop (Repeat)");
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("✓ Export Animation").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                        state.timeline.sync_from_document(&state.document);
+                        let w = state.document.width;
+                        let h = state.document.height;
+                        let bg_val = state.document.background_value;
+                        let inc_bg = !state.document.is_transparent;
+
+                        let mut frames_rgba = Vec::with_capacity(state.timeline.frames.len());
+                        for f in &state.timeline.frames {
+                            let comp = f.composite_layers(w, h, inc_bg, bg_val);
+                            frames_rgba.push(comp);
+                        }
+
+                        let out_dir = std::path::PathBuf::from("exports");
+                        let _ = std::fs::create_dir_all(&out_dir);
+
+                        if state.export_anim_format == 0 {
+                            let out_path = out_dir.join("animation.gif");
+                            match hollow_io::export_animated_gif(&frames_rgba, w, h, state.export_anim_fps, state.export_anim_loop, &out_path) {
+                                Ok(_) => state.set_status(format!("Exported animated GIF to {}", out_path.display())),
+                                Err(e) => state.set_status(format!("Export failed: {}", e)),
+                            }
+                        } else {
+                            match hollow_io::export_frame_sequence(&frames_rgba, w, h, &out_dir, "frame", hollow_io::ExportFormat::Png) {
+                                Ok(paths) => state.set_status(format!("Exported {} frames to {}", paths.len(), out_dir.display())),
+                                Err(e) => state.set_status(format!("Export sequence failed: {}", e)),
+                            }
+                        }
+                        state.show_export_animation_dialog = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.show_export_animation_dialog = false;
+                    }
+                });
+            });
+    }
+
     // ── 9. ABOUT HOLLOW CANVAS MODAL ──
     if state.show_about_dialog {
         egui::Window::new("About Hollow Canvas")
@@ -2121,7 +2286,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.9.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.10.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);

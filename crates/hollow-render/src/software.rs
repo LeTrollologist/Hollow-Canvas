@@ -15,6 +15,16 @@ pub struct TracingReferenceConfig<'a> {
     pub is_underlay: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct OnionSkinFrame<'a> {
+    pub rgba: &'a [u8],
+    pub tint_r: u8,
+    pub tint_g: u8,
+    pub tint_b: u8,
+    pub opacity: f32,
+    pub is_prev: bool,
+}
+
 pub struct SoftwareRenderer {
     textures: HashMap<TextureId, (u32, u32, Vec<u8>)>,
     composite_buffer: Vec<u8>,
@@ -81,6 +91,7 @@ impl SoftwareRenderer {
         pan: Vec2,
         zoom: f32,
         tracing: Option<TracingReferenceConfig>,
+        onion_skins: &[OnionSkinFrame],
     ) {
         if win_w == 0 || win_h == 0 || buffer.len() < win_w * win_h {
             return;
@@ -189,7 +200,7 @@ impl SoftwareRenderer {
                     None
                 });
 
-                // 1. If Tracing as Underlay (Light Table): blend reference onto base first
+                // 1. If Tracing as Underlay: blend reference onto base first
                 if let Some((rr, rg, rb, ra)) = ref_px {
                     if tracing.map_or(false, |t| t.is_underlay) && ra > 0 {
                         let a_u = ra as u32;
@@ -200,7 +211,21 @@ impl SoftwareRenderer {
                     }
                 }
 
-                // 2. Blend Document Layers on top of base
+                // 2. Blend Previous Onion Skin Frames (under active frame)
+                for skin in onion_skins.iter().filter(|s| s.is_prev) {
+                    if src_idx + 3 < skin.rgba.len() {
+                        let sa = skin.rgba[src_idx + 3];
+                        if sa > 0 {
+                            let eff_a = ((sa as f32 * skin.opacity).clamp(0.0, 255.0)) as u32;
+                            let inv_a = 255 - eff_a;
+                            base_r = ((base_r as u32 * inv_a + skin.tint_r as u32 * eff_a) / 255) as u8;
+                            base_g = ((base_g as u32 * inv_a + skin.tint_g as u32 * eff_a) / 255) as u8;
+                            base_b = ((base_b as u32 * inv_a + skin.tint_b as u32 * eff_a) / 255) as u8;
+                        }
+                    }
+                }
+
+                // 3. Blend Active Document Layers on top
                 let (comp_r, comp_g, comp_b) = if la == 255 {
                     (lr, lg, lb)
                 } else if la == 0 {
@@ -214,20 +239,35 @@ impl SoftwareRenderer {
                     (r, g, b)
                 };
 
-                // 3. If Tracing as Ghost Overlay (Tracing Sheet): blend reference on top
+                // 4. Blend Next Onion Skin Frames (over active frame with green tint)
+                let (mut curr_r, mut curr_g, mut curr_b) = (comp_r, comp_g, comp_b);
+                for skin in onion_skins.iter().filter(|s| !s.is_prev) {
+                    if src_idx + 3 < skin.rgba.len() {
+                        let sa = skin.rgba[src_idx + 3];
+                        if sa > 0 {
+                            let eff_a = ((sa as f32 * skin.opacity).clamp(0.0, 255.0)) as u32;
+                            let inv_a = 255 - eff_a;
+                            curr_r = ((curr_r as u32 * inv_a + skin.tint_r as u32 * eff_a) / 255) as u8;
+                            curr_g = ((curr_g as u32 * inv_a + skin.tint_g as u32 * eff_a) / 255) as u8;
+                            curr_b = ((curr_b as u32 * inv_a + skin.tint_b as u32 * eff_a) / 255) as u8;
+                        }
+                    }
+                }
+
+                // 5. If Tracing as Ghost Overlay: blend reference on top
                 let (final_r, final_g, final_b) = if let Some((rr, rg, rb, ra)) = ref_px {
                     if tracing.map_or(false, |t| !t.is_underlay) && ra > 0 {
                         let a_u = ra as u32;
                         let inv_a = 255 - a_u;
-                        let r = ((comp_r as u32 * inv_a + rr as u32 * a_u) / 255) as u8;
-                        let g = ((comp_g as u32 * inv_a + rg as u32 * a_u) / 255) as u8;
-                        let b = ((comp_b as u32 * inv_a + rb as u32 * a_u) / 255) as u8;
+                        let r = ((curr_r as u32 * inv_a + rr as u32 * a_u) / 255) as u8;
+                        let g = ((curr_g as u32 * inv_a + rg as u32 * a_u) / 255) as u8;
+                        let b = ((curr_b as u32 * inv_a + rb as u32 * a_u) / 255) as u8;
                         (r, g, b)
                     } else {
-                        (comp_r, comp_g, comp_b)
+                        (curr_r, curr_g, curr_b)
                     }
                 } else {
-                    (comp_r, comp_g, comp_b)
+                    (curr_r, curr_g, curr_b)
                 };
 
                 buffer[pixel_idx] = 0xFF000000 | ((final_r as u32) << 16) | ((final_g as u32) << 8) | (final_b as u32);

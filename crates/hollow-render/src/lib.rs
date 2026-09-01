@@ -1,3 +1,3 @@
 pub mod software;
 
-pub use software::{SoftwareRenderer, TracingReferenceConfig};
+pub use software::{OnionSkinFrame, SoftwareRenderer, TracingReferenceConfig};

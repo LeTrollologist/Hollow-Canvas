@@ -132,6 +132,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "color_quant"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -293,6 +299,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gif"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5df2ba84018d80c213569363bdcd0c64e6933c67fe4c1d60ecf822971a3c35e"
+dependencies = [
+ "color_quant",
+ "weezl",
+]
+
+[[package]]
 name = "glam"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -303,7 +319,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-app"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "egui",
  "env_logger",
@@ -318,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "glam",
  "image",
@@ -329,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-io"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "flate2",
  "hollow-core",
@@ -339,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-render"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "egui",
  "glam",
@@ -351,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-ui"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "egui",
  "glam",
@@ -368,6 +384,8 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif",
  "image-webp",
  "moxcms",
  "num-traits",
@@ -793,6 +811,12 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "weezl"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "windows-link"

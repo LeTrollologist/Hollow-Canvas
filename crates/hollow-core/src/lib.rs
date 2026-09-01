@@ -1,3 +1,4 @@
+pub mod animation;
 pub mod blend;
 pub mod brush;
 pub mod color;
@@ -10,8 +11,9 @@ pub mod selection;
 pub mod symmetry;
 pub mod transform;
 
+pub use animation::{AnimationFrame, AnimationTimeline};
 pub use blend::BlendMode;
-pub use brush::{BrushPoint, BrushSettings, EraserMode, GradientType, ShapeFillMode, ToolType};
+pub use brush::{BrushPoint, BrushPreset, BrushSettings, EraserMode, GradientType, ShapeFillMode, ToolType};
 pub use color::{Color, ThemeMode, DEFAULT_PALETTE};
 pub use document::Document;
 pub use history::{Command, HistoryStack, LayerPixelsSnapshotCommand};

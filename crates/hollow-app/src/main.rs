@@ -175,6 +175,7 @@ struct HollowCanvasDesktopApp {
     mouse_pos: egui::Pos2,
     last_point_time: Instant,
     current_velocity: f32,
+    last_anim_tick: Instant,
 }
 
 impl HollowCanvasDesktopApp {
@@ -193,8 +194,9 @@ impl HollowCanvasDesktopApp {
             if pos.y < 46.0 {
                 return true;
             }
-            // Bottom status bar
-            if pos.y > (h - 32.0) {
+            // Bottom status bar & animation timeline strip
+            let bottom_h = if self.state.timeline.is_enabled { 88.0 } else { 32.0 };
+            if pos.y > (h - bottom_h) {
                 return true;
             }
             // Left tool dock & properties panel
@@ -229,6 +231,8 @@ impl HollowCanvasDesktopApp {
             || self.state.show_about_dialog
             || self.state.show_new_canvas_dialog
             || self.state.show_resize_canvas_dialog
+            || self.state.show_export_animation_dialog
+            || self.state.show_save_preset_dialog
             || self.state.active_filter_modal != hollow_ui::state::ActiveFilterModal::None
             || self.state.show_gallery
             || self.state.transform_session.is_active
@@ -864,6 +868,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.state.set_status(if app.state.tracing_enabled { "Tracing Paper: ON" } else { "Tracing Paper: OFF" });
                 }
                 0x56 => app.state.brush.tool = ToolType::Move,       // V
+                0x4F if !is_ctrl => app.state.toggle_onion_skin(),    // O (Toggle Onion Skinning)
+                0xDB => app.state.step_prev_frame(),                  // [ (Step Previous Frame)
+                0xDD => app.state.step_next_frame(),                  // ] (Step Next Frame)
                 0x0D => { // Enter (Commit transform, polygon or crop)
                     if app.state.transform_session.is_active {
                         app.state.commit_transform_session();
@@ -929,11 +936,22 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     render_ui(ctx, &mut app.state);
                 });
 
-                let needs_repaint = full_output.viewport_output.get(&egui::ViewportId::ROOT)
+                let mut needs_repaint = full_output.viewport_output.get(&egui::ViewportId::ROOT)
                     .map(|v| v.repaint_delay.is_zero())
                     .unwrap_or(false);
 
-                // 2. Render canvas layer composite with up-to-date state and optional tracing paper reference
+                // 1.5 Animation playback tick
+                if app.state.timeline.is_playing {
+                    let now = Instant::now();
+                    let target_dt = 1.0 / (app.state.timeline.fps.max(1) as f32);
+                    if now.duration_since(app.last_anim_tick).as_secs_f32() >= target_dt {
+                        app.last_anim_tick = now;
+                        app.state.step_next_frame();
+                    }
+                    needs_repaint = true;
+                }
+
+                // 2. Render canvas layer composite with up-to-date state, tracing paper, and onion skinning
                 let tracing_cfg = if app.state.tracing_enabled {
                     app.state.reference_image.as_ref().map(|(w, h, rgba)| {
                         hollow_render::TracingReferenceConfig {
@@ -950,6 +968,48 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     None
                 };
 
+                let mut onion_skin_buffers = Vec::new();
+                let mut onion_skins = Vec::new();
+
+                if app.state.timeline.is_enabled && app.state.timeline.onion_skin_enabled && !app.state.timeline.is_playing {
+                    let curr_idx = app.state.timeline.current_frame_idx;
+                    let total_frames = app.state.timeline.frames.len();
+                    let w = app.state.document.width;
+                    let h = app.state.document.height;
+                    let opacity = app.state.timeline.onion_skin_opacity;
+
+                    // 1. Previous frames (red/orange tint)
+                    let prev_count = app.state.timeline.onion_skin_prev_count;
+                    for p in 1..=prev_count {
+                        if curr_idx >= p {
+                            let frame_idx = curr_idx - p;
+                            let comp = app.state.timeline.frames[frame_idx].composite_layers(w, h, false, 0);
+                            onion_skin_buffers.push((comp, [255, 60, 60, 255], true));
+                        }
+                    }
+
+                    // 2. Next frames (green/cyan tint)
+                    let next_count = app.state.timeline.onion_skin_next_count;
+                    for n in 1..=next_count {
+                        if curr_idx + n < total_frames {
+                            let frame_idx = curr_idx + n;
+                            let comp = app.state.timeline.frames[frame_idx].composite_layers(w, h, false, 0);
+                            onion_skin_buffers.push((comp, [60, 220, 100, 255], false));
+                        }
+                    }
+
+                    for (buf, tint, is_prev) in &onion_skin_buffers {
+                        onion_skins.push(hollow_render::OnionSkinFrame {
+                            rgba: buf.as_slice(),
+                            tint_r: tint[0],
+                            tint_g: tint[1],
+                            tint_b: tint[2],
+                            opacity,
+                            is_prev: *is_prev,
+                        });
+                    }
+                }
+
                 app.renderer.render_canvas(
                     &mut app.buffer,
                     app.win_w,
@@ -958,6 +1018,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.state.pan,
                     app.state.zoom,
                     tracing_cfg,
+                    &onion_skins,
                 );
 
                 // 3. Render toggleable grid with up-to-date state
@@ -1267,6 +1328,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         mouse_pos: egui::Pos2::ZERO,
         last_point_time: Instant::now(),
         current_velocity: 0.0,
+        last_anim_tick: Instant::now(),
     });
 
     unsafe {

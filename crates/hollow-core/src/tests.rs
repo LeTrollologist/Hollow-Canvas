@@ -607,4 +607,50 @@ mod tests {
             assert!(center_alpha > 0, "Center pixel should have paint");
         }
     }
+
+    #[test]
+    fn test_animation_timeline_management() {
+        let mut timeline = crate::animation::AnimationTimeline::new(64, 64);
+        assert_eq!(timeline.frames.len(), 1);
+        assert_eq!(timeline.current_frame_idx, 0);
+
+        // Add 2 frames
+        timeline.add_frame(64, 64);
+        timeline.add_frame(64, 64);
+        assert_eq!(timeline.frames.len(), 3);
+        assert_eq!(timeline.current_frame_idx, 2);
+
+        // Step back & forward
+        timeline.step_prev_frame();
+        assert_eq!(timeline.current_frame_idx, 1);
+
+        timeline.step_next_frame();
+        assert_eq!(timeline.current_frame_idx, 2);
+
+        // Duplicate
+        timeline.duplicate_current_frame();
+        assert_eq!(timeline.frames.len(), 4);
+        assert_eq!(timeline.current_frame_idx, 3);
+
+        // Delete frame
+        let deleted = timeline.delete_current_frame();
+        assert!(deleted);
+        assert_eq!(timeline.frames.len(), 3);
+    }
+
+    #[test]
+    fn test_animation_frame_compositing() {
+        let mut frame = crate::animation::AnimationFrame::new(1, "Frame 1", 32, 32);
+        // Paint red pixel on base layer
+        frame.layers[0].pixels[0] = 255;
+        frame.layers[0].pixels[1] = 0;
+        frame.layers[0].pixels[2] = 0;
+        frame.layers[0].pixels[3] = 255;
+
+        let comp = frame.composite_layers(32, 32, false, 0);
+        assert_eq!(comp[0], 255);
+        assert_eq!(comp[1], 0);
+        assert_eq!(comp[2], 0);
+        assert_eq!(comp[3], 255);
+    }
 }

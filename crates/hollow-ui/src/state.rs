@@ -250,6 +250,13 @@ pub struct AppState {
     pub active_preset_idx: Option<usize>,
     pub show_save_preset_dialog: bool,
     pub new_preset_name: String,
+
+    // ── Frame Animation & Timeline Strip ──
+    pub timeline: hollow_core::animation::AnimationTimeline,
+    pub show_export_animation_dialog: bool,
+    pub export_anim_fps: u32,
+    pub export_anim_format: u8, // 0: GIF, 1: WebP, 2: PNG Sequence
+    pub export_anim_loop: bool,
 }
 
 impl AppState {
@@ -381,7 +388,68 @@ impl AppState {
             active_preset_idx: Some(0),
             show_save_preset_dialog: false,
             new_preset_name: String::new(),
+
+            timeline: hollow_core::animation::AnimationTimeline::new(width, height),
+            show_export_animation_dialog: false,
+            export_anim_fps: 12,
+            export_anim_format: 0,
+            export_anim_loop: true,
         }
+    }
+
+    // ── Animation Timeline Management ──
+    pub fn select_animation_frame(&mut self, idx: usize) {
+        if idx < self.timeline.frames.len() {
+            self.timeline.sync_from_document(&self.document);
+            self.timeline.current_frame_idx = idx;
+            self.timeline.sync_to_document(&mut self.document);
+            self.set_status(format!("Frame {} / {}", idx + 1, self.timeline.frames.len()));
+        }
+    }
+
+    pub fn add_animation_frame(&mut self) {
+        self.timeline.sync_from_document(&self.document);
+        let new_idx = self.timeline.add_frame(self.document.width, self.document.height);
+        self.timeline.sync_to_document(&mut self.document);
+        self.set_status(format!("Added frame {} / {}", new_idx + 1, self.timeline.frames.len()));
+    }
+
+    pub fn duplicate_animation_frame(&mut self) {
+        self.timeline.sync_from_document(&self.document);
+        let new_idx = self.timeline.duplicate_current_frame();
+        self.timeline.sync_to_document(&mut self.document);
+        self.set_status(format!("Duplicated frame {} / {}", new_idx + 1, self.timeline.frames.len()));
+    }
+
+    pub fn delete_animation_frame(&mut self) {
+        if self.timeline.delete_current_frame() {
+            self.timeline.sync_to_document(&mut self.document);
+            self.set_status(format!("Frame deleted. ({} frames left)", self.timeline.frames.len()));
+        }
+    }
+
+    pub fn step_next_frame(&mut self) {
+        self.timeline.sync_from_document(&self.document);
+        self.timeline.step_next_frame();
+        self.timeline.sync_to_document(&mut self.document);
+    }
+
+    pub fn step_prev_frame(&mut self) {
+        self.timeline.sync_from_document(&self.document);
+        self.timeline.step_prev_frame();
+        self.timeline.sync_to_document(&mut self.document);
+    }
+
+    pub fn toggle_animation_playback(&mut self) {
+        self.timeline.is_playing = !self.timeline.is_playing;
+        let state_str = if self.timeline.is_playing { "Playing" } else { "Paused" };
+        self.set_status(format!("Animation {}", state_str));
+    }
+
+    pub fn toggle_onion_skin(&mut self) {
+        self.timeline.onion_skin_enabled = !self.timeline.onion_skin_enabled;
+        let state_str = if self.timeline.onion_skin_enabled { "ON" } else { "OFF" };
+        self.set_status(format!("Onion Skinning: {}", state_str));
     }
 
     pub fn select_preset(&mut self, idx: usize) {

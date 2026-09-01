@@ -341,33 +341,30 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
         else "🟢 Verified Clean / Independent Permalinks Available"
     )
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Velocity Dynamics, Calligraphy & Preset Shelf Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Frame Animation & Onion Skinning Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
-### ✨ What's New in {version} (🌟 Track 4)
-* **⚡ Speed & Velocity-Sensitive Pressure Simulation**:
-  - Automatically simulates natural pen pressure curves on any mouse or graphics tablet by measuring pointer velocity.
-  - Swift flicks and fast inking strokes smoothly taper into needle-sharp tips (ideal for manga lineart, comic inking, crosshatching, and calligraphy).
-  - Fully customizable `velocity_dynamics`, `velocity_taper_strength`, and `velocity_min_size`.
-* **✒️ Calligraphy Chisel & Ribbon Nib Dynamics**:
-  - Configurable `calligraphy_angle` (0°..=180°) and `calligraphy_weight` (0.0..=1.0).
-  - Modulates stroke width in real-time based on the angle between stroke motion and the chisel nib.
-* **≋ Wet Edge Watercolor Pigment Pooling**:
-  - Realistic pigment concentration simulation where watercolor and marker inks pool darker at the outer perimeter of stamps.
-* **📚 Studio Brush Preset Shelf**:
-  - Dedicated preset shelf in the sidebar featuring 8 hand-crafted studio presets:
-    - ✒️ **G-Pen Inker**: Crisp manga lineart with sharp velocity release.
-    - ✎ **Studio Pencil (2B)**: Graphite grain with organic pressure taper.
-    - 🖋 **Calligraphy Nib**: 45° Chisel ribbon with angle modulation.
-    - ☁ **Soft Airbrush**: Ultra-soft diffuse gradient shading.
-    - ≋ **Wet Watercolor**: Authentic pigment flow with dark wet-edge fringes.
-    - 🎨 **Concept Oil**: Rich impasto oil blending with edge retention.
-    - ░ **Rough Charcoal**: Heavy chalk grain with velocity response.
-    - 🖊 **Copic Marker**: Flat semi-transparent layering marker with slight fringe.
-  - Built-in **Custom Preset Saving** dialog so artists can store and switch between custom presets during work.
-* **🎯 Strictly Confined Feathering & UI Drag Isolation**:
-  - 100% leak-free feathered selections and complete mouse event isolation during slider/menu drags.
+### ✨ What's New in {version} (🌟 Track 5: Frame Animation & Onion Skinning)
+* **🎞️ Interactive Flipbook Timeline Strip**:
+  - Full frame-by-frame animation engine (`AnimationTimeline` and `AnimationFrame`).
+  - Add blank frames, duplicate active frame, delete frames, reorder frames, and scrub playback.
+  - Real-time animation playback controller: Play/Pause (`Space`), loop toggle, and configurable FPS (1..=60 fps, e.g. 12fps/24fps).
+  - Bottom **Timeline Strip** dock with visual frame number chips, active frame highlight, and playback controls.
+  - Shortcut keys: `[` to step previous frame, `]` to step next frame.
+* **🧅 Multi-Frame Ghost Onion Skinning (`O`)**:
+  - Live ghosted silhouettes rendered directly in the viewport for natural in-betweening.
+  - **Previous Frames**: Tinted red/orange underlay with configurable frame depth (1–5 frames).
+  - **Next Frames**: Tinted green/cyan overlay with configurable frame depth (1–5 frames).
+  - Configurable silhouette opacity slider and 1-click toggle (`O`).
+* **🎬 Direct Animated Export (GIF & PNG Sequence)**:
+  - Direct export to animated `.gif` with loop count and frame delay encoding via `image::codecs::gif::GifEncoder`.
+  - Direct export to numbered PNG frame sequence.
+  - Dedicated "Export Animation..." modal dialog.
+* **⚡ Speed & Velocity-Sensitive Pressure Simulation**: Faster strokes automatically taper into fine, sharp tips.
+* **✒️ Calligraphy Chisel & Ribbon Nib Dynamics**: Configurable chisel nib angle (0°..=180°) and ribbon weight.
+* **≋ Wet Edge Watercolor Pigment Pooling**: Realistic pigment concentration simulation at stroke boundaries.
+* **📚 Studio Brush Preset Shelf**: 8 studio presets (G-Pen, 2B Pencil, Nib, Airbrush, Watercolor, Oil, Charcoal, Copic).
 * **⤢ Studio Free Transform Tool (`Ctrl+T`)** — Interactive 8-point bounding box gizmo, smooth rotation, mirror flipping, and bilinear resampling.
 * **📐 Dual-Mode Reference & Tracing Paper Engine** — On-canvas tracing paper underlay/overlay and detached floating lightbox dock.
 * **🎨 Studio Color Adjustments & Filters FX Suite** — HSL, Brightness/Contrast, Color Balance, Invert, Gaussian Blur, Sharpen, Film Grain, Vignette, and Lens Aberration.
