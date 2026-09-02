@@ -130,6 +130,7 @@ extern "system" {
     ) -> HICON;
     fn SendMessageW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
     fn GetClientRect(hWnd: HWND, lpRect: *mut RECT) -> i32;
+    fn ScreenToClient(hWnd: HWND, lpPoint: *mut POINT) -> i32;
     fn BeginPaint(hWnd: HWND, lpPaint: *mut PAINTSTRUCT) -> HDC;
     fn EndPaint(hWnd: HWND, lpPaint: *const PAINTSTRUCT) -> i32;
     fn InvalidateRect(hWnd: HWND, lpRect: *const RECT, bErase: i32) -> i32;
@@ -468,6 +469,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
             } else if tool == ToolType::Wand {
                 if canvas_pos.x >= 0.0 && canvas_pos.y >= 0.0 {
+                    let is_shift = (GetKeyState(0x10) as i32 & 0x8000) != 0;
+                    let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0;
                     let mask = StrokeRasterizer::rasterize_magic_wand(
                         &app.state.document,
                         canvas_pos.x as u32,
@@ -476,8 +479,25 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.state.wand_contiguous,
                         app.state.wand_sample_all_layers,
                     );
-                    app.state.selection = Some(mask);
-                    app.state.set_status("Magic Wand selection active");
+                    if is_shift {
+                        if let Some(existing) = &mut app.state.selection {
+                            existing.union(&mask);
+                        } else if mask.has_selection() {
+                            app.state.selection = Some(mask);
+                        }
+                        app.state.set_status("Added to selection (Magic Wand)");
+                    } else if is_alt {
+                        if let Some(existing) = &mut app.state.selection {
+                            existing.subtract(&mask);
+                            if !existing.has_selection() {
+                                app.state.selection = None;
+                            }
+                        }
+                        app.state.set_status("Subtracted from selection (Magic Wand)");
+                    } else {
+                        app.state.selection = Some(mask);
+                        app.state.set_status("Magic Wand selection active");
+                    }
                 }
             } else if tool == ToolType::Fill {
                 if let Some(layer) = app.state.document.active_layer() {
@@ -744,7 +764,17 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
         }
         WM_MOUSEWHEEL => {
             let delta = ((wparam >> 16) & 0xFFFF) as i16 as f32 / 120.0;
-            app.state.zoom = (app.state.zoom * (1.0 + delta * 0.1)).clamp(0.05, 8.0);
+            let mut pt = POINT {
+                x: (lparam as u32 & 0xFFFF) as i16 as i32,
+                y: ((lparam as u32 >> 16) & 0xFFFF) as i16 as i32,
+            };
+            ScreenToClient(hwnd, &mut pt);
+            let screen_pos = Vec2::new(pt.x as f32, pt.y as f32);
+            app.mouse_pos = egui::pos2(screen_pos.x, screen_pos.y);
+
+            if !app.is_over_ui(screen_pos) {
+                app.state.zoom = (app.state.zoom * (1.0 + delta * 0.1)).clamp(0.05, 8.0);
+            }
             app.events.push(egui::Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Point,
                 delta: egui::vec2(0.0, delta * 30.0),
