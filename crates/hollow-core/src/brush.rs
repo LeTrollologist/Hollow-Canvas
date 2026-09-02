@@ -202,6 +202,8 @@ pub struct BrushSettings {
     // ── Wet Edge Watercolor Effect ──
     pub wet_edge_strength: f32,        // 0.0 ..= 1.0 (dark pigment pooling at stroke boundaries)
     pub wet_edge_fringe_width: f32,    // 0.05 ..= 0.5 (fringe band thickness ratio)
+    // ── Global Stroke Stabilization (S-Levels: 0..=7) ──
+    pub stabilization_level: u32,       // 0 = Off (Realtime Raw), 1..=7 (SAI style lazy rope / tremor filter)
 }
 
 impl Default for BrushSettings {
@@ -233,6 +235,7 @@ impl Default for BrushSettings {
             calligraphy_weight: 0.0,
             wet_edge_strength: 0.0,
             wet_edge_fringe_width: 0.2,
+            stabilization_level: 2,
         }
     }
 }
@@ -271,6 +274,64 @@ impl BrushSettings {
         let dot = (dir.x * chisel_vec.x + dir.y * chisel_vec.y).abs();
         let min_factor = 1.0 - self.calligraphy_weight * 0.85;
         (min_factor + (1.0 - dot) * (1.0 - min_factor)).clamp(0.1, 1.0)
+    }
+
+    pub fn stabilization_label(&self) -> &'static str {
+        match self.stabilization_level {
+            0 => "S-0 (Off / Raw)",
+            1 => "S-1 (Responsive)",
+            2 => "S-2 (Studio Default)",
+            3 => "S-3 (Smooth Inking)",
+            4 => "S-4 (Fluid Curves)",
+            5 => "S-5 (Heavy Streamline)",
+            6 => "S-6 (Ultra Precision)",
+            7 => "S-7 (Max Lazy Rope)",
+            _ => "S-Custom",
+        }
+    }
+
+    pub fn stabilization_description(&self, level: u32) -> &'static str {
+        match level {
+            0 => "S-0: Direct raw input without smoothing delay",
+            1 => "S-1: Light filtering for fast responsive sketching",
+            2 => "S-2: Balanced studio stabilization for general illustration",
+            3 => "S-3: Smooth inking stabilizer for clean lineart",
+            4 => "S-4: Enhanced curve stabilization for fluid contouring",
+            5 => "S-5: Heavy stabilizer filtering out minor hand tremors",
+            6 => "S-6: High-precision lazy rope for long confident strokes",
+            7 => "S-7: Maximum lazy rope delay for ultra-steady lineart and lettering",
+            _ => "Custom stabilization level",
+        }
+    }
+
+    /// Weight factor (0.0 ..= 0.94) controlling the lazy rope pull lag
+    pub fn stabilization_weight(&self) -> f32 {
+        match self.stabilization_level {
+            0 => 0.0,
+            1 => 0.35,
+            2 => 0.52,
+            3 => 0.68,
+            4 => 0.78,
+            5 => 0.85,
+            6 => 0.90,
+            7 => 0.94,
+            _ => (self.stabilization_level as f32 * 0.12).clamp(0.0, 0.96),
+        }
+    }
+
+    /// Minimum cursor distance threshold (deadzone) in canvas pixels to eliminate tremor micro-jitter
+    pub fn stabilization_deadzone(&self) -> f32 {
+        match self.stabilization_level {
+            0 => 0.0,
+            1 => 0.4,
+            2 => 0.8,
+            3 => 1.2,
+            4 => 1.8,
+            5 => 2.5,
+            6 => 3.5,
+            7 => 5.0,
+            _ => (self.stabilization_level as f32 * 0.6).clamp(0.0, 10.0),
+        }
     }
 }
 

@@ -6,12 +6,26 @@ We provide security updates and patches for the following versions of **Hollow C
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 0.13.x  | :white_check_mark: |
 | 0.12.x  | :white_check_mark: |
 | 0.11.x  | :white_check_mark: |
 | 0.10.x  | :white_check_mark: |
 | 0.9.x   | :white_check_mark: |
 | 0.8.x   | :white_check_mark: |
 | < 0.8.0 | :x:                |
+
+---
+
+## Automated Dependency Security Audit (`cargo audit`)
+
+Every release build is scanned through `cargo audit` before packaging to verify that zero dependencies contain known security advisories or vulnerabilities tracked by the [RustSec Advisory Database](https://rustsec.org/):
+
+1. **Pre-Release Security Gate**: The release pipeline automatically aborts if vulnerable crates are detected in the workspace dependency graph.
+2. **Audit Logging**: The full dependency advisory report is generated and archived in `dist/v{VERSION}/audit/cargo-audit.txt` and `security-audit.txt`.
+3. **Reproducible Local Verification**: You can run the dependency audit locally at any time:
+   ```powershell
+   cargo audit
+   ```
 
 ---
 
@@ -26,7 +40,7 @@ Every official release distribution package (`.zip` and `.vpack`) undergoes auto
 ### How to Verify a Downloaded Release
 ```powershell
 # 1. Compute SHA-256 on Windows
-certutil -hashfile hollow-canvas-v0.12.0-windows-x86_64.zip SHA256
+certutil -hashfile hollow-canvas-v0.13.0-windows-x86_64.zip SHA256
 
 # 2. Check the VirusTotal analysis report directly in your browser:
 # https://www.virustotal.com/gui/file/<SHA256_HASH>

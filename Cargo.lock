@@ -319,7 +319,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-app"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "egui",
  "env_logger",
@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-core"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "glam",
  "image",
@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-io"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "flate2",
  "hollow-core",
@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-render"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "egui",
  "glam",
@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-ui"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "egui",
  "glam",

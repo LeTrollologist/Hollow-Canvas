@@ -653,4 +653,39 @@ mod tests {
         assert_eq!(comp[2], 0);
         assert_eq!(comp[3], 255);
     }
+
+    #[test]
+    fn test_stroke_stabilization_s_levels() {
+        let mut brush = crate::brush::BrushSettings::default();
+        assert_eq!(brush.stabilization_level, 2);
+        assert_eq!(brush.stabilization_label(), "S-2 (Studio Default)");
+
+        // Test all S-levels 0..=7
+        let mut prev_weight = -1.0;
+        let mut prev_deadzone = -1.0;
+        for lvl in 0..=7 {
+            brush.stabilization_level = lvl;
+            let label = brush.stabilization_label();
+            let desc = brush.stabilization_description(lvl);
+            let weight = brush.stabilization_weight();
+            let deadzone = brush.stabilization_deadzone();
+
+            assert!(!label.is_empty());
+            assert!(!desc.is_empty());
+            assert!(weight >= prev_weight);
+            assert!(deadzone >= prev_deadzone);
+            prev_weight = weight;
+            prev_deadzone = deadzone;
+        }
+
+        // Test S-0 (raw realtime)
+        brush.stabilization_level = 0;
+        assert_eq!(brush.stabilization_weight(), 0.0);
+        assert_eq!(brush.stabilization_deadzone(), 0.0);
+
+        // Test S-7 (max lazy rope)
+        brush.stabilization_level = 7;
+        assert_eq!(brush.stabilization_weight(), 0.94);
+        assert_eq!(brush.stabilization_deadzone(), 5.0);
+    }
 }

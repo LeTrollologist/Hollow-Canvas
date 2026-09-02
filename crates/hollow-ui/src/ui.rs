@@ -96,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.12.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.13.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -395,6 +395,16 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         }
 
                         ui.separator();
+
+                        // S-Level Stabilizer quick chip
+                        let s_lvl_txt = format!("🎯 S-{}", state.brush.stabilization_level);
+                        let s_btn = egui::Button::new(RichText::new(s_lvl_txt).size(10.0).strong().color(accent_c32))
+                            .fill(if state.brush.stabilization_level > 0 { accent_dim_c32 } else { Color32::from_rgb(18, 24, 40) })
+                            .stroke(egui::Stroke::new(1.0_f32, if state.brush.stabilization_level > 0 { accent_c32 } else { Color32::from_rgb(45, 55, 80) }));
+                        if ui.add(s_btn).on_hover_text(format!("{}: Click to cycle (S-0..S-7)", state.brush.stabilization_label())).clicked() {
+                            state.brush.stabilization_level = (state.brush.stabilization_level + 1) % 8;
+                            state.set_status(format!("Stabilizer: {}", state.brush.stabilization_label()));
+                        }
 
                         // Centered Active Tool Badge in remaining space
                         let tool_label = format!("{} · {}px", state.brush.tool.label(), state.brush.size as u32);
@@ -842,6 +852,31 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.add(egui::Slider::new(&mut state.brush.smoothing, 0.0..=0.95).text("Smoothing"));
                     ui.add(egui::Slider::new(&mut state.brush.hardness, 0.05..=1.0).text("Hardness"));
                     ui.add(egui::Slider::new(&mut state.brush.spacing, 0.05..=1.0).text("Spacing"));
+
+                    // ── GLOBAL STROKE STABILIZATION (S-LEVELS) ──
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("🎯 STABILIZATION").size(9.5).strong().color(accent_c32));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(RichText::new(state.brush.stabilization_label()).size(9.0).color(Color32::from_rgb(170, 190, 230)));
+                        });
+                    });
+                    ui.add(egui::Slider::new(&mut state.brush.stabilization_level, 0..=7).text("S-Level"));
+
+                    ui.horizontal_wrapped(|ui| {
+                        let s_presets = [(0, "S-0"), (1, "S-1"), (2, "S-2"), (3, "S-3"), (4, "S-4"), (5, "S-5"), (6, "S-6"), (7, "S-7")];
+                        for (lvl, lbl) in s_presets {
+                            let is_sel = state.brush.stabilization_level == lvl;
+                            let btn = egui::Button::new(RichText::new(lbl).size(9.0))
+                                .fill(if is_sel { accent_c32.linear_multiply(0.35) } else { Color32::from_rgb(18, 24, 40) })
+                                .stroke(egui::Stroke::new(1.0_f32, if is_sel { accent_c32 } else { Color32::from_rgb(45, 55, 80) }))
+                                .min_size(Vec2::new(21.0, 18.0));
+                            if ui.add(btn).on_hover_text(state.brush.stabilization_description(lvl)).clicked() {
+                                state.brush.stabilization_level = lvl;
+                                state.set_status(format!("Stabilizer: {}", state.brush.stabilization_label()));
+                            }
+                        }
+                    });
 
                     ui.add_space(4.0);
                     ui.checkbox(&mut state.brush.velocity_dynamics, "⚡ Velocity Taper");
@@ -2286,7 +2321,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.12.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.13.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);
@@ -2294,7 +2329,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.add_space(6.0);
 
                 ui.label(RichText::new("Features & Guarantees:").size(10.0).strong().color(Color32::from_rgb(205, 215, 240)));
-                ui.label(RichText::new("• ⚡ Catmull-Rom Spline Drawing Engine with 0-allocation compositing\n• 🪄 Magic Wand, Gradients, Shapes, Multi-Axis Symmetry\n• 🎨 Full Adjustments & Artistic Filter FX Engine (HSL, Blur, Vignette, Grain)\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Universal VPack & Zip portable distribution").size(10.0).color(Color32::from_rgb(155, 165, 195)));
+                ui.label(RichText::new("• 🎯 Granular Stroke Stabilization Engine (S-0 .. S-7 Lazy Rope & Tremor Filtering)\n• ⚡ Catmull-Rom Spline Drawing Engine with 0-allocation compositing\n• 🪄 Magic Wand, Gradients, Shapes, Multi-Axis Symmetry\n• 🎨 Full Adjustments & Artistic Filter FX Suite (HSL, Blur, Vignette, Grain)\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Universal VPack & Zip portable distribution").size(10.0).color(Color32::from_rgb(155, 165, 195)));
 
                 ui.add_space(8.0);
                 ui.separator();
