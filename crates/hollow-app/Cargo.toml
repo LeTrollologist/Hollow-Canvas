@@ -1,6 +1,6 @@
 [package]
 name = "hollow-app"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 description = "Pure native Windows graphics studio application executable"
 

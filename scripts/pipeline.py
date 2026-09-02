@@ -341,11 +341,18 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
         else "🟢 Verified Clean / Independent Permalinks Available"
     )
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Graphics Studio & Engine Integrity Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Studio Release (Alpha)
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
-### ✨ What's New in {version} (Engine & Logic Integrity Overhaul)
+### ✨ What's New in {version}
+* **🪄 Magic Wand Multiple Selections (`Shift` & `Alt`)**:
+  - `Shift + Click` with Magic Wand now unions / adds new regions into the active selection mask.
+  - `Alt + Click` subtracts matching regions from the current selection.
+  - Supports continuous multi-region selections across layers.
+* **🖱️ Sidebar & Panel Mouse Wheel Isolation**:
+  - Scrolling the mouse wheel over the Left Tools Dock, Right Layers/Color Dock, Timeline, or dialogs now smoothly scrolls the panels without zooming the canvas.
+  - Canvas zooming is preserved exclusively when hovering over the drawing viewport.
 * **🛠️ Graphics & Core Engine Logic Audit**:
   - **Animation Frame Duplication**: Fixed `active_layer_id` mapping when duplicating frames.
   - **Layer Offset & Opacity Merging**: Full support for layer translations $(offset_x, offset_y)$ and baked opacities in `merge_layer_down`.
