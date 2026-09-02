@@ -101,14 +101,18 @@ impl BlendMode {
             Self::Darken => cb.min(cs),
             Self::Lighten => cb.max(cs),
             Self::ColorDodge => {
-                if cs >= 1.0 {
+                if cb <= 0.0 {
+                    0.0
+                } else if cs >= 1.0 {
                     1.0
                 } else {
                     (cb / (1.0 - cs)).min(1.0)
                 }
             }
             Self::ColorBurn => {
-                if cs <= 0.0 {
+                if cb >= 1.0 {
+                    1.0
+                } else if cs <= 0.0 {
                     0.0
                 } else {
                     1.0 - ((1.0 - cb) / cs).min(1.0)
@@ -165,7 +169,26 @@ impl BlendMode {
                 let lum_dst = 0.299 * dr + 0.587 * dg + 0.114 * db;
                 let lum_src = 0.299 * sr + 0.587 * sg + 0.114 * sb;
                 let diff = lum_src - lum_dst;
-                ((dr + diff).clamp(0.0, 1.0), (dg + diff).clamp(0.0, 1.0), (db + diff).clamp(0.0, 1.0))
+                let mut cr = dr + diff;
+                let mut cg = dg + diff;
+                let mut cb_val = db + diff;
+                // W3C ClipColor: proportionally scale towards luma to stay in gamut
+                let lum = 0.299 * cr + 0.587 * cg + 0.114 * cb_val;
+                let cmin = cr.min(cg).min(cb_val);
+                let cmax = cr.max(cg).max(cb_val);
+                if cmin < 0.0 && (lum - cmin).abs() > 1e-6 {
+                    let s = lum / (lum - cmin);
+                    cr = lum + (cr - lum) * s;
+                    cg = lum + (cg - lum) * s;
+                    cb_val = lum + (cb_val - lum) * s;
+                }
+                if cmax > 1.0 && (cmax - lum).abs() > 1e-6 {
+                    let s = (1.0 - lum) / (cmax - lum);
+                    cr = lum + (cr - lum) * s;
+                    cg = lum + (cg - lum) * s;
+                    cb_val = lum + (cb_val - lum) * s;
+                }
+                (cr.clamp(0.0, 1.0), cg.clamp(0.0, 1.0), cb_val.clamp(0.0, 1.0))
             }
             _ => (
                 self.blend_channel(dr, sr).clamp(0.0, 1.0),

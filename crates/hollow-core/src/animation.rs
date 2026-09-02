@@ -1,4 +1,4 @@
-﻿use crate::document::Document;
+use crate::document::Document;
 use crate::layer::{Layer, LayerId};
 use serde::{Deserialize, Serialize};
 
@@ -45,16 +45,21 @@ impl AnimationFrame {
 
     pub fn duplicate(&self, new_id: u64) -> Self {
         let mut cloned_layers = Vec::with_capacity(self.layers.len());
+        let mut new_active_id = 1 as LayerId;
         for (i, layer) in self.layers.iter().enumerate() {
             let mut dup = layer.clone();
-            dup.id = (i + 1) as LayerId;
+            let new_layer_id = (i + 1) as LayerId;
+            if layer.id == self.active_layer_id {
+                new_active_id = new_layer_id;
+            }
+            dup.id = new_layer_id;
             cloned_layers.push(dup);
         }
         Self {
             id: new_id,
             name: format!("{} Copy", self.name),
             layers: cloned_layers,
-            active_layer_id: self.active_layer_id,
+            active_layer_id: new_active_id,
             next_layer_id: self.next_layer_id,
             duration_ms: self.duration_ms,
         }

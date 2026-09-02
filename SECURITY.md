@@ -6,12 +6,11 @@ We provide security updates and patches for the following versions of **Hollow C
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 0.11.x  | :white_check_mark: |
+| 0.10.x  | :white_check_mark: |
+| 0.9.x   | :white_check_mark: |
 | 0.8.x   | :white_check_mark: |
-| 0.7.x   | :white_check_mark: |
-| 0.6.x   | :white_check_mark: |
-| 0.5.x   | :white_check_mark: |
-| 0.4.x   | :white_check_mark: |
-| < 0.4.0 | :x:                |
+| < 0.8.0 | :x:                |
 
 ---
 
@@ -26,7 +25,7 @@ Every official release distribution package (`.zip` and `.vpack`) undergoes auto
 ### How to Verify a Downloaded Release
 ```powershell
 # 1. Compute SHA-256 on Windows
-certutil -hashfile hollow-canvas-v0.10.0-windows-x86_64.zip SHA256
+certutil -hashfile hollow-canvas-v0.11.0-windows-x86_64.zip SHA256
 
 # 2. Check the VirusTotal analysis report directly in your browser:
 # https://www.virustotal.com/gui/file/<SHA256_HASH>

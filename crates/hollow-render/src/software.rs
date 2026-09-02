@@ -570,8 +570,8 @@ impl SoftwareRenderer {
                                     let u = (w0 * v0.uv.x + w1 * v1.uv.x + w2 * v2.uv.x).clamp(0.0, 1.0);
                                     let v = (w0 * v0.uv.y + w1 * v1.uv.y + w2 * v2.uv.y).clamp(0.0, 1.0);
 
-                                    let tx = ((u * (*tw as f32 - 1.0)).round() as usize).min(*tw as usize - 1);
-                                    let ty = ((v * (*th as f32 - 1.0)).round() as usize).min(*th as usize - 1);
+                                    let tx = ((u * ((*tw).max(1) as f32 - 1.0)).round() as usize).min((*tw as usize).saturating_sub(1));
+                                    let ty = ((v * ((*th).max(1) as f32 - 1.0)).round() as usize).min((*th as usize).saturating_sub(1));
                                     let tidx = (ty * *tw as usize + tx) * 4;
 
                                     if tidx + 3 < tbytes.len() {

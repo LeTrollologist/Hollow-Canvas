@@ -341,26 +341,33 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
         else "🟢 Verified Clean / Independent Permalinks Available"
     )
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Frame Animation & Onion Skinning Release
+    release_body = f"""## 🎨 Hollow Canvas {version} · Graphics Studio & Engine Integrity Release
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
-### ✨ What's New in {version} (🌟 Track 5: Frame Animation & Onion Skinning)
+### ✨ What's New in {version} (Engine & Logic Integrity Overhaul)
+* **🛠️ Graphics & Core Engine Logic Audit**:
+  - **Animation Frame Duplication**: Fixed `active_layer_id` mapping when duplicating frames.
+  - **Layer Offset & Opacity Merging**: Full support for layer translations $(offset_x, offset_y)$ and baked opacities in `merge_layer_down`.
+  - **W3C Compositing Compliance**: Implemented boundary edge checks for `ColorDodge` and `ColorBurn`, plus W3C `ClipColor` gamut preservation for `Luminosity`.
+  - **Clipping Mask Group Visibility**: Properly handles base layer visibility and opacity hierarchy.
+  - **Alpha Premultiplication in Filters**: Gaussian blur now uses premultiplied alpha convolution to eliminate dark fringing on transparent edges.
+  - **Subpixel Bilinear Sampling**: Fixed boundary edge conditions in affine transformations and bilinear sampling.
+  - **Spline & Freehand Stroke Interpolation**: Corrected Catmull-Rom spline control points to avoid duplicate segment rendering.
+  - **Project Archive (.hcv v2) Hardening**: Added decompressed payload byte validation to prevent corrupted layer loading.
 * **🎞️ Interactive Flipbook Timeline Strip**:
   - Full frame-by-frame animation engine (`AnimationTimeline` and `AnimationFrame`).
   - Add blank frames, duplicate active frame, delete frames, reorder frames, and scrub playback.
-  - Real-time animation playback controller: Play/Pause (`Space`), loop toggle, and configurable FPS (1..=60 fps, e.g. 12fps/24fps).
+  - Real-time animation playback controller: Play/Pause (`Space`), loop toggle, and configurable FPS (1..=60 fps).
   - Bottom **Timeline Strip** dock with visual frame number chips, active frame highlight, and playback controls.
   - Shortcut keys: `[` to step previous frame, `]` to step next frame.
 * **🧅 Multi-Frame Ghost Onion Skinning (`O`)**:
   - Live ghosted silhouettes rendered directly in the viewport for natural in-betweening.
   - **Previous Frames**: Tinted red/orange underlay with configurable frame depth (1–5 frames).
   - **Next Frames**: Tinted green/cyan overlay with configurable frame depth (1–5 frames).
-  - Configurable silhouette opacity slider and 1-click toggle (`O`).
 * **🎬 Direct Animated Export (GIF & PNG Sequence)**:
   - Direct export to animated `.gif` with loop count and frame delay encoding via `image::codecs::gif::GifEncoder`.
   - Direct export to numbered PNG frame sequence.
-  - Dedicated "Export Animation..." modal dialog.
 * **⚡ Speed & Velocity-Sensitive Pressure Simulation**: Faster strokes automatically taper into fine, sharp tips.
 * **✒️ Calligraphy Chisel & Ribbon Nib Dynamics**: Configurable chisel nib angle (0°..=180°) and ribbon weight.
 * **≋ Wet Edge Watercolor Pigment Pooling**: Realistic pigment concentration simulation at stroke boundaries.

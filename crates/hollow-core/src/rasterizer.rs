@@ -18,13 +18,16 @@ pub fn sample_bilinear_rgba(pixels: &[u8], width: u32, height: u32, x: f32, y: f
     if width == 0 || height == 0 || pixels.is_empty() {
         return [0, 0, 0, 0];
     }
-    let x0 = (x.floor() as i32).clamp(0, width as i32 - 1) as u32;
-    let y0 = (y.floor() as i32).clamp(0, height as i32 - 1) as u32;
+    // Clamp coordinates before computing floor/frac to avoid edge artifacts
+    let cx = x.clamp(0.0, (width as f32) - 1.0);
+    let cy = y.clamp(0.0, (height as f32) - 1.0);
+    let x0 = cx.floor() as u32;
+    let y0 = cy.floor() as u32;
     let x1 = (x0 + 1).min(width - 1);
     let y1 = (y0 + 1).min(height - 1);
 
-    let fx = (x - x.floor()).clamp(0.0, 1.0);
-    let fy = (y - y.floor()).clamp(0.0, 1.0);
+    let fx = cx - cx.floor();
+    let fy = cy - cy.floor();
 
     let idx00 = ((y0 * width + x0) * 4) as usize;
     let idx10 = ((y0 * width + x1) * 4) as usize;
@@ -92,10 +95,13 @@ impl StrokeRasterizer {
                     let uix = ix as u32;
                     let uiy = iy as u32;
 
+                    let mut mask_factor = 1.0_f32;
                     if let Some(mask) = active_mask {
-                        if mask.get_value(uix, uiy) < 8 {
+                        let mv = mask.get_value(uix, uiy);
+                        if mv < 8 {
                             continue;
                         }
+                        mask_factor = mv as f32 / 255.0;
                     }
 
                     let idx = ((uiy * doc_w + uix) * 4) as usize;
@@ -104,7 +110,7 @@ impl StrokeRasterizer {
                         continue;
                     }
 
-                    let p_alpha = (0.25 + 0.75 * hash21(i as u32, 3, seed)) * opacity * 0.45;
+                    let p_alpha = (0.25 + 0.75 * hash21(i as u32, 3, seed)) * opacity * 0.45 * mask_factor;
                     let src = color.to_rgba8();
                     let mut blended = blend_mode.composite_pixel(dst, src, p_alpha);
                     if alpha_locked {

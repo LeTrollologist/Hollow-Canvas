@@ -200,6 +200,11 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
         decoder.read_to_end(&mut pixels)?;
 
+        let expected_len = (width * height * 4) as usize;
+        if pixels.len() != expected_len {
+            return Err(ProjectError::CorruptData);
+        }
+
         let mut layer = Layer::from_pixels(id, name, width, height, pixels);
         layer.visible = visible;
         layer.locked = locked;

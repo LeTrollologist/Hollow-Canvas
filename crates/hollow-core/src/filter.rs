@@ -392,7 +392,19 @@ pub fn filter_gaussian_blur(
 
     let w = width as i32;
     let h = height as i32;
-    let mut temp = pixels.to_vec();
+    // Convert to premultiplied alpha for correct blur behavior
+    let total_px = (w * h) as usize;
+    let mut premul = vec![0.0_f32; total_px * 4];
+    for i in 0..total_px {
+        let idx = i * 4;
+        let a = pixels[idx + 3] as f32 / 255.0;
+        premul[idx] = pixels[idx] as f32 * a;
+        premul[idx + 1] = pixels[idx + 1] as f32 * a;
+        premul[idx + 2] = pixels[idx + 2] as f32 * a;
+        premul[idx + 3] = pixels[idx + 3] as f32;
+    }
+
+    let mut temp_f = vec![0.0_f32; total_px * 4];
 
     // Horizontal Pass
     for y in 0..h {
@@ -408,21 +420,21 @@ pub fn filter_gaussian_blur(
                 let idx = row_start + (sample_x * 4) as usize;
                 let weight = kernel[k_idx];
 
-                acc_r += pixels[idx] as f32 * weight;
-                acc_g += pixels[idx + 1] as f32 * weight;
-                acc_b += pixels[idx + 2] as f32 * weight;
-                acc_a += pixels[idx + 3] as f32 * weight;
+                acc_r += premul[idx] * weight;
+                acc_g += premul[idx + 1] * weight;
+                acc_b += premul[idx + 2] * weight;
+                acc_a += premul[idx + 3] * weight;
             }
 
             let dst_idx = row_start + (x * 4) as usize;
-            temp[dst_idx] = acc_r.clamp(0.0, 255.0).round() as u8;
-            temp[dst_idx + 1] = acc_g.clamp(0.0, 255.0).round() as u8;
-            temp[dst_idx + 2] = acc_b.clamp(0.0, 255.0).round() as u8;
-            temp[dst_idx + 3] = acc_a.clamp(0.0, 255.0).round() as u8;
+            temp_f[dst_idx] = acc_r;
+            temp_f[dst_idx + 1] = acc_g;
+            temp_f[dst_idx + 2] = acc_b;
+            temp_f[dst_idx + 3] = acc_a;
         }
     }
 
-    // Vertical Pass
+    // Vertical Pass + unpremultiply
     for x in 0..w {
         for y in 0..h {
             if let Some(mask) = selection {
@@ -441,17 +453,26 @@ pub fn filter_gaussian_blur(
                 let idx = ((sample_y * w + x) * 4) as usize;
                 let weight = kernel[k_idx];
 
-                acc_r += temp[idx] as f32 * weight;
-                acc_g += temp[idx + 1] as f32 * weight;
-                acc_b += temp[idx + 2] as f32 * weight;
-                acc_a += temp[idx + 3] as f32 * weight;
+                acc_r += temp_f[idx] * weight;
+                acc_g += temp_f[idx + 1] * weight;
+                acc_b += temp_f[idx + 2] * weight;
+                acc_a += temp_f[idx + 3] * weight;
             }
 
+            // Unpremultiply alpha
+            let out_a = acc_a.clamp(0.0, 255.0);
             let dst_idx = ((y * w + x) * 4) as usize;
-            pixels[dst_idx] = acc_r.clamp(0.0, 255.0).round() as u8;
-            pixels[dst_idx + 1] = acc_g.clamp(0.0, 255.0).round() as u8;
-            pixels[dst_idx + 2] = acc_b.clamp(0.0, 255.0).round() as u8;
-            pixels[dst_idx + 3] = acc_a.clamp(0.0, 255.0).round() as u8;
+            if out_a > 0.5 {
+                let inv_a = 255.0 / out_a;
+                pixels[dst_idx] = (acc_r * inv_a).clamp(0.0, 255.0).round() as u8;
+                pixels[dst_idx + 1] = (acc_g * inv_a).clamp(0.0, 255.0).round() as u8;
+                pixels[dst_idx + 2] = (acc_b * inv_a).clamp(0.0, 255.0).round() as u8;
+            } else {
+                pixels[dst_idx] = 0;
+                pixels[dst_idx + 1] = 0;
+                pixels[dst_idx + 2] = 0;
+            }
+            pixels[dst_idx + 3] = out_a.round() as u8;
         }
     }
 }
@@ -693,14 +714,14 @@ pub fn filter_chromatic_aberration(
 
             let idx = ((y * w + x) * 4) as usize;
 
-            // Red shifted in +direction
-            let rx = (x + dx).clamp(0, w - 1);
-            let ry = (y + dy).clamp(0, h - 1);
+            // Red shifted in +direction (sample from -offset to move channel positively)
+            let rx = (x - dx).clamp(0, w - 1);
+            let ry = (y - dy).clamp(0, h - 1);
             let r_idx = ((ry * w + rx) * 4) as usize;
 
-            // Blue shifted in -direction
-            let bx = (x - dx).clamp(0, w - 1);
-            let by = (y - dy).clamp(0, h - 1);
+            // Blue shifted in -direction (sample from +offset to move channel negatively)
+            let bx = (x + dx).clamp(0, w - 1);
+            let by = (y + dy).clamp(0, h - 1);
             let b_idx = ((by * w + bx) * 4) as usize;
 
             pixels[idx] = src[r_idx];

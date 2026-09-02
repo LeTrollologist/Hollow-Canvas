@@ -77,8 +77,8 @@ impl AffineTransform2D {
         );
 
         // 3. Inverse Scale
-        let sx = if self.scale.x.abs() > 1e-6 { self.scale.x } else { 1e-6 };
-        let sy = if self.scale.y.abs() > 1e-6 { self.scale.y } else { 1e-6 };
+        let sx = if self.scale.x.abs() > 1e-6 { self.scale.x } else if self.scale.x < 0.0 { -1e-6 } else { 1e-6 };
+        let sy = if self.scale.y.abs() > 1e-6 { self.scale.y } else if self.scale.y < 0.0 { -1e-6 } else { 1e-6 };
         rot_p.x /= sx;
         rot_p.y /= sy;
 
@@ -98,7 +98,7 @@ impl AffineTransform2D {
 /// Bilinear sub-pixel sampling helper
 #[inline]
 pub fn sample_bilinear(src: &[u8], w: u32, h: u32, x: f32, y: f32) -> (u8, u8, u8, u8) {
-    if x < 0.0 || y < 0.0 || x >= w as f32 - 1.0 || y >= h as f32 - 1.0 {
+    if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 {
         let ix = x.round() as isize;
         let iy = y.round() as isize;
         if ix >= 0 && ix < w as isize && iy >= 0 && iy < h as isize {

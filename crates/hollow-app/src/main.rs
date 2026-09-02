@@ -286,13 +286,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
         WM_MOUSEMOVE => {
             let mut rc: RECT = std::mem::zeroed();
             GetClientRect(hwnd, &mut rc);
-            let width = (rc.right - rc.left).max(1) as f32;
-            let height = (rc.bottom - rc.top).max(1) as f32;
+            let _width = (rc.right - rc.left).max(1) as f32;
+            let _height = (rc.bottom - rc.top).max(1) as f32;
 
             let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
             let raw_y = ((lparam as u32 >> 16) & 0xFFFF) as i16 as f32;
-            let x = raw_x.clamp(0.0, width);
-            let y = raw_y.clamp(0.0, height);
+            let x = raw_x;
+            let y = raw_y;
 
             app.mouse_pos = egui::pos2(x, y);
             app.events.push(egui::Event::PointerMoved(app.mouse_pos));
@@ -392,8 +392,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         StrokeRasterizer::paint_spline(
                             &mut app.state.document,
                             app.stroke_points[0],
-                            app.stroke_points[0],
                             app.stroke_points[1],
+                            app.stroke_points[2],
                             app.stroke_points[2],
                             &app.state.brush,
                             &app.state.symmetry,

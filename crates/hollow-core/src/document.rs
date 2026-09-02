@@ -1,3 +1,4 @@
+use crate::blend::BlendMode;
 use crate::color::{Color, ThemeMode};
 use crate::layer::{Layer, LayerId};
 use serde::{Deserialize, Serialize};
@@ -113,16 +114,44 @@ impl Document {
         let upper = self.layers.remove(active_idx);
         let lower = &mut self.layers[active_idx - 1];
 
-        // Composite upper into lower
+        // Composite upper into lower, respecting offsets
         for y in 0..self.height {
             for x in 0..self.width {
-                let lower_px = lower.get_pixel(x, y).unwrap_or([0, 0, 0, 0]);
-                let upper_px = upper.get_pixel(x, y).unwrap_or([0, 0, 0, 0]);
-                let blended = upper.blend_mode.composite_pixel(lower_px, upper_px, upper.opacity);
-                lower.set_pixel(x, y, blended);
+                // Sample lower layer at its local coords
+                let lx = x as i32 - lower.offset_x;
+                let ly = y as i32 - lower.offset_y;
+                let lower_px = if lx >= 0 && lx < self.width as i32 && ly >= 0 && ly < self.height as i32 {
+                    lower.get_pixel(lx as u32, ly as u32).unwrap_or([0, 0, 0, 0])
+                } else {
+                    [0, 0, 0, 0]
+                };
+
+                // Pre-multiply lower layer's opacity into its pixels
+                let lower_baked = BlendMode::Normal.composite_pixel([0, 0, 0, 0], lower_px, lower.opacity);
+
+                // Sample upper layer at its local coords
+                let ux = x as i32 - upper.offset_x;
+                let uy = y as i32 - upper.offset_y;
+                let upper_px = if ux >= 0 && ux < self.width as i32 && uy >= 0 && uy < self.height as i32 {
+                    upper.get_pixel(ux as u32, uy as u32).unwrap_or([0, 0, 0, 0])
+                } else {
+                    [0, 0, 0, 0]
+                };
+
+                let blended = upper.blend_mode.composite_pixel(lower_baked, upper_px, upper.opacity);
+
+                // Store result at canvas coordinate in lower layer
+                // We need to write at the lower layer's local coordinate
+                if lx >= 0 && lx < self.width as i32 && ly >= 0 && ly < self.height as i32 {
+                    lower.set_pixel(lx as u32, ly as u32, blended);
+                }
             }
         }
 
+        // Reset lower layer's opacity since we baked it in
+        lower.opacity = 1.0;
+        lower.offset_x = 0;
+        lower.offset_y = 0;
         self.active_layer_id = lower.id;
         true
     }
@@ -325,7 +354,13 @@ impl Document {
             }
 
             let prev_layer = if layer.clipping_mask && layer_idx > 0 {
-                Some(&self.layers[layer_idx - 1])
+                let base = &self.layers[layer_idx - 1];
+                if base.visible {
+                    Some(base)
+                } else {
+                    // Base layer is hidden; skip this clipping layer entirely
+                    continue;
+                }
             } else {
                 None
             };
@@ -357,7 +392,7 @@ impl Document {
                         } else {
                             0.0
                         };
-                        opacity *= base_a;
+                        opacity *= base_a * base.opacity;
                     }
 
                     if opacity <= 0.001 {
