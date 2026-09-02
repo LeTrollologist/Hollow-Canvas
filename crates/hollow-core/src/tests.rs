@@ -685,7 +685,7 @@ mod tests {
 
         // Test S-7 (max lazy rope)
         brush.stabilization_level = 7;
-        assert_eq!(brush.stabilization_weight(), 0.94);
-        assert_eq!(brush.stabilization_deadzone(), 5.0);
+        assert_eq!(brush.stabilization_weight(), 0.88);
+        assert_eq!(brush.stabilization_deadzone(), 1.2);
     }
 }

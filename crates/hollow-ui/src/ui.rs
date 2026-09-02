@@ -96,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.13.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.13.1").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -395,6 +395,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         }
 
                         ui.separator();
+                        ui.add_space(3.0);
 
                         // S-Level Stabilizer quick chip
                         let s_lvl_txt = format!("🎯 S-{}", state.brush.stabilization_level);
@@ -405,6 +406,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             state.brush.stabilization_level = (state.brush.stabilization_level + 1) % 8;
                             state.set_status(format!("Stabilizer: {}", state.brush.stabilization_label()));
                         }
+
+                        ui.add_space(4.0);
 
                         // Centered Active Tool Badge in remaining space
                         let tool_label = format!("{} · {}px", state.brush.tool.label(), state.brush.size as u32);
@@ -2321,7 +2324,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.13.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.13.1 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);

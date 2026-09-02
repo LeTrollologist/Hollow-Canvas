@@ -369,10 +369,19 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
                     // Compute S-Level Global Stroke Stabilization & Lazy Rope Pull
                     let stab_level = app.state.brush.stabilization_level;
-                    let stabilized_target = if stab_level == 0 {
+                    let target_pos = if stab_level == 0 {
                         // S-0: Raw Realtime (No lag)
-                        app.stabilized_pos = Some(canvas_pos);
-                        canvas_pos
+                        let smoothing = app.state.brush.smoothing;
+                        if smoothing > 0.01 {
+                            if let Some(&last_pt) = app.stroke_points.last() {
+                                let w = (1.0 - smoothing * 0.6).clamp(0.2, 1.0);
+                                last_pt.position.lerp(canvas_pos, w)
+                            } else {
+                                canvas_pos
+                            }
+                        } else {
+                            canvas_pos
+                        }
                     } else {
                         let prev = app.stabilized_pos.unwrap_or(canvas_pos);
                         let dist_to_cursor = prev.distance(canvas_pos);
@@ -381,31 +390,66 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             prev
                         } else {
                             let follow_rate = 1.0 - app.state.brush.stabilization_weight();
-                            let next = prev.lerp(canvas_pos, follow_rate.clamp(0.03, 1.0));
+                            let next = prev.lerp(canvas_pos, follow_rate.clamp(0.08, 1.0));
                             app.stabilized_pos = Some(next);
                             next
                         }
                     };
 
-                    // Smooth Catmull-Rom spline curve interpolation with stabilization
-                    let smoothing = app.state.brush.smoothing;
-                    let smoothed_pos = if let Some(&last_pt) = app.stroke_points.last() {
-                        let smooth_weight = (1.0 - smoothing * 0.85).clamp(0.05, 1.0);
-                        last_pt.position.lerp(stabilized_target, smooth_weight)
-                    } else {
-                        stabilized_target
-                    };
+                    let last_drawn_pos = app.stroke_points.last().map(|p| p.position).unwrap_or(target_pos);
+                    let move_dist = last_drawn_pos.distance(target_pos);
 
-                    let should_push = match app.stroke_points.last() {
-                        Some(&last_pt) => last_pt.position.distance(smoothed_pos) >= 0.75,
-                        None => true,
-                    };
+                    // Continuous multi-point interpolation for fast strokes:
+                    // Prevents stopping/pausing during fast mouse moves!
+                    let max_step = 6.0_f32;
+                    let sel = app.state.selection.as_ref();
+                    if move_dist > max_step {
+                        let num_steps = ((move_dist / max_step).ceil() as usize).min(12);
+                        for step_i in 1..=num_steps {
+                            let t = step_i as f32 / num_steps as f32;
+                            let sub_pos = last_drawn_pos.lerp(target_pos, t);
+                            let pt = BrushPoint::new(sub_pos, pressure);
+                            app.stroke_points.push(pt);
+                            let n = app.stroke_points.len();
 
-                    if should_push {
-                        let pt = BrushPoint::new(smoothed_pos, pressure);
+                            if n == 2 {
+                                StrokeRasterizer::paint_segment(
+                                    &mut app.state.document,
+                                    app.stroke_points[0],
+                                    app.stroke_points[1],
+                                    &app.state.brush,
+                                    &app.state.symmetry,
+                                    sel,
+                                );
+                            } else if n == 3 {
+                                StrokeRasterizer::paint_spline(
+                                    &mut app.state.document,
+                                    app.stroke_points[0],
+                                    app.stroke_points[1],
+                                    app.stroke_points[2],
+                                    app.stroke_points[2],
+                                    &app.state.brush,
+                                    &app.state.symmetry,
+                                    sel,
+                                );
+                            } else if n >= 4 {
+                                StrokeRasterizer::paint_spline(
+                                    &mut app.state.document,
+                                    app.stroke_points[n - 4],
+                                    app.stroke_points[n - 3],
+                                    app.stroke_points[n - 2],
+                                    app.stroke_points[n - 1],
+                                    &app.state.brush,
+                                    &app.state.symmetry,
+                                    sel,
+                                );
+                            }
+                        }
+                        app.last_canvas_pos = Some(target_pos);
+                    } else if move_dist >= 0.75 {
+                        let pt = BrushPoint::new(target_pos, pressure);
                         app.stroke_points.push(pt);
                         let n = app.stroke_points.len();
-                        let sel = app.state.selection.as_ref();
 
                         if n == 2 {
                             StrokeRasterizer::paint_segment(
@@ -439,7 +483,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                                 sel,
                             );
                         }
-                        app.last_canvas_pos = Some(smoothed_pos);
+                        app.last_canvas_pos = Some(target_pos);
                     }
                 }
             }
@@ -724,27 +768,30 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     }
                 }
             } else if tool.is_freehand_stroke_tool() {
-                // If stabilization introduced follow lag, smoothly catch up to the release point
-                if app.state.brush.stabilization_level > 0 {
-                    if let Some(&last_pt) = app.stroke_points.last() {
-                        if last_pt.position.distance(canvas_pos) > 1.5 {
-                            let catchup_mid = last_pt.position.lerp(canvas_pos, 0.5);
-                            app.stroke_points.push(BrushPoint::new(catchup_mid, last_pt.pressure));
-                            app.stroke_points.push(BrushPoint::new(canvas_pos, last_pt.pressure * 0.8));
-                            let n = app.stroke_points.len();
-                            let sel = app.state.selection.as_ref();
-                            if n >= 4 {
-                                StrokeRasterizer::paint_spline(
-                                    &mut app.state.document,
-                                    app.stroke_points[n - 4],
-                                    app.stroke_points[n - 3],
-                                    app.stroke_points[n - 2],
-                                    app.stroke_points[n - 1],
-                                    &app.state.brush,
-                                    &app.state.symmetry,
-                                    sel,
-                                );
-                            }
+                // Smoothly finish stroke to release point if trailing
+                let last_drawn_pos = app.stroke_points.last().map(|p| p.position).unwrap_or(canvas_pos);
+                let end_dist = last_drawn_pos.distance(canvas_pos);
+                if end_dist > 1.0 {
+                    let num_steps = ((end_dist / 6.0).ceil() as usize).min(8);
+                    let last_pressure = app.stroke_points.last().map(|p| p.pressure).unwrap_or(1.0);
+                    let sel = app.state.selection.as_ref();
+                    for step_i in 1..=num_steps {
+                        let t = step_i as f32 / num_steps as f32;
+                        let sub_pos = last_drawn_pos.lerp(canvas_pos, t);
+                        let p = last_pressure * (1.0 - t * 0.25); // gentle release taper
+                        app.stroke_points.push(BrushPoint::new(sub_pos, p));
+                        let n = app.stroke_points.len();
+                        if n >= 4 {
+                            StrokeRasterizer::paint_spline(
+                                &mut app.state.document,
+                                app.stroke_points[n - 4],
+                                app.stroke_points[n - 3],
+                                app.stroke_points[n - 2],
+                                app.stroke_points[n - 1],
+                                &app.state.brush,
+                                &app.state.symmetry,
+                                sel,
+                            );
                         }
                     }
                 }

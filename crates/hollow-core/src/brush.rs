@@ -304,18 +304,18 @@ impl BrushSettings {
         }
     }
 
-    /// Weight factor (0.0 ..= 0.94) controlling the lazy rope pull lag
+    /// Weight factor (0.0 ..= 0.90) controlling the lazy rope pull lag
     pub fn stabilization_weight(&self) -> f32 {
         match self.stabilization_level {
             0 => 0.0,
-            1 => 0.35,
-            2 => 0.52,
-            3 => 0.68,
-            4 => 0.78,
-            5 => 0.85,
-            6 => 0.90,
-            7 => 0.94,
-            _ => (self.stabilization_level as f32 * 0.12).clamp(0.0, 0.96),
+            1 => 0.15,
+            2 => 0.28,
+            3 => 0.42,
+            4 => 0.55,
+            5 => 0.68,
+            6 => 0.78,
+            7 => 0.88,
+            _ => (self.stabilization_level as f32 * 0.11).clamp(0.0, 0.92),
         }
     }
 
@@ -323,14 +323,14 @@ impl BrushSettings {
     pub fn stabilization_deadzone(&self) -> f32 {
         match self.stabilization_level {
             0 => 0.0,
-            1 => 0.4,
-            2 => 0.8,
-            3 => 1.2,
-            4 => 1.8,
-            5 => 2.5,
-            6 => 3.5,
-            7 => 5.0,
-            _ => (self.stabilization_level as f32 * 0.6).clamp(0.0, 10.0),
+            1 => 0.0,
+            2 => 0.0,
+            3 => 0.2,
+            4 => 0.4,
+            5 => 0.6,
+            6 => 0.8,
+            7 => 1.2,
+            _ => (self.stabilization_level as f32 * 0.2).clamp(0.0, 3.0),
         }
     }
 }

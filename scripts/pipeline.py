@@ -381,13 +381,18 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
         else "🟢 Verified Clean / Independent Permalinks Available"
     )
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · The "Precision & Trust" Update (Alpha)
+    release_body = f"""## 🎨 Hollow Canvas {version} · Fluid Stabilization & Precision Patch (Alpha)
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
 ### ✨ What's New in {version}
-* **🎯 Granular Stroke Stabilization & S-Levels (`S-0` to `S-7`)**:
-  - **SAI-Style Lazy Rope Dynamics**: Brush tip follows the cursor with weighted lag to eliminate hand tremors and jitter on long, flowing linework.
+* **⚡ Fluid Stroke Sub-Stepping & Responsive S-Levels**:
+  - **Zero-Stall Continuous Interpolation**: Fast mouse and stylus strokes now sub-step along the trajectory at 6px intervals, eliminating hesitation, stuttering, and pauses during quick linework.
+  - **Smooth Natural Pen Lift**: Releasing the mouse button now smoothly glides into the release point with natural micro-tapering instead of abrupt snap jumps.
+  - **Precision Tuning for All S-Levels (`S-0` .. `S-7`)**: Calibrated follow weights and zeroed deadzones on responsive levels (`S-1` and `S-2`) for instantaneous feel.
+  - **Fixed Header Badge Layout**: Cleaned up top-right header spacing between S-Level chip and active tool badge.
+* **🎯 Granular Stroke Stabilization Engine (`S-0` to `S-7`)**:
+  - **SAI-Style Lazy Rope Physics**: Brush tip follows the cursor with weighted lag to eliminate hand tremors and jitter on long, flowing linework.
   - **8 Granular S-Levels**:
     - `S-0 (Off / Raw)`: Direct 1:1 real-time cursor input.
     - `S-1 (Responsive)`: Light filtering for fast responsive sketching.
@@ -397,8 +402,6 @@ A modern, high-performance, local-first digital painting and graphics studio bui
     - `S-5 (Heavy Streamline)`: Heavy smoothing filtering out hand tremors.
     - `S-6 (Ultra Precision)`: High-precision lazy rope for long confident strokes.
     - `S-7 (Max Lazy Rope)`: Maximum follow delay for ultra-steady linework and lettering.
-  - **Tremor Deadzone Thresholds**: Micro-movements below the tremor threshold are filtered out before moving the tip.
-  - **Smooth Release Catch-Up**: Lifting pen or mouse button smoothly interpolates remaining distance to the release point so no line length is clipped.
   - **Live Guide Leash Overlay**: Active visual tracking leash line connects the cursor to the trailing brush tip at high S-levels.
   - **Quick Header Pill & Sidebar Chips**: 1-click header toggle to cycle S-levels, plus dedicated slider and preset chips in the Left Tools Dock.
 * **🔒 Automated Dependency Security Audit (`cargo audit`)**:
