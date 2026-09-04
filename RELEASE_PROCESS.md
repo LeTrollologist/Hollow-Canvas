@@ -40,21 +40,21 @@ $env:VIRUSTOTAL_API_KEY = "your-virustotal-api-key-here"
 
 ### Full Release (Build, Test, Package, VirusTotal & Publish)
 ```bash
-python scripts/pipeline.py v0.15.0
+python scripts/pipeline.py v0.16.0
 ```
 *or via Make:*
 ```bash
-make release TAG=v0.15.0
+make release TAG=v0.16.0
 ```
 
 ### Local Build & Package Only (No Upload)
 ```bash
-python scripts/pipeline.py v0.15.0 --no-publish
+python scripts/pipeline.py v0.16.0 --no-publish
 ```
 
 ### Create as GitHub Draft Release
 ```bash
-python scripts/pipeline.py v0.15.0 --draft
+python scripts/pipeline.py v0.16.0 --draft
 ```
 
 ---

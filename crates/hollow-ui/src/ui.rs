@@ -96,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.15.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.16.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -324,6 +324,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             if ui.checkbox(&mut state.show_navigator, "🧭 Viewport / Navigator Dock").clicked() {
                                 ui.close_menu();
                             }
+                            if ui.checkbox(&mut state.show_perspective_dock, "📐 Perspective Studio (F5)").clicked() {
+                                ui.close_menu();
+                            }
+                            if ui.checkbox(&mut state.perspective.snap_enabled, "⇲ Perspective Snap (Ctrl+Shift+P)").clicked() {
+                                ui.close_menu();
+                            }
                             if ui.checkbox(&mut state.show_scratchpad, "🎨 Mixing Scratchpad (F4)").clicked() {
                                 ui.close_menu();
                             }
@@ -355,6 +361,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                         ui.menu_button("Window", |ui| {
                             if ui.checkbox(&mut state.show_navigator, "🧭 Viewport / Navigator Panel").clicked() {
+                                ui.close_menu();
+                            }
+                            if ui.checkbox(&mut state.show_perspective_dock, "📐 Perspective Studio (F5)").clicked() {
                                 ui.close_menu();
                             }
                             if ui.checkbox(&mut state.show_scratchpad, "🎨 Mixing Scratchpad (F4)").clicked() {
@@ -390,6 +399,17 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                         if ui.selectable_label(!state.show_ui_panels, "👁").on_hover_text("Toggle Full Canvas / Zen Mode (Tab)").clicked() {
                             state.show_ui_panels = !state.show_ui_panels;
+                        }
+
+                        let persp_label = if state.show_perspective_dock { "📐 [ON]" } else { "📐 Persp" };
+                        if ui.selectable_label(state.show_perspective_dock, persp_label).on_hover_text("Visual Perspective Rulers & Vanishing Point Studio (F5)").clicked() {
+                            state.show_perspective_dock = !state.show_perspective_dock;
+                        }
+
+                        let snap_label = if state.perspective.snap_enabled { "⇲ [SNAP]" } else { "⇲ Snap" };
+                        if ui.selectable_label(state.perspective.snap_enabled, snap_label).on_hover_text("Constraint Snapping to Perspective Vectors (Ctrl+Shift+P)").clicked() {
+                            state.perspective.snap_enabled = !state.perspective.snap_enabled;
+                            state.set_status(if state.perspective.snap_enabled { "Perspective Snapping: ON" } else { "Perspective Snapping: OFF" });
                         }
 
                         let scratch_label = if state.show_scratchpad { "🎨 [ON]" } else { "🎨 Palette" };
@@ -1158,6 +1178,44 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("LAYERS").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            egui::ComboBox::from_id_source("add_adj_layer_combo")
+                                .selected_text("✨+ Adj")
+                                .show_ui(ui, |ui| {
+                                    if ui.selectable_label(false, "☀️ Brightness / Contrast").clicked() {
+                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::BrightnessContrast { brightness: 0.0, contrast: 0.0 }, None);
+                                        state.active_adjustment_modal = Some(id);
+                                        state.set_status(format!("Added Brightness/Contrast Adjustment Layer {}", id));
+                                    }
+                                    if ui.selectable_label(false, "🎨 HSL").clicked() {
+                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::Hsl { hue_shift: 0.0, saturation: 1.0, lightness: 0.0 }, None);
+                                        state.active_adjustment_modal = Some(id);
+                                        state.set_status(format!("Added HSL Adjustment Layer {}", id));
+                                    }
+                                    if ui.selectable_label(false, "⚖️ Color Balance").clicked() {
+                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::ColorBalance { cyan_red: 0.0, magenta_green: 0.0, yellow_blue: 0.0 }, None);
+                                        state.active_adjustment_modal = Some(id);
+                                        state.set_status(format!("Added Color Balance Adjustment Layer {}", id));
+                                    }
+                                    if ui.selectable_label(false, "🔄 Invert").clicked() {
+                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::Invert, None);
+                                        state.set_status(format!("Added Invert Adjustment Layer {}", id));
+                                    }
+                                    if ui.selectable_label(false, "🎚️ Posterize").clicked() {
+                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::Posterize { levels: 6 }, None);
+                                        state.active_adjustment_modal = Some(id);
+                                        state.set_status(format!("Added Posterize Adjustment Layer {}", id));
+                                    }
+                                    if ui.selectable_label(false, "🌓 Threshold").clicked() {
+                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::Threshold { cutoff: 128 }, None);
+                                        state.active_adjustment_modal = Some(id);
+                                        state.set_status(format!("Added Threshold Adjustment Layer {}", id));
+                                    }
+                                    if ui.selectable_label(false, "🎞️ Sepia").clicked() {
+                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::Sepia { strength: 1.0 }, None);
+                                        state.active_adjustment_modal = Some(id);
+                                        state.set_status(format!("Added Sepia Adjustment Layer {}", id));
+                                    }
+                                });
                             if ui.button("📁+ Folder").on_hover_text("Create a new Layer Group Folder").clicked() {
                                 let gid = state.document.add_group(None);
                                 state.set_status(format!("Created Folder Group {}", gid));
@@ -1186,6 +1244,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         let layer_id = state.document.layers[i].id;
                         let is_active = layer_id == active_id;
                         let is_group = state.document.layers[i].is_group();
+                        let is_adj = state.document.layers[i].is_adjustment();
                         let is_ref = state.document.layers[i].is_reference;
                         let is_clip = state.document.layers[i].clipping_mask;
 
@@ -1219,13 +1278,15 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                             egui::Frame::none()
                                 .fill(if is_active {
-                                    if is_group { Color32::from_rgba_unmultiplied(ar, ag, ab, 55) } else { Color32::from_rgba_unmultiplied(ar, ag, ab, 42) }
+                                    if is_group { Color32::from_rgba_unmultiplied(ar, ag, ab, 55) } else if is_adj { Color32::from_rgba_unmultiplied(ar, ag, ab, 48) } else { Color32::from_rgba_unmultiplied(ar, ag, ab, 42) }
                                 } else if is_group {
                                     Color32::from_rgba_unmultiplied(24, 32, 58, 210)
+                                } else if is_adj {
+                                    Color32::from_rgba_unmultiplied(28, 22, 52, 190)
                                 } else {
                                     Color32::from_rgba_unmultiplied(18, 25, 46, 180)
                                 })
-                                .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else if is_group { Color32::from_rgb(48, 64, 100) } else { Color32::from_rgb(36, 48, 78) }))
+                                .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else if is_group { Color32::from_rgb(48, 64, 100) } else if is_adj { Color32::from_rgb(70, 52, 110) } else { Color32::from_rgb(36, 48, 78) }))
                                 .rounding(4.0)
                                 .inner_margin(egui::vec2(5.0, 4.0))
                                 .show(ui, |ui| {
@@ -1255,6 +1316,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                         if is_ref {
                                             ui.label(RichText::new("⭐").size(10.0));
                                         }
+                                        if is_adj {
+                                            if let Some(adj) = &state.document.layers[i].adjustment {
+                                                ui.label(RichText::new(adj.adjustment_type.badge()).size(9.0).strong().color(accent_c32));
+                                            }
+                                        }
 
                                         // Editable Layer/Group Name
                                         let name_edit = egui::TextEdit::singleline(&mut state.document.layers[i].name)
@@ -1283,6 +1349,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                                 if ui.button("⎘").on_hover_text("Duplicate Layer").clicked() {
                                                     state.document.duplicate_active_layer();
                                                 }
+                                                if is_adj {
+                                                    if ui.button("⚙").on_hover_text("Configure Adjustment Filter Parameters").clicked() {
+                                                        state.active_adjustment_modal = Some(layer_id);
+                                                    }
+                                                }
                                                 if state.document.layers[i].parent_id.is_some() {
                                                     if ui.button("⮯").on_hover_text("Remove from folder (move to top level)").clicked() {
                                                         state.document.layers[i].parent_id = None;
@@ -1297,7 +1368,40 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                             ui.add(egui::Slider::new(&mut state.document.layers[i].opacity, 0.0..=1.0).text("Opacity"));
                                         });
 
-                                        if !is_group {
+                                        if is_adj {
+                                            ui.horizontal(|ui| {
+                                                ui.checkbox(&mut state.document.layers[i].clipping_mask, "⮑ Clip");
+                                                if ui.small_button("⚙ Edit Filter Parameters...").clicked() {
+                                                    state.active_adjustment_modal = Some(layer_id);
+                                                }
+                                            });
+
+                                            // Folder parent assignment selector
+                                            if !group_options.is_empty() {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("📁 In:").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                                                    let current_parent_id = state.document.layers[i].parent_id;
+                                                    let current_name = current_parent_id
+                                                        .and_then(|pid| group_options.iter().find(|(gid, _)| *gid == pid).map(|(_, n)| n.as_str()))
+                                                        .unwrap_or("Root");
+
+                                                    egui::ComboBox::from_id_source(format!("group_sel_{}", layer_id))
+                                                        .selected_text(current_name)
+                                                        .show_ui(ui, |ui| {
+                                                            if ui.selectable_label(current_parent_id.is_none(), "Root (No Folder)").clicked() {
+                                                                state.document.set_layer_parent(layer_id, None);
+                                                            }
+                                                            for (gid, gname) in &group_options {
+                                                                if *gid != layer_id {
+                                                                    if ui.selectable_label(current_parent_id == Some(*gid), format!("📁 {}", gname)).clicked() {
+                                                                        state.document.set_layer_parent(layer_id, Some(*gid));
+                                                                    }
+                                                                }
+                                                            }
+                                                        });
+                                                });
+                                            }
+                                        } else if !is_group {
                                             ui.horizontal(|ui| {
                                                 ui.checkbox(&mut state.document.layers[i].alpha_locked, "🔒α Lock");
                                                 ui.checkbox(&mut state.document.layers[i].clipping_mask, "⮑ Clip");
@@ -2721,10 +2825,178 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
-    // ── 9. ABOUT HOLLOW CANVAS MODAL ──
+    // ── 9. FLOATING ADJUSTMENT LAYER SETTINGS INSPECTOR ──
+    if let Some(adj_id) = state.active_adjustment_modal {
+        let mut close_modal = false;
+        let mut title = "✨ Adjustment Layer Settings".to_string();
+        if let Some(layer) = state.document.get_layer(adj_id) {
+            if let Some(adj) = &layer.adjustment {
+                title = format!("✨ {} ({})", adj.adjustment_type.name(), layer.name);
+            }
+        }
+
+        let mut is_open = true;
+        egui::Window::new(title)
+            .open(&mut is_open)
+            .fixed_size(Vec2::new(300.0, 240.0))
+            .collapsible(false)
+            .resizable(false)
+            .default_pos(egui::pos2(ctx.screen_rect().width() - 560.0, 60.0))
+            .show(ctx, |ui| {
+                if let Some(layer) = state.document.get_layer_mut(adj_id) {
+                    if let Some(adj) = &mut layer.adjustment {
+                        match &mut adj.adjustment_type {
+                            hollow_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast } => {
+                                ui.label(RichText::new("BRIGHTNESS & CONTRAST").size(9.0).strong().color(accent_c32));
+                                ui.add(egui::Slider::new(brightness, -100.0..=100.0).text("Brightness"));
+                                ui.add(egui::Slider::new(contrast, -100.0..=100.0).text("Contrast"));
+                                if ui.button("Reset Values").clicked() {
+                                    *brightness = 0.0;
+                                    *contrast = 0.0;
+                                }
+                            }
+                            hollow_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness } => {
+                                ui.label(RichText::new("HUE / SATURATION / LIGHTNESS").size(9.0).strong().color(accent_c32));
+                                ui.add(egui::Slider::new(hue_shift, -180.0..=180.0).text("Hue (°)"));
+                                ui.add(egui::Slider::new(saturation, 0.0..=3.0).text("Saturation (x)"));
+                                ui.add(egui::Slider::new(lightness, -1.0..=1.0).text("Lightness"));
+                                if ui.button("Reset Values").clicked() {
+                                    *hue_shift = 0.0;
+                                    *saturation = 1.0;
+                                    *lightness = 0.0;
+                                }
+                            }
+                            hollow_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue } => {
+                                ui.label(RichText::new("RGB COLOR BALANCE").size(9.0).strong().color(accent_c32));
+                                ui.add(egui::Slider::new(cyan_red, -100.0..=100.0).text("Cyan / Red"));
+                                ui.add(egui::Slider::new(magenta_green, -100.0..=100.0).text("Magenta / Green"));
+                                ui.add(egui::Slider::new(yellow_blue, -100.0..=100.0).text("Yellow / Blue"));
+                                if ui.button("Reset Values").clicked() {
+                                    *cyan_red = 0.0;
+                                    *magenta_green = 0.0;
+                                    *yellow_blue = 0.0;
+                                }
+                            }
+                            hollow_core::layer::AdjustmentType::Invert => {
+                                ui.label(RichText::new("INVERT COLORS").size(9.0).strong().color(accent_c32));
+                                ui.label("Inverts all RGB chromatic channels beneath this layer in real time.");
+                            }
+                            hollow_core::layer::AdjustmentType::Posterize { levels } => {
+                                ui.label(RichText::new("POSTERIZATION").size(9.0).strong().color(accent_c32));
+                                ui.add(egui::Slider::new(levels, 2..=32).text("Tonal Levels"));
+                            }
+                            hollow_core::layer::AdjustmentType::Threshold { cutoff } => {
+                                ui.label(RichText::new("BINARY THRESHOLD").size(9.0).strong().color(accent_c32));
+                                ui.add(egui::Slider::new(cutoff, 0..=255).text("Cutoff"));
+                            }
+                            hollow_core::layer::AdjustmentType::Sepia { strength } => {
+                                ui.label(RichText::new("VINTAGE SEPIA TONE").size(9.0).strong().color(accent_c32));
+                                ui.add(egui::Slider::new(strength, 0.0..=1.0).text("Sepia Strength"));
+                            }
+                        }
+                    }
+                } else {
+                    close_modal = true;
+                }
+
+                ui.add_space(8.0);
+                ui.separator();
+                if ui.button("Done / Close Inspector").clicked() {
+                    close_modal = true;
+                }
+            });
+
+        if close_modal || !is_open {
+            state.active_adjustment_modal = None;
+        }
+    }
+
+    // ── 10. FLOATING PERSPECTIVE STUDIO DOCK ──
+    if state.show_perspective_dock {
+        let mut is_open = state.show_perspective_dock;
+        egui::Window::new("📐 Perspective Studio")
+            .open(&mut is_open)
+            .fixed_size(Vec2::new(310.0, 360.0))
+            .default_pos(egui::pos2(ctx.screen_rect().width() - 570.0, 70.0))
+            .show(ctx, |ui| {
+                ScrollArea::vertical().show(ui, |ui| {
+                    ui.label(RichText::new("PERSPECTIVE PROJECTION MODE").size(9.0).strong().color(accent_c32));
+                    ui.horizontal(|ui| {
+                        let cur_type = state.perspective.p_type;
+                        if ui.selectable_label(cur_type == hollow_core::perspective::PerspectiveType::None, "Off").clicked() {
+                            state.perspective.p_type = hollow_core::perspective::PerspectiveType::None;
+                        }
+                        if ui.selectable_label(cur_type == hollow_core::perspective::PerspectiveType::OnePoint, "1-Point").clicked() {
+                            state.perspective.reset_preset(hollow_core::perspective::PerspectiveType::OnePoint, state.document.width, state.document.height);
+                        }
+                        if ui.selectable_label(cur_type == hollow_core::perspective::PerspectiveType::TwoPoint, "2-Point").clicked() {
+                            state.perspective.reset_preset(hollow_core::perspective::PerspectiveType::TwoPoint, state.document.width, state.document.height);
+                        }
+                        if ui.selectable_label(cur_type == hollow_core::perspective::PerspectiveType::ThreePoint, "3-Point").clicked() {
+                            state.perspective.reset_preset(hollow_core::perspective::PerspectiveType::ThreePoint, state.document.width, state.document.height);
+                        }
+                    });
+
+                    if state.perspective.p_type != hollow_core::perspective::PerspectiveType::None {
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.label(RichText::new("CONSTRAINT SNAPPING ENGINE").size(9.0).strong().color(accent_c32));
+                        ui.checkbox(&mut state.perspective.snap_enabled, "⇲ Enable Perspective Snapping (Ctrl+Shift+P)");
+                        ui.add(egui::Slider::new(&mut state.perspective.snap_strength, 0.1..=1.0).text("Snap Strictness"));
+
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.label(RichText::new("GUIDE OVERLAY RENDERING").size(9.0).strong().color(accent_c32));
+                        ui.checkbox(&mut state.perspective.show_guides, "Show Guide Overlay");
+                        ui.add(egui::Slider::new(&mut state.perspective.guide_density, 6..=36).text("Ray Density"));
+                        ui.add(egui::Slider::new(&mut state.perspective.guide_opacity, 0.05..=1.0).text("Guide Opacity"));
+
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.label(RichText::new("HORIZON & VANISHING POINTS").size(9.0).strong().color(accent_c32));
+                        let doc_h = state.document.height as f32;
+                        ui.add(egui::Slider::new(&mut state.perspective.horizon_y, -500.0..=(doc_h * 2.0)).text("Horizon Y"));
+                        ui.add(egui::Slider::new(&mut state.perspective.horizon_angle, -45.0..=45.0).text("Horizon Tilt (°)"));
+
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("VP 1 (Primary / Center)").size(8.5).color(Color32::from_rgb(100, 200, 255)));
+                        ui.horizontal(|ui| {
+                            ui.add(egui::DragValue::new(&mut state.perspective.vp1.x).prefix("X: ").speed(1.0));
+                            ui.add(egui::DragValue::new(&mut state.perspective.vp1.y).prefix("Y: ").speed(1.0));
+                        });
+
+                        if state.perspective.p_type == hollow_core::perspective::PerspectiveType::TwoPoint
+                            || state.perspective.p_type == hollow_core::perspective::PerspectiveType::ThreePoint
+                        {
+                            ui.label(RichText::new("VP 2 (Right Vanishing Point)").size(8.5).color(Color32::from_rgb(80, 230, 180)));
+                            ui.horizontal(|ui| {
+                                ui.add(egui::DragValue::new(&mut state.perspective.vp2.x).prefix("X: ").speed(1.0));
+                                ui.add(egui::DragValue::new(&mut state.perspective.vp2.y).prefix("Y: ").speed(1.0));
+                            });
+                        }
+
+                        if state.perspective.p_type == hollow_core::perspective::PerspectiveType::ThreePoint {
+                            ui.label(RichText::new("VP 3 (Vertical / Nadir Point)").size(8.5).color(Color32::from_rgb(230, 120, 240)));
+                            ui.horizontal(|ui| {
+                                ui.add(egui::DragValue::new(&mut state.perspective.vp3.x).prefix("X: ").speed(1.0));
+                                ui.add(egui::DragValue::new(&mut state.perspective.vp3.y).prefix("Y: ").speed(1.0));
+                            });
+                        }
+
+                        ui.add_space(6.0);
+                        if ui.button("Reset Vanishing Points to Center").clicked() {
+                            state.perspective.init_for_canvas(state.document.width, state.document.height);
+                        }
+                    }
+                });
+            });
+        state.show_perspective_dock = is_open;
+    }
+
+    // ── 11. ABOUT HOLLOW CANVAS MODAL ──
     if state.show_about_dialog {
         egui::Window::new("About Hollow Canvas")
-            .fixed_size(Vec2::new(420.0, 320.0))
+            .fixed_size(Vec2::new(430.0, 340.0))
             .collapsible(false)
             .resizable(false)
             .default_pos(ctx.screen_rect().center())
@@ -2733,7 +3005,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.15.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.16.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);
@@ -2741,7 +3013,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.add_space(6.0);
 
                 ui.label(RichText::new("Features & Guarantees:").size(10.0).strong().color(Color32::from_rgb(205, 215, 240)));
-                ui.label(RichText::new("• 🎨 Floating Mixing Scratchpad: Off-canvas color mixing, pigment smudging, and eyedropper dock\n• 🎯 Subpixel-Antialiased Stroke Engine with True Tangent Catmull-Rom Curvature\n• ⚡ S-Level Stroke Stabilization (S-0 .. S-7 Lazy Rope & Tremor Filtering)\n• 📁 Collapsible Nested Layer Groups & Clipping Masks\n• 🪄 Magic Wand, Gradients, Shapes, Multi-Axis Symmetry\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Signed VPack 2.0.0 & Zip portable distribution (Ed25519 Chain of Trust)").size(10.0).color(Color32::from_rgb(155, 165, 195)));
+                ui.label(RichText::new("• 📐 Visual Perspective Rulers: 1, 2, and 3-Point Vanishing Guides with Dynamic Stroke Constraint Snapping\n• ✨ Real-Time Non-Destructive Adjustment Layers (Brightness/Contrast, HSL, Color Balance, Invert, Posterize, Threshold, Sepia)\n• 🎨 Floating Mixing Scratchpad: Off-canvas color mixing, pigment smudging, and eyedropper dock\n• 🎯 Subpixel-Antialiased Stroke Engine with True Tangent Catmull-Rom Curvature\n• ⚡ S-Level Stroke Stabilization (S-0 .. S-7 Lazy Rope & Tremor Filtering)\n• 📁 Collapsible Nested Layer Groups & Clipping Masks\n• 🪄 Magic Wand, Gradients, Shapes, Multi-Axis Symmetry\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Signed VPack 2.0.0 & Zip portable distribution (Ed25519 Chain of Trust)").size(10.0).color(Color32::from_rgb(155, 165, 195)));
 
                 ui.add_space(8.0);
                 ui.separator();
@@ -2764,10 +3036,10 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
-    // ── 10. HELP & SHORTCUTS MODAL ──
+    // ── 12. HELP & SHORTCUTS MODAL ──
     if state.show_help {
         egui::Window::new("Hollow Canvas Studio · Shortcuts & Help")
-            .fixed_size(Vec2::new(420.0, 380.0))
+            .fixed_size(Vec2::new(420.0, 400.0))
             .collapsible(false)
             .show(ctx, |ui| {
                 ScrollArea::vertical().show(ui, |ui| {
@@ -2784,6 +3056,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         ("M", "Marquee Selection Tool"),
                         ("L", "Freehand Lasso Selection Tool"),
                         ("X", "Swap Primary & Secondary Colors"),
+                        ("F4", "Toggle Floating Mixing Scratchpad"),
+                        ("F5", "Toggle Perspective Studio Dock"),
+                        ("Ctrl + Shift + P", "Toggle Perspective Vector Snapping"),
                         ("Space + Drag", "Pan Canvas Viewport"),
                         ("Mouse Wheel", "Zoom Canvas In / Out"),
                         ("Ctrl + N", "Create New Canvas"),

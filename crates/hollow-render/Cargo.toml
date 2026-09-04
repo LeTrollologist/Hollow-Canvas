@@ -1,6 +1,6 @@
 [package]
 name = "hollow-render"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2021"
 description = "Fast software rasterizer and egui primitive compositing engine for Hollow Canvas"
 
@@ -8,7 +8,7 @@ description = "Fast software rasterizer and egui primitive compositing engine fo
 test = false
 
 [dependencies]
-hollow-core = { path = "../hollow-core", version = "0.15.0" }
+hollow-core = { path = "../hollow-core", version = "0.16.0" }
 egui = { workspace = true }
 glam = { workspace = true }
 log = { workspace = true }

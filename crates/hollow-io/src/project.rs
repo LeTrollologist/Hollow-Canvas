@@ -13,6 +13,7 @@ use thiserror::Error;
 
 const HCV_MAGIC_V2: &[u8; 4] = b"HCV\x02";
 const HCV_MAGIC_V3: &[u8; 4] = b"HCV\x03";
+const HCV_MAGIC_V4: &[u8; 4] = b"HCV\x04";
 
 #[derive(Error, Debug)]
 pub enum ProjectError {
@@ -27,7 +28,7 @@ pub enum ProjectError {
 }
 
 pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result<(), ProjectError> {
-    writer.write_all(HCV_MAGIC_V3)?;
+    writer.write_all(HCV_MAGIC_V4)?;
     writer.write_all(&doc.width.to_le_bytes())?;
     writer.write_all(&doc.height.to_le_bytes())?;
     writer.write_all(&doc.active_layer_id.to_le_bytes())?;
@@ -52,12 +53,51 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
         writer.write_all(&name_len.to_le_bytes())?;
         writer.write_all(name_bytes)?;
 
-        // Kind (0 = Raster, 1 = Group)
+        // Kind (0 = Raster, 1 = Group, 2 = Adjustment)
         let kind_byte = match layer.kind {
             hollow_core::layer::LayerKind::Raster => 0u8,
             hollow_core::layer::LayerKind::Group => 1u8,
+            hollow_core::layer::LayerKind::Adjustment => 2u8,
         };
         writer.write_all(&[kind_byte])?;
+
+        // If adjustment, serialize adjustment parameters
+        if let Some(adj) = &layer.adjustment {
+            match &adj.adjustment_type {
+                hollow_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast } => {
+                    writer.write_all(&[0u8])?;
+                    writer.write_all(&brightness.to_le_bytes())?;
+                    writer.write_all(&contrast.to_le_bytes())?;
+                }
+                hollow_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness } => {
+                    writer.write_all(&[1u8])?;
+                    writer.write_all(&hue_shift.to_le_bytes())?;
+                    writer.write_all(&saturation.to_le_bytes())?;
+                    writer.write_all(&lightness.to_le_bytes())?;
+                }
+                hollow_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue } => {
+                    writer.write_all(&[2u8])?;
+                    writer.write_all(&cyan_red.to_le_bytes())?;
+                    writer.write_all(&magenta_green.to_le_bytes())?;
+                    writer.write_all(&yellow_blue.to_le_bytes())?;
+                }
+                hollow_core::layer::AdjustmentType::Invert => {
+                    writer.write_all(&[3u8])?;
+                }
+                hollow_core::layer::AdjustmentType::Posterize { levels } => {
+                    writer.write_all(&[4u8])?;
+                    writer.write_all(&levels.to_le_bytes())?;
+                }
+                hollow_core::layer::AdjustmentType::Threshold { cutoff } => {
+                    writer.write_all(&[5u8])?;
+                    writer.write_all(&[*cutoff])?;
+                }
+                hollow_core::layer::AdjustmentType::Sepia { strength } => {
+                    writer.write_all(&[6u8])?;
+                    writer.write_all(&strength.to_le_bytes())?;
+                }
+            }
+        }
 
         // Parent ID (0 if None)
         let pid = layer.parent_id.unwrap_or(0);
@@ -95,8 +135,8 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
         writer.write_all(&layer.offset_x.to_le_bytes())?;
         writer.write_all(&layer.offset_y.to_le_bytes())?;
 
-        if layer.is_group() {
-            // Groups have no pixel buffer
+        if layer.is_group() || layer.is_adjustment() {
+            // Groups and Adjustments have no pixel buffer
             let comp_len = 0u32;
             writer.write_all(&comp_len.to_le_bytes())?;
         } else {
@@ -133,9 +173,10 @@ pub fn save_project_file(doc: &Document, path: impl AsRef<Path>) -> Result<(), P
 pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, ProjectError> {
     let mut magic = [0u8; 4];
     reader.read_exact(&mut magic)?;
+    let is_v4 = &magic == HCV_MAGIC_V4;
     let is_v3 = &magic == HCV_MAGIC_V3;
     let is_v2 = &magic == HCV_MAGIC_V2;
-    if !is_v3 && !is_v2 {
+    if !is_v4 && !is_v3 && !is_v2 {
         return Err(ProjectError::InvalidMagic);
     }
 
@@ -186,7 +227,80 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         reader.read_exact(&mut name_vec)?;
         let name = String::from_utf8(name_vec).unwrap_or_else(|_| format!("Layer {}", id));
 
-        let (kind, parent_id, visible, locked, alpha_locked, clipping_mask, is_reference, is_expanded, pass_through) = if is_v3 {
+        let mut adjustment = None;
+
+        let (kind, parent_id, visible, locked, alpha_locked, clipping_mask, is_reference, is_expanded, pass_through) = if is_v4 {
+            reader.read_exact(&mut buf1)?;
+            let kind = match buf1[0] {
+                1 => hollow_core::layer::LayerKind::Group,
+                2 => {
+                    reader.read_exact(&mut buf1)?;
+                    let adj_type = match buf1[0] {
+                        0 => {
+                            reader.read_exact(&mut buf4)?;
+                            let brightness = f32::from_le_bytes(buf4);
+                            reader.read_exact(&mut buf4)?;
+                            let contrast = f32::from_le_bytes(buf4);
+                            hollow_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast }
+                        }
+                        1 => {
+                            reader.read_exact(&mut buf4)?;
+                            let hue_shift = f32::from_le_bytes(buf4);
+                            reader.read_exact(&mut buf4)?;
+                            let saturation = f32::from_le_bytes(buf4);
+                            reader.read_exact(&mut buf4)?;
+                            let lightness = f32::from_le_bytes(buf4);
+                            hollow_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness }
+                        }
+                        2 => {
+                            reader.read_exact(&mut buf4)?;
+                            let cyan_red = f32::from_le_bytes(buf4);
+                            reader.read_exact(&mut buf4)?;
+                            let magenta_green = f32::from_le_bytes(buf4);
+                            reader.read_exact(&mut buf4)?;
+                            let yellow_blue = f32::from_le_bytes(buf4);
+                            hollow_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue }
+                        }
+                        3 => hollow_core::layer::AdjustmentType::Invert,
+                        4 => {
+                            reader.read_exact(&mut buf4)?;
+                            let levels = u32::from_le_bytes(buf4);
+                            hollow_core::layer::AdjustmentType::Posterize { levels }
+                        }
+                        5 => {
+                            reader.read_exact(&mut buf1)?;
+                            let cutoff = buf1[0];
+                            hollow_core::layer::AdjustmentType::Threshold { cutoff }
+                        }
+                        6 => {
+                            reader.read_exact(&mut buf4)?;
+                            let strength = f32::from_le_bytes(buf4);
+                            hollow_core::layer::AdjustmentType::Sepia { strength }
+                        }
+                        _ => hollow_core::layer::AdjustmentType::Invert,
+                    };
+                    adjustment = Some(hollow_core::layer::AdjustmentConfig { adjustment_type: adj_type });
+                    hollow_core::layer::LayerKind::Adjustment
+                }
+                _ => hollow_core::layer::LayerKind::Raster,
+            };
+
+            reader.read_exact(&mut buf8)?;
+            let raw_pid = u64::from_le_bytes(buf8);
+            let parent_id = if raw_pid > 0 { Some(raw_pid) } else { None };
+
+            reader.read_exact(&mut buf1)?;
+            let flags = buf1[0];
+            let visible = (flags & (1 << 0)) != 0;
+            let locked = (flags & (1 << 1)) != 0;
+            let alpha_locked = (flags & (1 << 2)) != 0;
+            let clipping_mask = (flags & (1 << 3)) != 0;
+            let is_reference = (flags & (1 << 4)) != 0;
+            let is_expanded = (flags & (1 << 5)) != 0;
+            let pass_through = (flags & (1 << 6)) != 0;
+
+            (kind, parent_id, visible, locked, alpha_locked, clipping_mask, is_reference, is_expanded, pass_through)
+        } else if is_v3 {
             reader.read_exact(&mut buf1)?;
             let kind = if buf1[0] == 1 {
                 hollow_core::layer::LayerKind::Group
@@ -248,7 +362,15 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         reader.read_exact(&mut buf4)?;
         let comp_len = u32::from_le_bytes(buf4) as usize;
 
-        let mut layer = if kind == hollow_core::layer::LayerKind::Group {
+        let mut layer = if kind == hollow_core::layer::LayerKind::Adjustment {
+            let adj_type = adjustment
+                .as_ref()
+                .map(|a| a.adjustment_type.clone())
+                .unwrap_or(hollow_core::layer::AdjustmentType::Invert);
+            let mut adj_layer = Layer::new_adjustment(id, name, adj_type);
+            adj_layer.is_expanded = is_expanded;
+            adj_layer
+        } else if kind == hollow_core::layer::LayerKind::Group {
             let mut group = Layer::new_group(id, name);
             group.is_expanded = is_expanded;
             group.pass_through = pass_through;
@@ -271,6 +393,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         };
 
         layer.kind = kind;
+        layer.adjustment = adjustment;
         layer.parent_id = parent_id;
         layer.visible = visible;
         layer.locked = locked;

@@ -180,6 +180,7 @@ struct HollowCanvasDesktopApp {
     current_velocity: f32,
     last_anim_tick: Instant,
     stabilized_pos: Option<Vec2>,
+    stroke_perspective_axis: Option<Vec2>,
     has_initialized_view: bool,
 }
 
@@ -188,7 +189,7 @@ impl HollowCanvasDesktopApp {
         let w = self.win_w as f32;
         let h = self.win_h as f32;
 
-        // 1. Any active modal dialogs, filters, lightbox, or transform session
+        // 1. Any active modal dialogs, filters, lightbox, perspective dock, or transform session
         if self.state.show_ref_window
             || self.state.show_scratchpad
             || self.state.show_help
@@ -197,6 +198,8 @@ impl HollowCanvasDesktopApp {
             || self.state.show_resize_canvas_dialog
             || self.state.show_export_animation_dialog
             || self.state.show_save_preset_dialog
+            || self.state.show_perspective_dock
+            || self.state.active_adjustment_modal.is_some()
             || self.state.active_filter_modal != hollow_ui::state::ActiveFilterModal::None
             || self.state.show_gallery
             || self.state.transform_session.is_active
@@ -347,12 +350,28 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 } else if tool.is_shape_tool() || tool == ToolType::Marquee || tool == ToolType::Crop || tool == ToolType::Polygon || tool == ToolType::Eyedropper || tool == ToolType::Fill {
                     // Explicitly NEVER paint continuous brush strokes when non-freehand tools are active
                 } else if tool.is_freehand_stroke_tool() {
+                    let effective_canvas_pos = if app.state.perspective.snap_enabled && app.state.perspective.p_type != hollow_core::perspective::PerspectiveType::None {
+                        if let Some(&first_pt) = app.stroke_points.first() {
+                            let (snapped_pt, axis) = app.state.perspective.constrain_stroke_point(
+                                first_pt.position,
+                                canvas_pos,
+                                app.stroke_perspective_axis,
+                            );
+                            app.stroke_perspective_axis = Some(axis);
+                            snapped_pt
+                        } else {
+                            canvas_pos
+                        }
+                    } else {
+                        canvas_pos
+                    };
+
                     let now = Instant::now();
                     let dt = now.duration_since(app.last_point_time).as_secs_f32().max(0.001);
                     app.last_point_time = now;
 
                     let dist = if let Some(&last_pt) = app.stroke_points.last() {
-                        last_pt.position.distance(canvas_pos)
+                        last_pt.position.distance(effective_canvas_pos)
                     } else {
                         0.0
                     };
@@ -379,22 +398,22 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         if smoothing > 0.01 {
                             if let Some(&last_pt) = app.stroke_points.last() {
                                 let w = (1.0 - smoothing * 0.6).clamp(0.2, 1.0);
-                                last_pt.position.lerp(canvas_pos, w)
+                                last_pt.position.lerp(effective_canvas_pos, w)
                             } else {
-                                canvas_pos
+                                effective_canvas_pos
                             }
                         } else {
-                            canvas_pos
+                            effective_canvas_pos
                         }
                     } else {
-                        let prev = app.stabilized_pos.unwrap_or(canvas_pos);
-                        let dist_to_cursor = prev.distance(canvas_pos);
+                        let prev = app.stabilized_pos.unwrap_or(effective_canvas_pos);
+                        let dist_to_cursor = prev.distance(effective_canvas_pos);
                         let deadzone = app.state.brush.stabilization_deadzone();
                         if dist_to_cursor < deadzone {
                             prev
                         } else {
                             let follow_rate = 1.0 - app.state.brush.stabilization_weight();
-                            let next = prev.lerp(canvas_pos, follow_rate.clamp(0.08, 1.0));
+                            let next = prev.lerp(effective_canvas_pos, follow_rate.clamp(0.08, 1.0));
                             app.stabilized_pos = Some(next);
                             next
                         }
@@ -493,6 +512,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             }
 
             app.is_drawing_on_canvas = true;
+            app.stroke_perspective_axis = None;
             app.last_point_time = Instant::now();
             app.current_velocity = 0.0;
             let canvas_pos = app.state.screen_to_canvas(screen_pos, app.win_w as f32, app.win_h as f32);
@@ -809,6 +829,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
                 app.stroke_points.clear();
                 app.stabilized_pos = None;
+                app.stroke_perspective_axis = None;
             }
 
             if app.active_snapshot_taken {
@@ -992,7 +1013,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
                 0x58 => app.state.swap_colors(),                     // X (Swap colors)
                 0x42 => app.state.brush.tool = ToolType::Brush,      // B
-                0x50 => app.state.brush.tool = ToolType::Pencil,     // P
+                0x50 if is_ctrl && is_shift => { // Ctrl+Shift+P (Toggle Perspective Vector Snapping)
+                    app.state.perspective.snap_enabled = !app.state.perspective.snap_enabled;
+                    app.state.set_status(if app.state.perspective.snap_enabled { "Perspective Snapping: ON" } else { "Perspective Snapping: OFF" });
+                }
+                0x50 if !is_ctrl => app.state.brush.tool = ToolType::Pencil,     // P
                 0x57 => app.state.brush.tool = ToolType::Wand,       // W
                 0x47 => app.state.brush.tool = ToolType::Gradient,   // G
                 0x45 => app.state.brush.tool = ToolType::Eraser,     // E
@@ -1020,6 +1045,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 0x73 => { // F4 (Toggle Mixing Scratchpad)
                     app.state.show_scratchpad = !app.state.show_scratchpad;
                     app.state.set_status(if app.state.show_scratchpad { "Scratchpad: Opened" } else { "Scratchpad: Closed" });
+                }
+                0x74 if !is_shift => { // F5 (Toggle Perspective Studio Dock)
+                    app.state.show_perspective_dock = !app.state.show_perspective_dock;
+                    app.state.set_status(if app.state.show_perspective_dock { "Perspective Studio: Opened" } else { "Perspective Studio: Closed" });
                 }
                 0x4F if !is_ctrl => app.state.toggle_onion_skin(),    // O (Toggle Onion Skinning)
                 0xDB => app.state.step_prev_frame(),                  // [ (Step Previous Frame)
@@ -1247,6 +1276,21 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, p_tip, p_cursor, 0xAA00D4FF, false, viewport_clip);
                         }
                     }
+                }
+
+                // 4.6 Render Visual Perspective Guides & Horizon line if enabled
+                if app.state.perspective.show_guides && app.state.perspective.p_type != hollow_core::perspective::PerspectiveType::None {
+                    app.renderer.render_perspective_guides(
+                        &mut app.buffer,
+                        app.win_w,
+                        app.win_h,
+                        &app.state.document,
+                        app.state.pan,
+                        app.state.zoom,
+                        center_offset,
+                        viewport_clip,
+                        &app.state.perspective,
+                    );
                 }
 
                 // 5. Render Dynamic Rulers if enabled
@@ -1506,6 +1550,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         current_velocity: 0.0,
         last_anim_tick: Instant::now(),
         stabilized_pos: None,
+        stroke_perspective_axis: None,
         has_initialized_view: false,
     });
 

@@ -80,6 +80,16 @@ impl Document {
         id
     }
 
+    pub fn add_adjustment_layer(&mut self, adj_type: crate::layer::AdjustmentType, name: Option<String>) -> LayerId {
+        let id = self.next_layer_id;
+        self.next_layer_id += 1;
+        let layer_name = name.unwrap_or_else(|| format!("{} {}", adj_type.name(), id));
+        let layer = Layer::new_adjustment(id, layer_name, adj_type);
+        self.layers.push(layer);
+        self.active_layer_id = id;
+        id
+    }
+
     pub fn group_children(&self, parent_id: LayerId) -> Vec<LayerId> {
         self.layers
             .iter()
@@ -485,6 +495,55 @@ impl Document {
             };
 
             let eff_opacity = self.effective_opacity(layer.id);
+            if eff_opacity <= 0.001 {
+                continue;
+            }
+
+            // ── Non-Destructive Adjustment Layer Pass ──
+            if layer.is_adjustment() {
+                if let Some(adj_cfg) = &layer.adjustment {
+                    let adj_type = &adj_cfg.adjustment_type;
+                    for y in 0..self.height {
+                        for x in 0..self.width {
+                            let dst_idx = ((y * self.width + x) * 4) as usize;
+                            let dr = out[dst_idx];
+                            let dg = out[dst_idx + 1];
+                            let db = out[dst_idx + 2];
+                            let da = out[dst_idx + 3];
+
+                            if da == 0 {
+                                continue;
+                            }
+
+                            let mut opacity = eff_opacity;
+                            if let Some(base) = prev_layer {
+                                let bx = x as i32 - base.offset_x;
+                                let by = y as i32 - base.offset_y;
+                                let base_a = if bx >= 0 && bx < self.width as i32 && by >= 0 && by < self.height as i32 {
+                                    base.get_pixel(bx as u32, by as u32).map(|p| p[3] as f32 / 255.0).unwrap_or(0.0)
+                                } else {
+                                    0.0
+                                };
+                                opacity *= base_a * self.effective_opacity(base.id);
+                            }
+
+                            if opacity <= 0.001 {
+                                continue;
+                            }
+
+                            let (ar, ag, ab) = adj_type.apply_to_rgb(dr, dg, db);
+                            let orig_px = [dr, dg, db, da];
+                            let adj_px = [ar, ag, ab, da];
+                            let blended = layer.blend_mode.composite_pixel(orig_px, adj_px, opacity);
+                            out[dst_idx] = blended[0];
+                            out[dst_idx + 1] = blended[1];
+                            out[dst_idx + 2] = blended[2];
+                            out[dst_idx + 3] = blended[3];
+                        }
+                    }
+                }
+                continue;
+            }
 
             for y in 0..self.height {
                 for x in 0..self.width {

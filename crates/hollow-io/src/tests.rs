@@ -60,4 +60,50 @@ mod tests {
         assert!(loaded_child.clipping_mask);
         assert!(loaded_child.is_reference);
     }
+
+    #[test]
+    fn test_binary_hcv_adjustment_layer_roundtrip() {
+        use hollow_core::layer::AdjustmentType;
+
+        let mut doc = Document::new(32, 32);
+        let adj_id = doc.add_adjustment_layer(
+            AdjustmentType::Hsl {
+                hue_shift: 45.0,
+                saturation: 1.5,
+                lightness: -0.1,
+            },
+            Some("Grading Layer".to_string()),
+        );
+
+        if let Some(adj_layer) = doc.get_layer_mut(adj_id) {
+            adj_layer.opacity = 0.75;
+            adj_layer.clipping_mask = true;
+        }
+
+        let mut buffer = Cursor::new(Vec::new());
+        save_project_to_writer(&doc, &mut buffer).expect("Failed to save project");
+
+        buffer.set_position(0);
+        let loaded_doc = load_project_from_reader(&mut buffer).expect("Failed to load project");
+
+        assert_eq!(loaded_doc.layers.len(), 2);
+        let loaded_adj = loaded_doc.get_layer(adj_id).expect("Adjustment layer not found");
+        assert!(loaded_adj.is_adjustment());
+        assert_eq!(loaded_adj.name, "Grading Layer");
+        assert_eq!(loaded_adj.opacity, 0.75);
+        assert!(loaded_adj.clipping_mask);
+
+        if let Some(cfg) = &loaded_adj.adjustment {
+            match &cfg.adjustment_type {
+                AdjustmentType::Hsl { hue_shift, saturation, lightness } => {
+                    assert!((hue_shift - 45.0).abs() < 1e-4);
+                    assert!((saturation - 1.5).abs() < 1e-4);
+                    assert!((lightness - (-0.1)).abs() < 1e-4);
+                }
+                _ => panic!("Expected Hsl adjustment"),
+            }
+        } else {
+            panic!("Adjustment config missing");
+        }
+    }
 }

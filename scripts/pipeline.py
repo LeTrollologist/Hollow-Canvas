@@ -415,32 +415,40 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
         else "🟢 Verified Clean / Independent Permalinks Available"
     )
 
-    release_body = f"""## 👑 Hollow Canvas {version} · The "Sovereign Distribution" Update
+    release_body = f"""## 🌟 Hollow Canvas {version} · The "Vision & Light" Update
 
-A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
+A modern, high-performance, local-first digital illustration, concept art, and graphics studio built with 100% pure native Rust.
 
 ### ✨ What's New in {version}
 
-* **🎨 Floating "Mixing Scratchpad" (<kbd>F4</kbd>)**:
-  - **Off-Canvas Color Mixing Dock**: Dedicated floating studio dock mimicking a physical painter's mixing palette where artists can scribble, blend pigments, and test brush strokes without polluting the canvas or document undo history.
-  - **Live Pigment Smudging & Blending**: Directional velocity color smearing with real-time dynamic buffer blending.
-  - **Quick Eyedropper Sampling**: Tap or drag with the Eyedropper (<kbd>I</kbd> or <kbd>Alt</kbd>+Click) on the scratchpad to instantly grab blended hues into primary/secondary palettes.
-  - **Independent Dock Viewports & Modes**: Switch between Dark Studio, White Lightbox, and Checkerboard Alpha canvas backgrounds, adjust scratchpad brush sizes (2px–64px), or clear the palette with a single click.
+* **📐 Visual Perspective Rulers (1, 2, and 3-Point)**:
+  - **Multi-Point Perspective Engine**: Full support for 1-Point (central focus), 2-Point (architectural & environmental design), and 3-Point (extreme zenith / nadir bird's eye & worm's eye views) projections.
+  - **Interactive Horizon & Vanishing Points**: Freely adjust horizon line elevation, tilt angle (-45° to +45°), and vanishing point coordinates on or beyond the canvas bounds.
+  - **Radial Guide Rays Overlay**: High-visibility guide ray projection with distinct chromatic coding per vanishing point (Azure Blue, Turquoise Green, Violet Pink) and customizable density/opacity.
+  - **Constraint Snapping Engine (<kbd>Ctrl+Shift+P</kbd>)**: Vector projection algorithm in the input loop that aligns and snaps brush strokes onto the closest perspective vector in real time with configurable snap strictness.
+  - **Floating Perspective Studio Dock (<kbd>F5</kbd>)**: Dedicated floating control panel for selecting presets, calibrating vanishing points, and toggling guide overlays.
 
-* **⚡ Subpixel-Antialiased High-Frequency Stroke Engine**:
-  - **Zero Jaggedness Guarantee**: Fixed rasterizer stamp clipping by calculating exact floating-point subpixel bounding boxes (`min_x = floor(cx - r - 0.5)`), ensuring smooth circular bounds regardless of fractional cursor coordinates.
-  - **Universal Antialiasing Fringe Band**: Enforced a minimum 1.0 physical sub-pixel antialiasing transition band (`aa_fringe = 1.0_f32.min(radius * 0.5)`) across all brush hardness levels, completely eliminating 1-bit staircase aliasing on inking pens.
-  - **True Tangent Catmull-Rom Curvature**: Preserved genuine spline curvature during high-speed strokes without angular chord artifacts.
+* **✨ Non-Destructive Adjustment Layers**:
+  - **Zero-Allocation Composite Filter Passes**: Dynamic adjustment layers that mathematically transform underlying pixels during compositing without mutating base layer data.
+  - **7 Real-Time Adjustment Types**:
+    - **☀️ Brightness & Contrast**: Calibrated linear & power curve luminance adjustments.
+    - **🎨 Hue / Saturation / Lightness (HSL)**: 360° chromatic hue rotation and saturation scaling.
+    - **⚖️ RGB Color Balance**: Independent Cyan-Red, Magenta-Green, and Yellow-Blue channel shifts.
+    - **🔄 Invert**: Instant photometric negative inversion.
+    - **🎚️ Posterize**: Quantized tonal level reduction (2–32 levels).
+    - **🌓 Threshold**: High-contrast binary luminance cutoff (0–255).
+    - **🎞️ Vintage Sepia**: Classic warm monochrome photographic tone.
+  - **Floating Adjustment Settings Inspector**: Live parameter sliders with immediate 60+ FPS viewport feedback.
+  - **Layer Opacity & Clipping Masks**: Full support for adjustment layer opacity blending, folder group hierarchy, and clipping masks to restrict effects to specific base layers.
+  - **Binary Project Format v4 (`HCV\x04`)**: Forward/backward-compatible serialization of adjustment layers and parameters.
+
+* **🎨 Floating Mixing Scratchpad & Subpixel Antialiasing Engine**:
+  - Persistent off-canvas color mixing dock (<kbd>F4</kbd>) with smudging and eyedropper sampling.
+  - Subpixel-antialiased stroke engine with Catmull-Rom curvature and S-0..S-7 Lazy Rope stabilization.
 
 * **🔐 VPack 2.0.0 Integrated Ed25519 Digital Signing & Chain of Trust**:
-  - **Enterprise-Grade Cryptographic Signing**: Official release packages are now signed with an Ed25519 publisher keypair directly inside `scripts/pipeline.py`.
-  - **Automated Signature & CRC-32 Verification**: Packages are verified via `vpack test` to validate digital signatures and checksums.
-  - **Distributed Public Key**: Public key `hollow-publisher.pub` (`3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f`) is attached to all releases.
-
-* **🛡️ Studio Workspace & Dock Hardening**:
-  - Rigid 220px Left Tools and 240px Right Studio docks with zero overlapping and wide-open central viewport.
-  - Granular Stroke Stabilization (S-0 through S-7 Lazy Rope).
-  - Collapsible Nested Layer Groups, Selection Mask Brush/Eraser, Free Transform (<kbd>Ctrl+T</kbd>), and Multi-Axis Symmetry.
+  - Releases signed with official Ed25519 publisher key (`3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f`).
+  - Automated signature and CRC-32 integrity validation via `vpack test`.
 
 ### 🛡️ Security & VirusTotal Verification
 | Security Check | Result | Verification Link |

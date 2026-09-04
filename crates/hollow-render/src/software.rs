@@ -465,6 +465,87 @@ impl SoftwareRenderer {
         }
     }
 
+    pub fn render_perspective_guides(
+        &self,
+        buffer: &mut [u32],
+        win_w: usize,
+        win_h: usize,
+        doc: &Document,
+        pan: Vec2,
+        zoom: f32,
+        center_offset: Vec2,
+        viewport_clip: [usize; 4],
+        perspective: &hollow_core::perspective::PerspectiveConfig,
+    ) {
+        if win_w == 0 || win_h == 0 || !perspective.show_guides || perspective.p_type == hollow_core::perspective::PerspectiveType::None || perspective.guide_opacity <= 0.001 {
+            return;
+        }
+
+        let doc_w = doc.width as f32;
+        let doc_h = doc.height as f32;
+        let center_x = (win_w as f32) * 0.5 + pan.x + center_offset.x;
+        let center_y = (win_h as f32) * 0.5 + pan.y + center_offset.y;
+
+        let canvas_to_screen = |pt: Vec2| -> Vec2 {
+            let sx = (pt.x - doc_w * 0.5) * zoom + center_x;
+            let sy = (pt.y - doc_h * 0.5) * zoom + center_y;
+            Vec2::new(sx, sy)
+        };
+
+        let guide_color_u32 = 0xFF000000
+            | ((perspective.guide_color[0] as u32) << 16)
+            | ((perspective.guide_color[1] as u32) << 8)
+            | (perspective.guide_color[2] as u32);
+        let horizon_color_u32 = 0xFF000000
+            | ((perspective.horizon_color[0] as u32) << 16)
+            | ((perspective.horizon_color[1] as u32) << 8)
+            | (perspective.horizon_color[2] as u32);
+
+        // 1. Draw Horizon Line
+        let h_rad = perspective.horizon_angle.to_radians();
+        let h_dir = Vec2::new(h_rad.cos(), h_rad.sin());
+        let h_center_canvas = Vec2::new(doc_w * 0.5, perspective.horizon_y);
+        let span = (doc_w * doc_w + doc_h * doc_h).sqrt() * 3.0;
+        let h_p0_canvas = h_center_canvas - h_dir * span;
+        let h_p1_canvas = h_center_canvas + h_dir * span;
+        let h_p0_screen = canvas_to_screen(h_p0_canvas);
+        let h_p1_screen = canvas_to_screen(h_p1_canvas);
+
+        self.draw_screen_line(buffer, win_w, win_h, h_p0_screen, h_p1_screen, horizon_color_u32, false, viewport_clip);
+
+        // 2. Draw Radiating Guide Rays from Active Vanishing Points
+        let active_vps = perspective.get_active_vps();
+        for (vp_idx, &vp_canvas) in active_vps.iter().enumerate() {
+            let rays = perspective.generate_rays_for_vp(vp_canvas, doc_w, doc_h, perspective.guide_density);
+            let vp_color = match vp_idx {
+                0 => 0xFF4A90E2, // Left VP: Azure Blue
+                1 => 0xFF50E3C2, // Right VP: Turquoise Green
+                2 => 0xFFE056FD, // Vertical VP: Violet Pink
+                _ => guide_color_u32,
+            };
+
+            for (start_canvas, end_canvas) in rays {
+                let start_screen = canvas_to_screen(start_canvas);
+                let end_screen = canvas_to_screen(end_canvas);
+                self.draw_screen_line(buffer, win_w, win_h, start_screen, end_screen, vp_color, true, viewport_clip);
+            }
+
+            // Draw Vanishing Point Gizmo Handle
+            let vp_screen = canvas_to_screen(vp_canvas);
+            self.draw_screen_crosshair(buffer, win_w, win_h, vp_screen, 0xFFFFFFFF, viewport_clip);
+            self.draw_screen_ellipse(
+                buffer,
+                win_w,
+                win_h,
+                vp_screen - Vec2::new(7.0, 7.0),
+                vp_screen + Vec2::new(7.0, 7.0),
+                vp_color,
+                false,
+                viewport_clip,
+            );
+        }
+    }
+
     pub fn render_rulers(
         &self,
         buffer: &mut [u32],

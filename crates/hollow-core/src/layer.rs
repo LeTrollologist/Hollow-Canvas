@@ -8,6 +8,126 @@ pub enum LayerKind {
     #[default]
     Raster,
     Group,
+    Adjustment,
+}
+
+/// Dynamic non-destructive adjustment algorithm configuration
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum AdjustmentType {
+    BrightnessContrast {
+        brightness: f32, // -100.0 to +100.0
+        contrast: f32,   // -100.0 to +100.0
+    },
+    Hsl {
+        hue_shift: f32,   // -180.0 to +180.0
+        saturation: f32,  // 0.0 to 3.0 (1.0 = normal)
+        lightness: f32,   // -1.0 to +1.0 (0.0 = normal)
+    },
+    ColorBalance {
+        cyan_red: f32,      // -100.0 to +100.0
+        magenta_green: f32, // -100.0 to +100.0
+        yellow_blue: f32,   // -100.0 to +100.0
+    },
+    Invert,
+    Posterize {
+        levels: u32, // 2 to 32
+    },
+    Threshold {
+        cutoff: u8, // 0 to 255 (default 128)
+    },
+    Sepia {
+        strength: f32, // 0.0 to 1.0 (default 1.0)
+    },
+}
+
+impl AdjustmentType {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::BrightnessContrast { .. } => "Brightness / Contrast",
+            Self::Hsl { .. } => "Hue / Saturation / Lightness",
+            Self::ColorBalance { .. } => "Color Balance",
+            Self::Invert => "Invert",
+            Self::Posterize { .. } => "Posterize",
+            Self::Threshold { .. } => "Threshold",
+            Self::Sepia { .. } => "Sepia Tone",
+        }
+    }
+
+    pub fn badge(&self) -> &'static str {
+        match self {
+            Self::BrightnessContrast { .. } => "✦ Bright/Cont",
+            Self::Hsl { .. } => "✦ HSL",
+            Self::ColorBalance { .. } => "✦ Color Bal",
+            Self::Invert => "✦ Invert",
+            Self::Posterize { .. } => "✦ Posterize",
+            Self::Threshold { .. } => "✦ Threshold",
+            Self::Sepia { .. } => "✦ Sepia",
+        }
+    }
+
+    /// Computes the adjusted (R, G, B) value for a single pixel
+    #[inline]
+    pub fn apply_to_rgb(&self, r: u8, g: u8, b: u8) -> (u8, u8, u8) {
+        match self {
+            Self::BrightnessContrast { brightness, contrast } => {
+                let c_factor = (259.0 * (*contrast + 255.0)) / (255.0 * (259.0 - *contrast));
+                let r_b = (r as f32) + *brightness * 2.55;
+                let g_b = (g as f32) + *brightness * 2.55;
+                let b_b = (b as f32) + *brightness * 2.55;
+
+                let nr = (c_factor * (r_b - 128.0) + 128.0).clamp(0.0, 255.0).round() as u8;
+                let ng = (c_factor * (g_b - 128.0) + 128.0).clamp(0.0, 255.0).round() as u8;
+                let nb = (c_factor * (b_b - 128.0) + 128.0).clamp(0.0, 255.0).round() as u8;
+                (nr, ng, nb)
+            }
+            Self::Hsl { hue_shift, saturation, lightness } => {
+                let (h, s, l) = crate::filter::rgb_to_hsl(r, g, b);
+                let new_h = (h + *hue_shift + 360.0) % 360.0;
+                let new_s = (s * *saturation).clamp(0.0, 1.0);
+                let new_l = (l + *lightness).clamp(0.0, 1.0);
+                crate::filter::hsl_to_rgb(new_h, new_s, new_l)
+            }
+            Self::ColorBalance { cyan_red, magenta_green, yellow_blue } => {
+                let nr = ((r as f32) + *cyan_red * 1.28).clamp(0.0, 255.0).round() as u8;
+                let ng = ((g as f32) + *magenta_green * 1.28).clamp(0.0, 255.0).round() as u8;
+                let nb = ((b as f32) + *yellow_blue * 1.28).clamp(0.0, 255.0).round() as u8;
+                (nr, ng, nb)
+            }
+            Self::Invert => (255 - r, 255 - g, 255 - b),
+            Self::Posterize { levels } => {
+                let lvls = (*levels).clamp(2, 32) as f32;
+                let step = 255.0 / (lvls - 1.0);
+                let nr = ((r as f32 / step).round() * step).clamp(0.0, 255.0).round() as u8;
+                let ng = ((g as f32 / step).round() * step).clamp(0.0, 255.0).round() as u8;
+                let nb = ((b as f32 / step).round() * step).clamp(0.0, 255.0).round() as u8;
+                (nr, ng, nb)
+            }
+            Self::Threshold { cutoff } => {
+                let gray = (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).round() as u8;
+                let v = if gray >= *cutoff { 255 } else { 0 };
+                (v, v, v)
+            }
+            Self::Sepia { strength } => {
+                let rf = r as f32;
+                let gf = g as f32;
+                let bf = b as f32;
+                let sr = (rf * 0.393 + gf * 0.769 + bf * 0.189).min(255.0);
+                let sg = (rf * 0.349 + gf * 0.686 + bf * 0.168).min(255.0);
+                let sb = (rf * 0.272 + gf * 0.534 + bf * 0.131).min(255.0);
+                let st = strength.clamp(0.0, 1.0);
+                let nr = (rf * (1.0 - st) + sr * st).clamp(0.0, 255.0).round() as u8;
+                let ng = (gf * (1.0 - st) + sg * st).clamp(0.0, 255.0).round() as u8;
+                let nb = (bf * (1.0 - st) + sb * st).clamp(0.0, 255.0).round() as u8;
+                (nr, ng, nb)
+            }
+        }
+    }
+}
+
+/// Container for adjustment layer parameters
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdjustmentConfig {
+    pub adjustment_type: AdjustmentType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +136,8 @@ pub struct Layer {
     pub name: String,
     #[serde(default)]
     pub kind: LayerKind,
+    #[serde(default)]
+    pub adjustment: Option<AdjustmentConfig>,
     #[serde(default)]
     pub parent_id: Option<LayerId>,
     #[serde(default = "default_expanded")]
@@ -51,6 +173,7 @@ impl Layer {
             id,
             name: name.into(),
             kind: LayerKind::Raster,
+            adjustment: None,
             parent_id: None,
             is_expanded: true,
             pass_through: false,
@@ -74,9 +197,34 @@ impl Layer {
             id,
             name: name.into(),
             kind: LayerKind::Group,
+            adjustment: None,
             parent_id: None,
             is_expanded: true,
             pass_through: true,
+            width: 0,
+            height: 0,
+            visible: true,
+            locked: false,
+            alpha_locked: false,
+            clipping_mask: false,
+            is_reference: false,
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            offset_x: 0,
+            offset_y: 0,
+            pixels: Vec::new(),
+        }
+    }
+
+    pub fn new_adjustment(id: LayerId, name: impl Into<String>, adj_type: AdjustmentType) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            kind: LayerKind::Adjustment,
+            adjustment: Some(AdjustmentConfig { adjustment_type: adj_type }),
+            parent_id: None,
+            is_expanded: true,
+            pass_through: false,
             width: 0,
             height: 0,
             visible: true,
@@ -98,6 +246,11 @@ impl Layer {
     }
 
     #[inline]
+    pub fn is_adjustment(&self) -> bool {
+        self.kind == LayerKind::Adjustment
+    }
+
+    #[inline]
     pub fn is_raster(&self) -> bool {
         self.kind == LayerKind::Raster
     }
@@ -113,6 +266,7 @@ impl Layer {
             id,
             name: name.into(),
             kind: LayerKind::Raster,
+            adjustment: None,
             parent_id: None,
             is_expanded: true,
             pass_through: false,
@@ -196,6 +350,7 @@ impl Layer {
             id: new_id,
             name: format!("{} Copy", self.name),
             kind: self.kind,
+            adjustment: self.adjustment.clone(),
             parent_id: self.parent_id,
             is_expanded: self.is_expanded,
             pass_through: self.pass_through,

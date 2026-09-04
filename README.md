@@ -21,6 +21,8 @@
 
 ### Key Highlights
 
+- 📐 **Visual Perspective Rulers (1, 2, and 3-Point)**: Horizon line elevation & tilt, multi-colored radial vanishing point rays (Azure Blue, Turquoise Green, Violet Pink), and a real-time **Constraint Snapping Engine (<kbd>Ctrl+Shift+P</kbd>)** that projects brush strokes onto perspective vectors.
+- ✨ **Non-Destructive Adjustment Layers**: Real-time, zero-allocation filter passes during composite steps (`Brightness/Contrast`, `HSL`, `Color Balance`, `Invert`, `Posterize`, `Threshold`, `Sepia`) that dynamically affect layers underneath without altering base pixel data.
 - 🎨 **Floating Mixing Scratchpad (<kbd>F4</kbd>)**: Persistent off-canvas color mixing dock for scribbling, smudging pigments, and eyedropper sampling without modifying the main document or history.
 - ⚡ **Subpixel-Antialiased High-Frequency Engine**: Guaranteed physical sub-pixel antialiasing transition bands across all hardness levels, with true Catmull-Rom spline tangent curvature and S-Level Global Stroke Stabilization (S-0 through S-7 Lazy Rope).
 - 📁 **Nested Layer Groups (Folders)**: Hierarchical folder management with collapsible trees, ancestor visibility/opacity inheritance, and one-click group duplication/ungrouping.
@@ -32,7 +34,7 @@
 - 📐 **Symmetry & Grid Overlays**: Real-time Horizontal, Vertical, Quad, and multi-segment Radial/Mandala symmetry, with toggleable pixel grids (8px–128px) and dynamic viewport rulers.
 - 💡 **Reference Lightbox**: Floating reference image dock with toggleable high-contrast white lightbox and checkerboard backlight modes.
 - 🛡️ **Zero-Allocation Rendering**: Highly optimized software rendering pipeline with reusable composite buffers for silky smooth 60+ FPS viewport navigation and drawing.
-- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.hcv`) alongside Ed25519-signed `.vpack` releases.
+- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.hcv` v4) alongside Ed25519-signed `.vpack` releases.
 
 ---
 
@@ -44,10 +46,10 @@ The workspace is organized into modular, decoupled Rust crates:
 Hollow Canvas/
 ├── assets/           # Application icons (SVG, ICO, PNG) and banner art
 ├── crates/
-│   ├── hollow-core/  # Core data models, blend modes, symmetry, layer stack, and rasterizers
-│   ├── hollow-render/# Software renderer, texture caching, grid/ruler overlays, and UI primitive composition
-│   ├── hollow-io/    # Binary HCV project serialization, PNG export, and file parsing
-│   ├── hollow-ui/    # Modern egui-based dock panels, tools shelf, color palettes, and modals
+│   ├── hollow-core/  # Core domain models, perspective geometry, adjustment filters, layers, and rasterizers
+│   ├── hollow-render/# Software renderer, perspective guides, texture caching, grid/ruler overlays, and UI primitives
+│   ├── hollow-io/    # Binary HCV v4 project serialization, PNG export, and file parsing
+│   ├── hollow-ui/    # Modern egui-based dock panels, tools shelf, perspective dock, adjustment modals, and palettes
 │   └── hollow-app/   # Native Win32 desktop application orchestrator and message loop
 ```
 
@@ -61,18 +63,18 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 [**VPack Archiver**](https://github.com/LeTrollologist/vpack-archiver) is the high-performance universal archive manager for `.vpack` packages.
 
-1. Download [`hollow-canvas-v0.15.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) and [`hollow-publisher.pub`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v0.16.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) and [`hollow-publisher.pub`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the package with `vpack`:
    ```bash
    # Extract all files
-   vpack extract hollow-canvas-v0.15.0-windows-x86_64.vpack
+   vpack extract hollow-canvas-v0.16.0-windows-x86_64.vpack
 
    # Or extract to a custom directory
-   vpack extract hollow-canvas-v0.15.0-windows-x86_64.vpack -o ./HollowCanvas/
+   vpack extract hollow-canvas-v0.16.0-windows-x86_64.vpack -o ./HollowCanvas/
    ```
 3. *(Optional)* Verify Ed25519 signature and CRC-32 integrity:
    ```bash
-   vpack test hollow-canvas-v0.15.0-windows-x86_64.vpack
+   vpack test hollow-canvas-v0.16.0-windows-x86_64.vpack
    ```
 4. Run `hollow-canvas.exe`.
 
@@ -82,10 +84,10 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 No additional archive tools required — works with standard Windows extraction:
 
-1. Download [`hollow-canvas-v0.15.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v0.16.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the zip file using PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\hollow-canvas-v0.15.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
+   Expand-Archive -Path .\hollow-canvas-v0.16.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
    ```
 3. Double-click `HollowCanvas\hollow-canvas.exe` to launch immediately.
 

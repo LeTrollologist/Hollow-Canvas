@@ -781,4 +781,69 @@ mod tests {
         );
         assert!(mask.is_selected(15, 10));
     }
+
+    #[test]
+    fn test_perspective_ruler_snapping_and_rays() {
+        use crate::perspective::{PerspectiveConfig, PerspectiveType};
+
+        let mut cfg = PerspectiveConfig::default();
+        cfg.reset_preset(PerspectiveType::TwoPoint, 1920, 1080);
+        cfg.snap_enabled = true;
+        cfg.snap_strength = 1.0;
+
+        assert_eq!(cfg.get_active_vps().len(), 2);
+        let start = Vec2::new(960.0, 540.0);
+        let current_right = Vec2::new(1060.0, 540.0); // Moving horizontally towards VP2
+
+        let (snapped, axis) = cfg.constrain_stroke_point(start, current_right, None);
+        assert!(axis.length() > 0.9);
+        assert!((snapped.y - 540.0).abs() < 1.0);
+
+        // Ray generation test
+        let rays = cfg.generate_rays_for_vp(cfg.vp1, 1920.0, 1080.0, 16);
+        assert_eq!(rays.len(), 16);
+        for (origin, end) in rays {
+            assert_eq!(origin, cfg.vp1);
+            assert!(end.distance(origin) > 1000.0);
+        }
+    }
+
+    #[test]
+    fn test_non_destructive_adjustment_layers() {
+        use crate::layer::AdjustmentType;
+
+        let mut doc = Document::new(10, 10);
+        // Base drawing layer filled with gray (128, 128, 128, 255)
+        for y in 0..10 {
+            for x in 0..10 {
+                doc.layers[0].set_pixel(x, y, [128, 128, 128, 255]);
+            }
+        }
+
+        // 1. Add Invert adjustment layer
+        let inv_id = doc.add_adjustment_layer(AdjustmentType::Invert, None);
+        let comp1 = doc.composite_layers(false);
+        // Inverted 128 is 127
+        assert_eq!(comp1[0], 127);
+        assert_eq!(comp1[1], 127);
+        assert_eq!(comp1[2], 127);
+
+        // 2. Adjust opacity of Invert layer to 50%
+        doc.get_layer_mut(inv_id).unwrap().opacity = 0.5;
+        let comp2 = doc.composite_layers(false);
+        // 50% between 128 and 127 is 128 or 127
+        assert!((comp2[0] as i32 - 128).abs() <= 1);
+
+        // 3. Replace with Brightness/Contrast (+50 brightness)
+        doc.delete_layer(inv_id);
+        let _bright_id = doc.add_adjustment_layer(
+            AdjustmentType::BrightnessContrast { brightness: 50.0, contrast: 0.0 },
+            None,
+        );
+        let comp3 = doc.composite_layers(false);
+        assert!(comp3[0] > 200); // Shifted bright
+
+        // 4. Verify original layer pixels were NOT modified (Non-Destructive!)
+        assert_eq!(doc.layers[0].get_pixel(5, 5).unwrap(), [128, 128, 128, 255]);
+    }
 }

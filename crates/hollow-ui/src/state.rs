@@ -146,6 +146,9 @@ pub struct AppState {
     pub show_rulers: bool,
     pub show_navigator: bool,
     pub flip_view_horizontal: bool,
+    pub perspective: hollow_core::perspective::PerspectiveConfig,
+    pub show_perspective_dock: bool,
+    pub active_adjustment_modal: Option<u64>,
 
     // New Canvas Modal
     pub show_new_canvas_dialog: bool,
@@ -307,6 +310,13 @@ impl AppState {
             show_rulers: true,
             show_navigator: true,
             flip_view_horizontal: false,
+            perspective: {
+                let mut p = hollow_core::perspective::PerspectiveConfig::default();
+                p.init_for_canvas(width, height);
+                p
+            },
+            show_perspective_dock: false,
+            active_adjustment_modal: None,
 
             show_new_canvas_dialog: false,
             new_canvas_preset_idx: 0,
