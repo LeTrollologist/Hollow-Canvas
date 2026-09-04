@@ -168,7 +168,9 @@ struct HollowCanvasDesktopApp {
     is_pointer_down: bool,
     is_drawing_on_canvas: bool,
     is_space_down: bool,
+    is_middle_panning: bool,
     last_canvas_pos: Option<Vec2>,
+    last_pan_screen_pos: Option<Vec2>,
     stroke_points: Vec<BrushPoint>,
     before_stroke_pixels: Vec<u8>,
     before_move_offset: (i32, i32),
@@ -178,6 +180,7 @@ struct HollowCanvasDesktopApp {
     current_velocity: f32,
     last_anim_tick: Instant,
     stabilized_pos: Option<Vec2>,
+    has_initialized_view: bool,
 }
 
 impl HollowCanvasDesktopApp {
@@ -185,50 +188,9 @@ impl HollowCanvasDesktopApp {
         let w = self.win_w as f32;
         let h = self.win_h as f32;
 
-        // 1. Check if egui is actively using or requesting pointer interaction
-        if self.egui_ctx.wants_pointer_input() || self.egui_ctx.is_pointer_over_area() || self.egui_ctx.is_using_pointer() {
-            return true;
-        }
-
-        // 2. Main Studio Panels
-        if self.state.show_ui_panels {
-            // Top menu & window titlebar region
-            if pos.y < 46.0 {
-                return true;
-            }
-            // Bottom status bar & animation timeline strip
-            let bottom_h = if self.state.timeline.is_enabled { 88.0 } else { 32.0 };
-            if pos.y > (h - bottom_h) {
-                return true;
-            }
-            // Left tool dock & properties panel
-            if pos.x < 235.0 {
-                return true;
-            }
-            // Right layers & color palette panel
-            if pos.x > (w - 255.0) {
-                return true;
-            }
-        } else {
-            // Minimal floating hamburger / header button area
-            if pos.x < 260.0 && pos.y < 50.0 {
-                return true;
-            }
-        }
-
-        // 3. Selection floating HUD bar
-        if self.state.selection.as_ref().map_or(false, |s| s.has_selection()) && !self.state.transform_session.is_active && self.state.show_ui_panels {
-            let hud_x_min = (w - 380.0) * 0.5;
-            let hud_x_max = (w + 380.0) * 0.5;
-            let hud_y_min = h - 70.0;
-            let hud_y_max = h - 15.0;
-            if pos.x >= hud_x_min && pos.x <= hud_x_max && pos.y >= hud_y_min && pos.y <= hud_y_max {
-                return true;
-            }
-        }
-
-        // 4. Any active dialogs, modal filters, reference lightbox dock
+        // 1. Any active modal dialogs, filters, lightbox, or transform session
         if self.state.show_ref_window
+            || self.state.show_scratchpad
             || self.state.show_help
             || self.state.show_about_dialog
             || self.state.show_new_canvas_dialog
@@ -240,6 +202,43 @@ impl HollowCanvasDesktopApp {
             || self.state.transform_session.is_active
         {
             if self.egui_ctx.is_pointer_over_area() || self.egui_ctx.wants_pointer_input() {
+                return true;
+            }
+        }
+
+        // 2. Main Studio Panels (strictly bounded to physical dock rectangles)
+        if self.state.show_ui_panels {
+            // Top header bar
+            if pos.y < 38.0 {
+                return true;
+            }
+            // Bottom status bar & animation timeline strip
+            let bottom_h = if self.state.timeline.is_enabled { 88.0 } else { 32.0 };
+            if pos.y > (h - bottom_h) {
+                return true;
+            }
+            // Left tool dock & properties panel (strictly 0..220)
+            if pos.x < 220.0 {
+                return true;
+            }
+            // Right layers & color palette dock (strictly win_w - 240..win_w)
+            if pos.x > (w - 240.0) {
+                return true;
+            }
+        } else {
+            // Minimal floating hamburger / header button area
+            if pos.x < 260.0 && pos.y < 42.0 {
+                return true;
+            }
+        }
+
+        // 3. Selection floating HUD bar
+        if self.state.selection.as_ref().map_or(false, |s| s.has_selection()) && !self.state.transform_session.is_active && self.state.show_ui_panels {
+            let hud_x_min = (w - 380.0) * 0.5;
+            let hud_x_max = (w + 380.0) * 0.5;
+            let hud_y_min = h - 70.0;
+            let hud_y_max = h - 15.0;
+            if pos.x >= hud_x_min && pos.x <= hud_x_max && pos.y >= hud_y_min && pos.y <= hud_y_max {
                 return true;
             }
         }
@@ -283,6 +282,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.win_w = width;
             app.win_h = height;
             app.buffer.resize(width * height, 0);
+
+            if !app.has_initialized_view && width > 400 && height > 300 {
+                app.state.reset_view_centered(width as f32, height as f32);
+                app.has_initialized_view = true;
+            }
             0
         }
         WM_MOUSEMOVE => {
@@ -300,11 +304,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.events.push(egui::Event::PointerMoved(app.mouse_pos));
 
             let screen_pos = Vec2::new(x, y);
-            if app.is_space_down {
-                if let Some(last) = app.last_canvas_pos {
+            if (app.is_space_down && app.is_pointer_down) || app.is_middle_panning {
+                if let Some(last) = app.last_pan_screen_pos {
                     app.state.pan += screen_pos - last;
                 }
-                app.last_canvas_pos = Some(screen_pos);
+                app.last_pan_screen_pos = Some(screen_pos);
                 InvalidateRect(hwnd, std::ptr::null(), 0);
                 return 0;
             }
@@ -312,7 +316,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             let canvas_pos = app.state.screen_to_canvas(screen_pos, app.win_w as f32, app.win_h as f32);
             app.state.cursor_canvas_pos = canvas_pos;
 
-            if app.is_drawing_on_canvas && !app.is_space_down {
+            if app.is_drawing_on_canvas && !app.is_space_down && !app.is_middle_panning {
                 let tool = app.state.brush.tool;
                 if tool == ToolType::Move {
                     let is_ctrl = (GetKeyState(0x11) as i32 & 0x8000) != 0;
@@ -326,11 +330,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         }
                         app.last_canvas_pos = Some(canvas_pos);
                     } else {
-                        if let Some(prev) = app.last_canvas_pos {
+                        if let Some(prev) = app.last_pan_screen_pos {
                             let delta = screen_pos - prev;
                             app.state.pan += delta;
                         }
-                        app.last_canvas_pos = Some(screen_pos);
+                        app.last_pan_screen_pos = Some(screen_pos);
                     }
                 } else if tool == ToolType::Lasso {
                     let should_add = match app.state.lasso_points.last() {
@@ -399,19 +403,30 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     let last_drawn_pos = app.stroke_points.last().map(|p| p.position).unwrap_or(target_pos);
                     let move_dist = last_drawn_pos.distance(target_pos);
 
-                    // Continuous multi-point interpolation for fast strokes:
-                    // Prevents stopping/pausing during fast mouse moves!
-                    let max_step = 6.0_f32;
-                    let sel = app.state.selection.as_ref();
-                    if move_dist > max_step {
-                        let num_steps = ((move_dist / max_step).ceil() as usize).min(12);
-                        for step_i in 1..=num_steps {
-                            let t = step_i as f32 / num_steps as f32;
-                            let sub_pos = last_drawn_pos.lerp(target_pos, t);
-                            let pt = BrushPoint::new(sub_pos, pressure);
-                            app.stroke_points.push(pt);
-                            let n = app.stroke_points.len();
+                    if move_dist >= 0.5 {
+                        let pt = BrushPoint::new(target_pos, pressure);
+                        app.stroke_points.push(pt);
+                        let n = app.stroke_points.len();
 
+                        if tool.is_selection_stroke_tool() {
+                            if let Some(mask) = &mut app.state.selection {
+                                let radius = (app.state.brush.size * 0.5).max(1.0);
+                                let hardness = app.state.brush.hardness;
+                                let opacity = app.state.brush.opacity;
+                                let step = (radius * 0.25).max(0.5);
+                                let steps = ((move_dist / step).ceil() as usize).max(1);
+                                for step_i in 1..=steps {
+                                    let t = step_i as f32 / steps as f32;
+                                    let sub_pos = last_drawn_pos.lerp(target_pos, t);
+                                    if tool == ToolType::SelectionEraser {
+                                        mask.erase_circle(sub_pos, radius, hardness, opacity);
+                                    } else {
+                                        mask.paint_circle(sub_pos, radius, hardness, opacity);
+                                    }
+                                }
+                            }
+                        } else {
+                            let sel = app.state.selection.as_ref();
                             if n == 2 {
                                 StrokeRasterizer::paint_segment(
                                     &mut app.state.document,
@@ -446,44 +461,6 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             }
                         }
                         app.last_canvas_pos = Some(target_pos);
-                    } else if move_dist >= 0.75 {
-                        let pt = BrushPoint::new(target_pos, pressure);
-                        app.stroke_points.push(pt);
-                        let n = app.stroke_points.len();
-
-                        if n == 2 {
-                            StrokeRasterizer::paint_segment(
-                                &mut app.state.document,
-                                app.stroke_points[0],
-                                app.stroke_points[1],
-                                &app.state.brush,
-                                &app.state.symmetry,
-                                sel,
-                            );
-                        } else if n == 3 {
-                            StrokeRasterizer::paint_spline(
-                                &mut app.state.document,
-                                app.stroke_points[0],
-                                app.stroke_points[1],
-                                app.stroke_points[2],
-                                app.stroke_points[2],
-                                &app.state.brush,
-                                &app.state.symmetry,
-                                sel,
-                            );
-                        } else if n >= 4 {
-                            StrokeRasterizer::paint_spline(
-                                &mut app.state.document,
-                                app.stroke_points[n - 4],
-                                app.stroke_points[n - 3],
-                                app.stroke_points[n - 2],
-                                app.stroke_points[n - 1],
-                                &app.state.brush,
-                                &app.state.symmetry,
-                                sel,
-                            );
-                        }
-                        app.last_canvas_pos = Some(target_pos);
                     }
                 }
             }
@@ -504,7 +481,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             let screen_pos = Vec2::new(raw_x, raw_y);
 
             if app.is_space_down {
-                app.last_canvas_pos = Some(screen_pos);
+                app.last_pan_screen_pos = Some(screen_pos);
                 return 0;
             }
 
@@ -520,6 +497,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.current_velocity = 0.0;
             let canvas_pos = app.state.screen_to_canvas(screen_pos, app.win_w as f32, app.win_h as f32);
             app.last_canvas_pos = Some(canvas_pos);
+            app.last_pan_screen_pos = Some(screen_pos);
             app.stroke_points.clear();
             app.stroke_points.push(BrushPoint::new(canvas_pos, 1.0));
 
@@ -633,8 +611,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.before_move_offset = (layer.offset_x, layer.offset_y);
                     }
                     app.last_canvas_pos = Some(canvas_pos);
+                    app.last_pan_screen_pos = None;
                 } else {
-                    app.last_canvas_pos = Some(screen_pos);
+                    app.last_pan_screen_pos = Some(screen_pos);
+                    app.last_canvas_pos = None;
                 }
             } else if tool.is_shape_tool() || tool == ToolType::Marquee || tool == ToolType::Crop {
                 if tool.is_shape_tool() {
@@ -645,14 +625,30 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
                 app.state.drag_start_canvas_pos = Some(canvas_pos);
             } else if tool.is_freehand_stroke_tool() {
-                if let Some(layer) = app.state.document.active_layer() {
-                    app.before_stroke_pixels = layer.pixels.clone();
-                    app.active_snapshot_taken = true;
+                if tool.is_selection_stroke_tool() {
+                    if app.state.selection.is_none() {
+                        app.state.selection = Some(SelectionMask::new(app.state.document.width, app.state.document.height));
+                    }
+                    if let Some(mask) = &mut app.state.selection {
+                        let radius = (app.state.brush.size * 0.5).max(1.0);
+                        let hardness = app.state.brush.hardness;
+                        let opacity = app.state.brush.opacity;
+                        if tool == ToolType::SelectionEraser {
+                            mask.erase_circle(canvas_pos, radius, hardness, opacity);
+                        } else {
+                            mask.paint_circle(canvas_pos, radius, hardness, opacity);
+                        }
+                    }
+                } else {
+                    if let Some(layer) = app.state.document.active_layer() {
+                        app.before_stroke_pixels = layer.pixels.clone();
+                        app.active_snapshot_taken = true;
+                    }
+                    let point = BrushPoint::new(canvas_pos, 1.0);
+                    let sel = app.state.selection.as_ref();
+                    StrokeRasterizer::paint_dot(&mut app.state.document, point, &app.state.brush, &app.state.symmetry, sel);
                 }
                 app.stabilized_pos = Some(canvas_pos);
-                let point = BrushPoint::new(canvas_pos, 1.0);
-                let sel = app.state.selection.as_ref();
-                StrokeRasterizer::paint_dot(&mut app.state.document, point, &app.state.brush, &app.state.symmetry, sel);
             }
             InvalidateRect(hwnd, std::ptr::null(), 0);
             0
@@ -661,6 +657,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             let was_drawing = app.is_drawing_on_canvas;
             app.is_pointer_down = false;
             app.is_drawing_on_canvas = false;
+            app.last_canvas_pos = None;
+            app.last_pan_screen_pos = None;
             app.events.push(egui::Event::PointerButton {
                 pos: app.mouse_pos,
                 button: egui::PointerButton::Primary,
@@ -768,47 +766,46 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     }
                 }
             } else if tool.is_freehand_stroke_tool() {
-                // Smoothly finish stroke to release point if trailing
-                let last_drawn_pos = app.stroke_points.last().map(|p| p.position).unwrap_or(canvas_pos);
-                let end_dist = last_drawn_pos.distance(canvas_pos);
-                if end_dist > 1.0 {
-                    let num_steps = ((end_dist / 6.0).ceil() as usize).min(8);
-                    let last_pressure = app.stroke_points.last().map(|p| p.pressure).unwrap_or(1.0);
-                    let sel = app.state.selection.as_ref();
-                    for step_i in 1..=num_steps {
-                        let t = step_i as f32 / num_steps as f32;
-                        let sub_pos = last_drawn_pos.lerp(canvas_pos, t);
-                        let p = last_pressure * (1.0 - t * 0.25); // gentle release taper
-                        app.stroke_points.push(BrushPoint::new(sub_pos, p));
-                        let n = app.stroke_points.len();
-                        if n >= 4 {
-                            StrokeRasterizer::paint_spline(
-                                &mut app.state.document,
-                                app.stroke_points[n - 4],
-                                app.stroke_points[n - 3],
-                                app.stroke_points[n - 2],
-                                app.stroke_points[n - 1],
-                                &app.state.brush,
-                                &app.state.symmetry,
-                                sel,
-                            );
+                if tool.is_selection_stroke_tool() {
+                    if let Some(mask) = &mut app.state.selection {
+                        mask.recompute_metadata();
+                        if !mask.has_selection() {
+                            app.state.selection = None;
                         }
                     }
-                }
+                } else {
+                    // Smoothly finish stroke to release point if trailing
+                    let last_drawn_pos = app.stroke_points.last().map(|p| p.position).unwrap_or(canvas_pos);
+                    let end_dist = last_drawn_pos.distance(canvas_pos);
+                    if end_dist >= 0.5 {
+                        let last_pressure = app.stroke_points.last().map(|p| p.pressure).unwrap_or(1.0);
+                        let p = last_pressure * 0.75; // gentle release taper
+                        app.stroke_points.push(BrushPoint::new(canvas_pos, p));
+                    }
 
-                let n = app.stroke_points.len();
-                let sel = app.state.selection.as_ref();
-                if n >= 3 {
-                    StrokeRasterizer::paint_spline(
-                        &mut app.state.document,
-                        app.stroke_points[n - 3],
-                        app.stroke_points[n - 2],
-                        app.stroke_points[n - 1],
-                        app.stroke_points[n - 1],
-                        &app.state.brush,
-                        &app.state.symmetry,
-                        sel,
-                    );
+                    let n = app.stroke_points.len();
+                    let sel = app.state.selection.as_ref();
+                    if n == 2 {
+                        StrokeRasterizer::paint_segment(
+                            &mut app.state.document,
+                            app.stroke_points[0],
+                            app.stroke_points[1],
+                            &app.state.brush,
+                            &app.state.symmetry,
+                            sel,
+                        );
+                    } else if n >= 3 {
+                        StrokeRasterizer::paint_spline(
+                            &mut app.state.document,
+                            app.stroke_points[n - 3],
+                            app.stroke_points[n - 2],
+                            app.stroke_points[n - 1],
+                            app.stroke_points[n - 1],
+                            &app.state.brush,
+                            &app.state.symmetry,
+                            sel,
+                        );
+                    }
                 }
                 app.stroke_points.clear();
                 app.stabilized_pos = None;
@@ -829,6 +826,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 app.active_snapshot_taken = false;
             }
             app.last_canvas_pos = None;
+            app.last_pan_screen_pos = None;
             InvalidateRect(hwnd, std::ptr::null(), 0);
             0
         }
@@ -853,15 +851,15 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             0
         }
         WM_MBUTTONDOWN => {
-            app.is_space_down = true;
+            app.is_middle_panning = true;
             let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
             let raw_y = ((lparam as u32 >> 16) & 0xFFFF) as i16 as f32;
-            app.last_canvas_pos = Some(Vec2::new(raw_x, raw_y));
+            app.last_pan_screen_pos = Some(Vec2::new(raw_x, raw_y));
             0
         }
         WM_MBUTTONUP => {
-            app.is_space_down = false;
-            app.last_canvas_pos = None;
+            app.is_middle_panning = false;
+            app.last_pan_screen_pos = None;
             0
         }
         WM_MOUSEWHEEL => {
@@ -896,7 +894,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 0x20 => { // Space
                     if !app.is_space_down {
                         app.is_space_down = true;
-                        app.last_canvas_pos = None;
+                        app.last_pan_screen_pos = None;
                     }
                 }
                 0x4E if is_ctrl => { // Ctrl+N (New Canvas)
@@ -958,6 +956,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 0x52 if is_ctrl => { // Ctrl+R (Toggle Rulers)
                     app.state.show_rulers = !app.state.show_rulers;
                 }
+                0x30 if is_ctrl => { // Ctrl+0 (Fit Screen)
+                    app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
+                }
+                0x31 if is_ctrl => { // Ctrl+1 (100% Actual Size)
+                    app.state.reset_view();
+                }
                 0x41 if is_ctrl => { // Ctrl+A (Select All)
                     app.state.selection = Some(SelectionMask::select_all(app.state.document.width, app.state.document.height));
                     app.state.set_status("Selected All");
@@ -995,11 +999,28 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 0x49 => app.state.brush.tool = ToolType::Eyedropper, // I
                 0x4D => app.state.brush.tool = ToolType::Marquee,    // M
                 0x4C => app.state.brush.tool = ToolType::Lasso,      // L
+                0x51 => { // Q (Selection Brush) / Shift+Q (Selection Eraser)
+                    if is_shift {
+                        app.state.brush.tool = ToolType::SelectionEraser;
+                        app.state.set_status("Tool: Selection Eraser");
+                    } else {
+                        app.state.brush.tool = ToolType::SelectionBrush;
+                        app.state.set_status("Tool: Selection Brush");
+                    }
+                }
                 0x54 => { // T (Toggle Canvas Tracing Reference)
                     app.state.tracing_enabled = !app.state.tracing_enabled;
                     app.state.set_status(if app.state.tracing_enabled { "Tracing Paper: ON" } else { "Tracing Paper: OFF" });
                 }
                 0x56 => app.state.brush.tool = ToolType::Move,       // V
+                0x48 => { // H (Flip View Horizontally)
+                    app.state.flip_view_horizontal = !app.state.flip_view_horizontal;
+                    app.state.set_status(if app.state.flip_view_horizontal { "View Flipped Horizontally" } else { "View Unflipped" });
+                }
+                0x73 => { // F4 (Toggle Mixing Scratchpad)
+                    app.state.show_scratchpad = !app.state.show_scratchpad;
+                    app.state.set_status(if app.state.show_scratchpad { "Scratchpad: Opened" } else { "Scratchpad: Closed" });
+                }
                 0x4F if !is_ctrl => app.state.toggle_onion_skin(),    // O (Toggle Onion Skinning)
                 0xDB => app.state.step_prev_frame(),                  // [ (Step Previous Frame)
                 0xDD => app.state.step_next_frame(),                  // ] (Step Next Frame)
@@ -1035,7 +1056,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
         WM_KEYUP => {
             if wparam == 0x20 {
                 app.is_space_down = false;
-                app.last_canvas_pos = None;
+                app.last_pan_screen_pos = None;
             }
             0
         }
@@ -1142,6 +1163,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     }
                 }
 
+                let center_offset = app.state.viewport_center_offset();
+                let viewport_clip = app.state.viewport_rect(app.win_w, app.win_h);
+
                 app.renderer.render_canvas(
                     &mut app.buffer,
                     app.win_w,
@@ -1149,8 +1173,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     &app.state.document,
                     app.state.pan,
                     app.state.zoom,
+                    center_offset,
+                    viewport_clip,
                     tracing_cfg,
                     &onion_skins,
+                    app.state.selection.as_ref().map(|s| s.mask.as_slice()),
                 );
 
                 // 3. Render toggleable grid with up-to-date state
@@ -1162,6 +1189,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         &app.state.document,
                         app.state.pan,
                         app.state.zoom,
+                        center_offset,
+                        viewport_clip,
                         app.state.grid_size,
                         app.state.grid_opacity,
                     );
@@ -1176,13 +1205,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
                     match app.state.brush.tool {
                         ToolType::Line | ToolType::Gradient => {
-                            app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, p0, p1, accent_color, true);
+                            app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, p0, p1, accent_color, true, viewport_clip);
                         }
                         ToolType::Rect | ToolType::Marquee | ToolType::Crop => {
-                            app.renderer.draw_screen_rect(&mut app.buffer, app.win_w, app.win_h, p0, p1, accent_color, true);
+                            app.renderer.draw_screen_rect(&mut app.buffer, app.win_w, app.win_h, p0, p1, accent_color, true, viewport_clip);
                         }
                         ToolType::Ellipse => {
-                            app.renderer.draw_screen_ellipse(&mut app.buffer, app.win_w, app.win_h, p0, p1, accent_color, true);
+                            app.renderer.draw_screen_ellipse(&mut app.buffer, app.win_w, app.win_h, p0, p1, accent_color, true, viewport_clip);
                         }
                         _ => {}
                     }
@@ -1192,7 +1221,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 if let Some((cp0, cp1)) = app.state.crop_box {
                     let p0 = app.state.canvas_to_screen(cp0, app.win_w as f32, app.win_h as f32);
                     let p1 = app.state.canvas_to_screen(cp1, app.win_w as f32, app.win_h as f32);
-                    app.renderer.draw_screen_rect(&mut app.buffer, app.win_w, app.win_h, p0, p1, 0xFFFFAA00, false);
+                    app.renderer.draw_screen_rect(&mut app.buffer, app.win_w, app.win_h, p0, p1, 0xFFFFAA00, false, viewport_clip);
                 }
 
                 // Render polygon vertices and line to cursor
@@ -1200,12 +1229,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     for i in 0..app.state.polygon_points.len() - 1 {
                         let p0 = app.state.canvas_to_screen(app.state.polygon_points[i], app.win_w as f32, app.win_h as f32);
                         let p1 = app.state.canvas_to_screen(app.state.polygon_points[i + 1], app.win_w as f32, app.win_h as f32);
-                        app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, p0, p1, accent_color, false);
+                        app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, p0, p1, accent_color, false, viewport_clip);
                     }
                     if let Some(&last_pt) = app.state.polygon_points.last() {
                         let p0 = app.state.canvas_to_screen(last_pt, app.win_w as f32, app.win_h as f32);
                         let p1 = app.state.canvas_to_screen(app.state.cursor_canvas_pos, app.win_w as f32, app.win_h as f32);
-                        app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, p0, p1, accent_color, true);
+                        app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, p0, p1, accent_color, true, viewport_clip);
                     }
                 }
 
@@ -1215,7 +1244,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         let p_tip = app.state.canvas_to_screen(stab_pos, app.win_w as f32, app.win_h as f32);
                         let p_cursor = Vec2::new(app.mouse_pos.x, app.mouse_pos.y);
                         if p_tip.distance(p_cursor) >= 4.0 {
-                            app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, p_tip, p_cursor, 0xAA00D4FF, false);
+                            app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, p_tip, p_cursor, 0xAA00D4FF, false, viewport_clip);
                         }
                     }
                 }
@@ -1229,6 +1258,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         &app.state.document,
                         app.state.pan,
                         app.state.zoom,
+                        center_offset,
+                        viewport_clip,
                         app.state.cursor_canvas_pos,
                     );
                 }
@@ -1463,7 +1494,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         is_pointer_down: false,
         is_drawing_on_canvas: false,
         is_space_down: false,
+        is_middle_panning: false,
         last_canvas_pos: None,
+        last_pan_screen_pos: None,
         stroke_points: Vec::new(),
         before_stroke_pixels: Vec::new(),
         before_move_offset: (0, 0),
@@ -1473,6 +1506,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         current_velocity: 0.0,
         last_anim_tick: Instant::now(),
         stabilized_pos: None,
+        has_initialized_view: false,
     });
 
     unsafe {

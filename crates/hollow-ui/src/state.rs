@@ -1,4 +1,5 @@
 use glam::Vec2;
+use hollow_core::blend::BlendMode;
 use hollow_core::brush::BrushSettings;
 use hollow_core::color::{Color, DEFAULT_PALETTE};
 use hollow_core::document::Document;
@@ -138,11 +139,13 @@ pub struct AppState {
     pub show_ui_panels: bool, // Zen Mode / Full Canvas toggle
     pub show_gallery: bool,
 
-    // Overlay Toggles
+    // Overlay Toggles & Viewport
     pub show_grid: bool,
     pub grid_size: u32,
     pub grid_opacity: f32,
     pub show_rulers: bool,
+    pub show_navigator: bool,
+    pub flip_view_horizontal: bool,
 
     // New Canvas Modal
     pub show_new_canvas_dialog: bool,
@@ -257,6 +260,18 @@ pub struct AppState {
     pub export_anim_fps: u32,
     pub export_anim_format: u8, // 0: GIF, 1: WebP, 2: PNG Sequence
     pub export_anim_loop: bool,
+
+    // ── Floating Mixing Scratchpad ──
+    pub show_scratchpad: bool,
+    pub scratchpad_w: u32,
+    pub scratchpad_h: u32,
+    pub scratchpad_pixels: Vec<u8>,
+    pub scratchpad_texture: Option<egui::TextureHandle>,
+    pub scratchpad_texture_dirty: bool,
+    pub scratchpad_brush_size: f32,
+    pub scratchpad_mode: u8, // 0: Paint, 1: Smudge / Water Mix, 2: Eyedropper, 3: Eraser
+    pub scratchpad_bg_mode: u8, // 0: Dark Studio, 1: Pure White, 2: Transparent
+    pub scratchpad_last_pos: Option<Vec2>,
 }
 
 impl AppState {
@@ -290,6 +305,8 @@ impl AppState {
             grid_size: 32,
             grid_opacity: 0.25,
             show_rulers: true,
+            show_navigator: true,
+            flip_view_horizontal: false,
 
             show_new_canvas_dialog: false,
             new_canvas_preset_idx: 0,
@@ -394,6 +411,17 @@ impl AppState {
             export_anim_fps: 12,
             export_anim_format: 0,
             export_anim_loop: true,
+
+            show_scratchpad: false,
+            scratchpad_w: 360,
+            scratchpad_h: 360,
+            scratchpad_pixels: vec![24, 28, 42, 255].repeat(360 * 360),
+            scratchpad_texture: None,
+            scratchpad_texture_dirty: true,
+            scratchpad_brush_size: 14.0,
+            scratchpad_mode: 0,
+            scratchpad_bg_mode: 0,
+            scratchpad_last_pos: None,
         }
     }
 
@@ -426,6 +454,13 @@ impl AppState {
             self.timeline.sync_to_document(&mut self.document);
             self.set_status(format!("Frame deleted. ({} frames left)", self.timeline.frames.len()));
         }
+    }
+
+    pub fn reorder_animation_frame(&mut self, from: usize, to: usize) {
+        self.timeline.sync_from_document(&self.document);
+        self.timeline.move_frame(from, to);
+        self.timeline.sync_to_document(&mut self.document);
+        self.set_status(format!("Reordered frame {} to {}", from + 1, to + 1));
     }
 
     pub fn step_next_frame(&mut self) {
@@ -510,11 +545,46 @@ impl AppState {
         self.set_status("View reset to 100%");
     }
 
+    pub fn viewport_center_offset(&self) -> Vec2 {
+        if self.show_ui_panels {
+            let bottom = if self.timeline.is_enabled { 88.0 } else { 32.0 };
+            Vec2::new((220.0 - 240.0) * 0.5, (38.0 - bottom) * 0.5)
+        } else {
+            Vec2::ZERO
+        }
+    }
+
+    pub fn viewport_rect(&self, win_w: usize, win_h: usize) -> [usize; 4] {
+        if self.show_ui_panels {
+            let bottom = if self.timeline.is_enabled { 88 } else { 32 };
+            let vx0 = 220.min(win_w);
+            let vy0 = 38.min(win_h);
+            let vx1 = win_w.saturating_sub(240).max(vx0);
+            let vy1 = win_h.saturating_sub(bottom).max(vy0);
+            [vx0, vy0, vx1, vy1]
+        } else {
+            [0, 0, win_w, win_h]
+        }
+    }
+
+    pub fn viewport_center(&self, win_w: f32, win_h: f32) -> Vec2 {
+        Vec2::new(win_w * 0.5, win_h * 0.5) + self.pan + self.viewport_center_offset()
+    }
+
     pub fn reset_view_centered(&mut self, win_w: f32, win_h: f32) {
         self.pan = Vec2::ZERO;
-        let scale_x = (win_w - 480.0).max(200.0) / self.document.width as f32;
-        let scale_y = (win_h - 100.0).max(200.0) / self.document.height as f32;
-        self.zoom = scale_x.min(scale_y).clamp(0.1, 1.0);
+        let avail_w = if self.show_ui_panels { (win_w - 510.0).max(200.0) } else { (win_w - 60.0).max(200.0) };
+        let bottom = if self.timeline.is_enabled { 88.0 } else { 32.0 };
+        let avail_h = if self.show_ui_panels { (win_h - (38.0 + bottom + 30.0)).max(200.0) } else { (win_h - 60.0).max(200.0) };
+        let scale_x = avail_w / self.document.width as f32;
+        let scale_y = avail_h / self.document.height as f32;
+        self.zoom = (scale_x.min(scale_y) * 0.92).clamp(0.05, 5.0);
+        self.set_status(format!("Fit to screen ({:.0}%)", self.zoom * 100.0));
+    }
+
+    pub fn pan_to_canvas_center(&mut self, target_canvas_pos: Vec2) {
+        let canvas_size = Vec2::new(self.document.width as f32, self.document.height as f32);
+        self.pan = -(target_canvas_pos - canvas_size * 0.5) * self.zoom;
     }
 
     pub fn theme_accent_color(&self) -> Color {
@@ -542,14 +612,14 @@ impl AppState {
     }
 
     pub fn screen_to_canvas(&self, screen_pos: Vec2, win_w: f32, win_h: f32) -> Vec2 {
-        let center = Vec2::new(win_w * 0.5, win_h * 0.5) + self.pan;
+        let center = self.viewport_center(win_w, win_h);
         let offset = screen_pos - center;
         let canvas_size = Vec2::new(self.document.width as f32, self.document.height as f32);
         (offset / self.zoom) + (canvas_size * 0.5)
     }
 
     pub fn canvas_to_screen(&self, canvas_pos: Vec2, win_w: f32, win_h: f32) -> Vec2 {
-        let center = Vec2::new(win_w * 0.5, win_h * 0.5) + self.pan;
+        let center = self.viewport_center(win_w, win_h);
         let canvas_size = Vec2::new(self.document.width as f32, self.document.height as f32);
         let offset = (canvas_pos - canvas_size * 0.5) * self.zoom;
         center + offset
@@ -888,6 +958,137 @@ impl AppState {
                     self.set_status(format!("Stroked selection ({}px)", width));
                 }
             }
+        }
+    }
+
+    // ── Floating Mixing Scratchpad Operations ──
+    pub fn clear_scratchpad(&mut self, bg_mode: u8) {
+        self.scratchpad_bg_mode = bg_mode;
+        let fill_color = match bg_mode {
+            1 => [255, 255, 255, 255], // Pure White
+            2 => [0, 0, 0, 0],         // Transparent
+            _ => [24, 28, 42, 255],    // Dark Studio
+        };
+        for chunk in self.scratchpad_pixels.chunks_exact_mut(4) {
+            chunk.copy_from_slice(&fill_color);
+        }
+        self.scratchpad_texture_dirty = true;
+        self.set_status("Scratchpad cleared");
+    }
+
+    pub fn sample_scratchpad_pixel(&mut self, x: u32, y: u32) {
+        if x < self.scratchpad_w && y < self.scratchpad_h {
+            let idx = ((y * self.scratchpad_w + x) * 4) as usize;
+            if idx + 3 < self.scratchpad_pixels.len() {
+                let r = self.scratchpad_pixels[idx];
+                let g = self.scratchpad_pixels[idx + 1];
+                let b = self.scratchpad_pixels[idx + 2];
+                let a = self.scratchpad_pixels[idx + 3];
+                if a > 10 {
+                    let color = Color::from_rgba8(r, g, b, 255);
+                    self.brush.primary_color = color;
+                    self.push_color_history(color);
+                    self.set_status(format!("Sampled from Scratchpad: {}", color.to_hex()));
+                }
+            }
+        }
+    }
+
+    pub fn paint_scratchpad_point(&mut self, pt: Vec2, prev_pt: Option<Vec2>, pressure: f32) {
+        let w = self.scratchpad_w;
+        let h = self.scratchpad_h;
+        let radius = (self.scratchpad_brush_size * pressure * 0.5).max(1.0);
+        let radius_sq = radius * radius;
+        let hardness = self.brush.hardness.clamp(0.05, 0.95);
+        let aa_fringe = 1.0_f32.min(radius * 0.5);
+        let inner_r = (radius * hardness).min(radius - aa_fringe).max(0.0);
+        let inner_radius_sq = inner_r * inner_r;
+        let opacity = self.brush.opacity;
+        let mode = self.scratchpad_mode;
+
+        let min_x = ((pt.x - radius - 0.5).floor() as i32).max(0);
+        let max_x = ((pt.x + radius + 0.5).ceil() as i32).min(w as i32 - 1);
+        let min_y = ((pt.y - radius - 0.5).floor() as i32).max(0);
+        let max_y = ((pt.y + radius + 0.5).ceil() as i32).min(h as i32 - 1);
+
+        let color_rgba = self.brush.primary_color.to_rgba8();
+
+        for py_i in min_y..=max_y {
+            let y = py_i as u32;
+            let dy_f = (y as f32 + 0.5) - pt.y;
+            let dy_sq = dy_f * dy_f;
+            if dy_sq > radius_sq {
+                continue;
+            }
+
+            for px_i in min_x..=max_x {
+                let x = px_i as u32;
+                let dx_f = (x as f32 + 0.5) - pt.x;
+                let d_sq = dx_f * dx_f + dy_sq;
+                if d_sq <= radius_sq {
+                    let d = d_sq.sqrt();
+                    let alpha = if d_sq <= inner_radius_sq {
+                        1.0
+                    } else {
+                        (1.0 - (d - inner_r) / (radius - inner_r).max(0.001)).clamp(0.0, 1.0)
+                    } * opacity;
+
+                    let idx = ((y * w + x) * 4) as usize;
+                    if idx + 3 >= self.scratchpad_pixels.len() {
+                        continue;
+                    }
+
+                    let dst = [
+                        self.scratchpad_pixels[idx],
+                        self.scratchpad_pixels[idx + 1],
+                        self.scratchpad_pixels[idx + 2],
+                        self.scratchpad_pixels[idx + 3],
+                    ];
+
+                    match mode {
+                        1 => {
+                            // Smudge / Water Color Blend
+                            if let Some(prev) = prev_pt {
+                                let drag_vec = pt - prev;
+                                let drag_dist = drag_vec.length();
+                                let shift = (drag_dist * 1.5).min(radius * 0.9);
+                                let dir = if drag_dist > 0.001 { drag_vec / drag_dist } else { Vec2::ZERO };
+                                let sx = (x as f32 - dir.x * shift).clamp(0.0, w as f32 - 1.0);
+                                let sy = (y as f32 - dir.y * shift).clamp(0.0, h as f32 - 1.0);
+                                let src = hollow_core::rasterizer::sample_bilinear_rgba(&self.scratchpad_pixels, w, h, sx, sy);
+                                let blended = BlendMode::Normal.composite_pixel(dst, src, alpha * 0.65);
+                                self.scratchpad_pixels[idx..idx + 4].copy_from_slice(&blended);
+                            }
+                        }
+                        3 => {
+                            // Eraser
+                            let current_a = dst[3] as f32 / 255.0;
+                            let new_a = (current_a * (1.0 - alpha)).clamp(0.0, 1.0);
+                            self.scratchpad_pixels[idx + 3] = (new_a * 255.0).round() as u8;
+                        }
+                        _ => {
+                            // Normal Paint
+                            let blended = BlendMode::Normal.composite_pixel(dst, color_rgba, alpha);
+                            self.scratchpad_pixels[idx..idx + 4].copy_from_slice(&blended);
+                        }
+                    }
+                }
+            }
+        }
+        self.scratchpad_texture_dirty = true;
+    }
+
+    pub fn paint_scratchpad_stroke(&mut self, from: Vec2, to: Vec2, pressure: f32) {
+        let dist = from.distance(to);
+        let radius = (self.scratchpad_brush_size * pressure * 0.5).max(1.0);
+        let step = (radius * 0.35).max(0.5);
+        let steps = ((dist / step).ceil() as usize).max(1);
+        let mut prev = Some(from);
+        for i in 1..=steps {
+            let t = i as f32 / steps as f32;
+            let pos = from.lerp(to, t);
+            self.paint_scratchpad_point(pos, prev, pressure);
+            prev = Some(pos);
         }
     }
 }

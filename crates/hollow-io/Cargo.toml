@@ -1,11 +1,11 @@
 [package]
 name = "hollow-io"
-version = "0.13.1"
+version = "0.15.0"
 edition = "2021"
-description = "Project file archive, PNG/JPEG import/export, and binary serialization for Hollow Canvas"
+description = "File format encoders, decoders, PNG exporter, and binary project serializer for Hollow Canvas"
 
 [dependencies]
-hollow-core = { path = "../hollow-core", version = "0.13.1" }
+hollow-core = { path = "../hollow-core", version = "0.15.0" }
 image = { workspace = true }
 flate2 = "1.0"
 thiserror = { workspace = true }

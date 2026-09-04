@@ -40,21 +40,21 @@ $env:VIRUSTOTAL_API_KEY = "your-virustotal-api-key-here"
 
 ### Full Release (Build, Test, Package, VirusTotal & Publish)
 ```bash
-python scripts/pipeline.py v0.13.1
+python scripts/pipeline.py v0.15.0
 ```
 *or via Make:*
 ```bash
-make release TAG=v0.13.1
+make release TAG=v0.15.0
 ```
 
 ### Local Build & Package Only (No Upload)
 ```bash
-python scripts/pipeline.py v0.13.1 --no-publish
+python scripts/pipeline.py v0.15.0 --no-publish
 ```
 
 ### Create as GitHub Draft Release
 ```bash
-python scripts/pipeline.py v0.13.1 --draft
+python scripts/pipeline.py v0.15.0 --draft
 ```
 
 ---
@@ -62,10 +62,11 @@ python scripts/pipeline.py v0.13.1 --draft
 ## 4. Output Layout (`dist/`)
 
 ```text
-dist/v0.13.1/
+dist/v0.15.0/
 ├── windows-staging/                                # Temporary staging folder
-├── hollow-canvas-v0.13.1-windows-x86_64.zip         # Standard Zip distribution
-├── hollow-canvas-v0.13.1-windows-x86_64.vpack       # VPack distribution
+├── hollow-canvas-v0.15.0-windows-x86_64.zip        # Standard Zip distribution
+├── hollow-canvas-v0.15.0-windows-x86_64.vpack      # Signed VPack distribution
+├── hollow-publisher.pub                            # Ed25519 publisher public key
 ├── SHA256SUMS.txt                                  # SHA-256 Checksums
 ├── release_notes.md                                # Release markdown body
 └── audit/
@@ -82,10 +83,10 @@ dist/v0.13.1/
 To verify released packages:
 ```bash
 # Check SHA-256
-certutil -hashfile hollow-canvas-v0.13.1-windows-x86_64.zip SHA256
+certutil -hashfile hollow-canvas-v0.15.0-windows-x86_64.zip SHA256
 
-# Verify VPACK integrity and CRC-32
-vpack test hollow-canvas-v0.13.1-windows-x86_64.vpack
+# Verify VPACK CRC-32 integrity and Ed25519 digital signature
+vpack test hollow-canvas-v0.15.0-windows-x86_64.vpack
 
 # Inspect VirusTotal Analysis
 # https://www.virustotal.com/gui/file/<SHA256_HASH>
@@ -98,13 +99,13 @@ vpack test hollow-canvas-v0.13.1-windows-x86_64.vpack
 ### Option A: Via VPack Archiver
 ```bash
 # Extract all contents
-vpack extract hollow-canvas-v0.8.3-windows-x86_64.vpack
+vpack extract hollow-canvas-v0.15.0-windows-x86_64.vpack
 
 # Or extract to a specific folder
-vpack extract hollow-canvas-v0.8.3-windows-x86_64.vpack -o ./HollowCanvas/
+vpack extract hollow-canvas-v0.15.0-windows-x86_64.vpack -o ./HollowCanvas/
 ```
 
 ### Option B: Via Native Windows Zip
 ```powershell
-Expand-Archive -Path .\hollow-canvas-v0.8.3-windows-x86_64.zip -DestinationPath .\HollowCanvas
+Expand-Archive -Path .\hollow-canvas-v0.15.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
 ```

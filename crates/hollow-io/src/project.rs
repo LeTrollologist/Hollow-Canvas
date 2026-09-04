@@ -11,7 +11,8 @@ use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use thiserror::Error;
 
-const HCV_MAGIC: &[u8; 4] = b"HCV\x02";
+const HCV_MAGIC_V2: &[u8; 4] = b"HCV\x02";
+const HCV_MAGIC_V3: &[u8; 4] = b"HCV\x03";
 
 #[derive(Error, Debug)]
 pub enum ProjectError {
@@ -26,7 +27,7 @@ pub enum ProjectError {
 }
 
 pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result<(), ProjectError> {
-    writer.write_all(HCV_MAGIC)?;
+    writer.write_all(HCV_MAGIC_V3)?;
     writer.write_all(&doc.width.to_le_bytes())?;
     writer.write_all(&doc.height.to_le_bytes())?;
     writer.write_all(&doc.active_layer_id.to_le_bytes())?;
@@ -51,8 +52,28 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
         writer.write_all(&name_len.to_le_bytes())?;
         writer.write_all(name_bytes)?;
 
-        writer.write_all(&[if layer.visible { 1 } else { 0 }])?;
-        writer.write_all(&[if layer.locked { 1 } else { 0 }])?;
+        // Kind (0 = Raster, 1 = Group)
+        let kind_byte = match layer.kind {
+            hollow_core::layer::LayerKind::Raster => 0u8,
+            hollow_core::layer::LayerKind::Group => 1u8,
+        };
+        writer.write_all(&[kind_byte])?;
+
+        // Parent ID (0 if None)
+        let pid = layer.parent_id.unwrap_or(0);
+        writer.write_all(&pid.to_le_bytes())?;
+
+        // Flags bitmask
+        let mut flags = 0u8;
+        if layer.visible { flags |= 1 << 0; }
+        if layer.locked { flags |= 1 << 1; }
+        if layer.alpha_locked { flags |= 1 << 2; }
+        if layer.clipping_mask { flags |= 1 << 3; }
+        if layer.is_reference { flags |= 1 << 4; }
+        if layer.is_expanded { flags |= 1 << 5; }
+        if layer.pass_through { flags |= 1 << 6; }
+        writer.write_all(&[flags])?;
+
         writer.write_all(&layer.opacity.to_le_bytes())?;
 
         let blend_byte = match layer.blend_mode {
@@ -74,14 +95,20 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
         writer.write_all(&layer.offset_x.to_le_bytes())?;
         writer.write_all(&layer.offset_y.to_le_bytes())?;
 
-        // Compress RGBA pixel stream using Deflate
-        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::fast());
-        encoder.write_all(&layer.pixels)?;
-        let compressed = encoder.finish()?;
+        if layer.is_group() {
+            // Groups have no pixel buffer
+            let comp_len = 0u32;
+            writer.write_all(&comp_len.to_le_bytes())?;
+        } else {
+            // Compress RGBA pixel stream using Deflate
+            let mut encoder = DeflateEncoder::new(Vec::new(), Compression::fast());
+            encoder.write_all(&layer.pixels)?;
+            let compressed = encoder.finish()?;
 
-        let comp_len = compressed.len() as u32;
-        writer.write_all(&comp_len.to_le_bytes())?;
-        writer.write_all(&compressed)?;
+            let comp_len = compressed.len() as u32;
+            writer.write_all(&comp_len.to_le_bytes())?;
+            writer.write_all(&compressed)?;
+        }
     }
 
     // Save flat preview thumbnail
@@ -106,7 +133,9 @@ pub fn save_project_file(doc: &Document, path: impl AsRef<Path>) -> Result<(), P
 pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, ProjectError> {
     let mut magic = [0u8; 4];
     reader.read_exact(&mut magic)?;
-    if &magic != HCV_MAGIC {
+    let is_v3 = &magic == HCV_MAGIC_V3;
+    let is_v2 = &magic == HCV_MAGIC_V2;
+    if !is_v3 && !is_v2 {
         return Err(ProjectError::InvalidMagic);
     }
 
@@ -157,11 +186,38 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         reader.read_exact(&mut name_vec)?;
         let name = String::from_utf8(name_vec).unwrap_or_else(|_| format!("Layer {}", id));
 
-        reader.read_exact(&mut buf1)?;
-        let visible = buf1[0] != 0;
+        let (kind, parent_id, visible, locked, alpha_locked, clipping_mask, is_reference, is_expanded, pass_through) = if is_v3 {
+            reader.read_exact(&mut buf1)?;
+            let kind = if buf1[0] == 1 {
+                hollow_core::layer::LayerKind::Group
+            } else {
+                hollow_core::layer::LayerKind::Raster
+            };
 
-        reader.read_exact(&mut buf1)?;
-        let locked = buf1[0] != 0;
+            reader.read_exact(&mut buf8)?;
+            let raw_pid = u64::from_le_bytes(buf8);
+            let parent_id = if raw_pid > 0 { Some(raw_pid) } else { None };
+
+            reader.read_exact(&mut buf1)?;
+            let flags = buf1[0];
+            let visible = (flags & (1 << 0)) != 0;
+            let locked = (flags & (1 << 1)) != 0;
+            let alpha_locked = (flags & (1 << 2)) != 0;
+            let clipping_mask = (flags & (1 << 3)) != 0;
+            let is_reference = (flags & (1 << 4)) != 0;
+            let is_expanded = (flags & (1 << 5)) != 0;
+            let pass_through = (flags & (1 << 6)) != 0;
+
+            (kind, parent_id, visible, locked, alpha_locked, clipping_mask, is_reference, is_expanded, pass_through)
+        } else {
+            reader.read_exact(&mut buf1)?;
+            let visible = buf1[0] != 0;
+
+            reader.read_exact(&mut buf1)?;
+            let locked = buf1[0] != 0;
+
+            (hollow_core::layer::LayerKind::Raster, None, visible, locked, false, false, false, true, false)
+        };
 
         reader.read_exact(&mut buf4)?;
         let opacity = f32::from_le_bytes(buf4);
@@ -192,22 +248,35 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         reader.read_exact(&mut buf4)?;
         let comp_len = u32::from_le_bytes(buf4) as usize;
 
-        let mut comp_bytes = vec![0u8; comp_len];
-        reader.read_exact(&mut comp_bytes)?;
+        let mut layer = if kind == hollow_core::layer::LayerKind::Group {
+            let mut group = Layer::new_group(id, name);
+            group.is_expanded = is_expanded;
+            group.pass_through = pass_through;
+            group
+        } else {
+            let mut comp_bytes = vec![0u8; comp_len];
+            reader.read_exact(&mut comp_bytes)?;
 
-        // Decompress pixels
-        let mut decoder = DeflateDecoder::new(&comp_bytes[..]);
-        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-        decoder.read_to_end(&mut pixels)?;
+            // Decompress pixels
+            let mut decoder = DeflateDecoder::new(&comp_bytes[..]);
+            let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+            decoder.read_to_end(&mut pixels)?;
 
-        let expected_len = (width * height * 4) as usize;
-        if pixels.len() != expected_len {
-            return Err(ProjectError::CorruptData);
-        }
+            let expected_len = (width * height * 4) as usize;
+            if pixels.len() != expected_len {
+                return Err(ProjectError::CorruptData);
+            }
 
-        let mut layer = Layer::from_pixels(id, name, width, height, pixels);
+            Layer::from_pixels(id, name, width, height, pixels)
+        };
+
+        layer.kind = kind;
+        layer.parent_id = parent_id;
         layer.visible = visible;
         layer.locked = locked;
+        layer.alpha_locked = alpha_locked;
+        layer.clipping_mask = clipping_mask;
+        layer.is_reference = is_reference;
         layer.opacity = opacity;
         layer.blend_mode = blend_mode;
         layer.offset_x = offset_x;

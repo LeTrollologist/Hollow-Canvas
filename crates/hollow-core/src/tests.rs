@@ -5,6 +5,7 @@ mod tests {
     use crate::color::Color;
     use crate::document::Document;
     use crate::rasterizer::StrokeRasterizer;
+    use crate::selection::SelectionMask;
     use crate::symmetry::{SymmetryConfig, SymmetryMode};
     use glam::Vec2;
 
@@ -687,5 +688,97 @@ mod tests {
         brush.stabilization_level = 7;
         assert_eq!(brush.stabilization_weight(), 0.88);
         assert_eq!(brush.stabilization_deadzone(), 1.2);
+    }
+
+    #[test]
+    fn test_nested_layer_groups_and_hierarchy() {
+        let mut doc = Document::new(64, 64);
+        assert_eq!(doc.layers.len(), 1);
+
+        // Create folder group
+        let group_id = doc.add_group(Some("Folder 1".into()));
+        assert!(doc.get_layer(group_id).unwrap().is_group());
+
+        // Add 2 child layers into group
+        let l1 = doc.add_layer(Some("Child 1".into()));
+        let l2 = doc.add_layer(Some("Child 2".into()));
+        assert!(doc.set_layer_parent(l1, Some(group_id)));
+        assert!(doc.set_layer_parent(l2, Some(group_id)));
+
+        // Verify children and descendants
+        let children = doc.group_children(group_id);
+        assert_eq!(children.len(), 2);
+        assert!(children.contains(&l1));
+        assert!(children.contains(&l2));
+
+        // Create nested sub-group
+        let sub_group_id = doc.add_group(Some("Sub Folder".into()));
+        assert!(doc.set_layer_parent(sub_group_id, Some(group_id)));
+        let l3 = doc.add_layer(Some("Grandchild".into()));
+        assert!(doc.set_layer_parent(l3, Some(sub_group_id)));
+
+        let descendants = doc.all_descendants(group_id);
+        assert_eq!(descendants.len(), 4);
+        assert!(descendants.contains(&l3));
+
+        // Test cycle prevention
+        assert!(!doc.set_layer_parent(group_id, Some(group_id)));
+        assert!(!doc.set_layer_parent(group_id, Some(sub_group_id)));
+
+        // Test effective visibility inheritance
+        assert!(doc.is_layer_effective_visible(l3));
+        doc.get_layer_mut(group_id).unwrap().visible = false;
+        assert!(!doc.is_layer_effective_visible(l3));
+        doc.get_layer_mut(group_id).unwrap().visible = true;
+        assert!(doc.is_layer_effective_visible(l3));
+
+        // Test effective opacity inheritance
+        doc.get_layer_mut(group_id).unwrap().opacity = 0.5;
+        doc.get_layer_mut(sub_group_id).unwrap().opacity = 0.8;
+        doc.get_layer_mut(l3).unwrap().opacity = 1.0;
+        let eff = doc.effective_opacity(l3);
+        assert!((eff - 0.4).abs() < 1e-4);
+
+        // Test ungroup
+        assert!(doc.ungroup(sub_group_id));
+        assert_eq!(doc.get_layer(l3).unwrap().parent_id, Some(group_id));
+
+        // Test group deletion removes descendants
+        doc.delete_layer(group_id);
+        assert!(doc.get_layer(group_id).is_none());
+        assert!(doc.get_layer(l1).is_none());
+        assert!(doc.get_layer(l2).is_none());
+        assert!(doc.get_layer(l3).is_none());
+    }
+
+    #[test]
+    fn test_selection_brush_paint_and_erase() {
+        let mut mask = SelectionMask::new(64, 64);
+        assert!(!mask.has_selection());
+
+        // Paint circular selection at center (32, 32) radius 10
+        mask.paint_circle(glam::Vec2::new(32.0, 32.0), 10.0, 1.0, 1.0);
+        mask.recompute_metadata();
+        assert!(mask.has_selection());
+        assert!(mask.is_selected(32, 32));
+        assert!(mask.is_selected(35, 32));
+        assert!(!mask.is_selected(55, 55));
+
+        // Erase center (32, 32) radius 4
+        mask.erase_circle(glam::Vec2::new(32.0, 32.0), 4.0, 1.0, 1.0);
+        assert!(!mask.is_selected(32, 32));
+        assert!(mask.is_selected(38, 32)); // Outer ring remains selected
+
+        // Paint line segment from (10, 10) to (20, 10)
+        mask.paint_segment(
+            glam::Vec2::new(10.0, 10.0),
+            glam::Vec2::new(20.0, 10.0),
+            3.0,
+            1.0,
+            1.0,
+            0.2,
+            false,
+        );
+        assert!(mask.is_selected(15, 10));
     }
 }

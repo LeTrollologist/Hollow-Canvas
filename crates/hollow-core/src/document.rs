@@ -24,7 +24,7 @@ impl Document {
             height,
             layers: vec![base_layer],
             active_layer_id: first_id,
-            background_value: 13, // Matches Hollow web dark background (13, 14, 18)
+            background_value: 255, // Default pristine white studio canvas paper
             is_transparent: false,
             theme: ThemeMode::DeepMist,
             next_layer_id: 2,
@@ -36,7 +36,7 @@ impl Document {
             Color::TRANSPARENT
         } else {
             let v = self.background_value as f32 / 255.0;
-            Color::new(v, (v * 1.05).min(1.0), (v * 1.4).min(1.0), 1.0)
+            Color::new(v, v, v, 1.0)
         }
     }
 
@@ -70,25 +70,144 @@ impl Document {
         id
     }
 
+    pub fn add_group(&mut self, name: Option<String>) -> LayerId {
+        let id = self.next_layer_id;
+        self.next_layer_id += 1;
+        let group_name = name.unwrap_or_else(|| format!("Group {}", id));
+        let group = Layer::new_group(id, group_name);
+        self.layers.push(group);
+        self.active_layer_id = id;
+        id
+    }
+
+    pub fn group_children(&self, parent_id: LayerId) -> Vec<LayerId> {
+        self.layers
+            .iter()
+            .filter(|l| l.parent_id == Some(parent_id))
+            .map(|l| l.id)
+            .collect()
+    }
+
+    pub fn all_descendants(&self, parent_id: LayerId) -> Vec<LayerId> {
+        let mut result = Vec::new();
+        let mut queue = self.group_children(parent_id);
+        while let Some(child_id) = queue.pop() {
+            result.push(child_id);
+            let sub_children = self.group_children(child_id);
+            queue.extend(sub_children);
+        }
+        result
+    }
+
+    pub fn is_layer_effective_visible(&self, id: LayerId) -> bool {
+        let mut curr_id = id;
+        while let Some(layer) = self.get_layer(curr_id) {
+            if !layer.visible {
+                return false;
+            }
+            if let Some(parent_id) = layer.parent_id {
+                curr_id = parent_id;
+            } else {
+                break;
+            }
+        }
+        true
+    }
+
+    pub fn effective_opacity(&self, id: LayerId) -> f32 {
+        let mut opacity = 1.0_f32;
+        let mut curr_id = id;
+        while let Some(layer) = self.get_layer(curr_id) {
+            opacity *= layer.opacity.clamp(0.0, 1.0);
+            if let Some(parent_id) = layer.parent_id {
+                curr_id = parent_id;
+            } else {
+                break;
+            }
+        }
+        opacity.clamp(0.0, 1.0)
+    }
+
+    pub fn set_layer_parent(&mut self, layer_id: LayerId, new_parent_id: Option<LayerId>) -> bool {
+        if let Some(pid) = new_parent_id {
+            if pid == layer_id {
+                return false;
+            }
+            let descendants = self.all_descendants(layer_id);
+            if descendants.contains(&pid) {
+                return false;
+            }
+            if !self.layers.iter().any(|l| l.id == pid && l.is_group()) {
+                return false;
+            }
+        }
+
+        if let Some(layer) = self.get_layer_mut(layer_id) {
+            layer.parent_id = new_parent_id;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn ungroup(&mut self, group_id: LayerId) -> bool {
+        let target_parent = self.get_layer(group_id).and_then(|g| g.parent_id);
+        for l in &mut self.layers {
+            if l.parent_id == Some(group_id) {
+                l.parent_id = target_parent;
+            }
+        }
+        self.delete_layer(group_id).is_some()
+    }
+
     pub fn duplicate_active_layer(&mut self) -> Option<LayerId> {
         let active = self.active_layer()?.clone();
-        let new_id = self.next_layer_id;
-        self.next_layer_id += 1;
-        let dup = active.duplicate(new_id);
-        
-        let idx = self.layers.iter().position(|l| l.id == active.id).unwrap();
-        self.layers.insert(idx + 1, dup);
-        self.active_layer_id = new_id;
-        Some(new_id)
+        if active.is_group() {
+            let new_group_id = self.next_layer_id;
+            self.next_layer_id += 1;
+            let mut dup_group = active.duplicate(new_group_id);
+            dup_group.name = format!("{} Copy", active.name);
+
+            let group_idx = self.layers.iter().position(|l| l.id == active.id).unwrap();
+            self.layers.insert(group_idx + 1, dup_group);
+
+            // Duplicate all descendants
+            let children = self.group_children(active.id);
+            for child_id in children {
+                if let Some(child) = self.get_layer(child_id).cloned() {
+                    let new_child_id = self.next_layer_id;
+                    self.next_layer_id += 1;
+                    let mut dup_child = child.duplicate(new_child_id);
+                    dup_child.parent_id = Some(new_group_id);
+                    self.layers.push(dup_child);
+                }
+            }
+
+            self.active_layer_id = new_group_id;
+            Some(new_group_id)
+        } else {
+            let new_id = self.next_layer_id;
+            self.next_layer_id += 1;
+            let dup = active.duplicate(new_id);
+
+            let idx = self.layers.iter().position(|l| l.id == active.id).unwrap();
+            self.layers.insert(idx + 1, dup);
+            self.active_layer_id = new_id;
+            Some(new_id)
+        }
     }
 
     pub fn delete_layer(&mut self, id: LayerId) -> Option<Layer> {
         if self.layers.len() <= 1 {
             return None; // Maintain at least 1 layer
         }
+        // If deleting a group, recursively collect all descendants
+        let descendants = self.all_descendants(id);
+        self.layers.retain(|l| !descendants.contains(&l.id));
+
         let idx = self.layers.iter().position(|l| l.id == id)?;
         let removed = self.layers.remove(idx);
-        if self.active_layer_id == id {
+        if self.active_layer_id == id || descendants.contains(&self.active_layer_id) {
             let next_idx = idx.min(self.layers.len() - 1);
             self.active_layer_id = self.layers[next_idx].id;
         }
@@ -349,13 +468,13 @@ impl Document {
         }
 
         for (layer_idx, layer) in self.layers.iter().enumerate() {
-            if !layer.visible {
+            if layer.is_group() || !self.is_layer_effective_visible(layer.id) {
                 continue;
             }
 
             let prev_layer = if layer.clipping_mask && layer_idx > 0 {
                 let base = &self.layers[layer_idx - 1];
-                if base.visible {
+                if self.is_layer_effective_visible(base.id) {
                     Some(base)
                 } else {
                     // Base layer is hidden; skip this clipping layer entirely
@@ -364,6 +483,8 @@ impl Document {
             } else {
                 None
             };
+
+            let eff_opacity = self.effective_opacity(layer.id);
 
             for y in 0..self.height {
                 for x in 0..self.width {
@@ -383,7 +504,7 @@ impl Document {
                         [0, 0, 0, 0]
                     };
 
-                    let mut opacity = layer.opacity;
+                    let mut opacity = eff_opacity;
                     if let Some(base) = prev_layer {
                         let bx = x as i32 - base.offset_x;
                         let by = y as i32 - base.offset_y;
@@ -392,7 +513,7 @@ impl Document {
                         } else {
                             0.0
                         };
-                        opacity *= base_a * base.opacity;
+                        opacity *= base_a * self.effective_opacity(base.id);
                     }
 
                     if opacity <= 0.001 {

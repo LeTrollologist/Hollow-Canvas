@@ -504,4 +504,116 @@ impl SelectionMask {
             }
         }
     }
+
+    /// Freehand additive selection painting with brush radius and hardness falloff
+    pub fn paint_circle(&mut self, center: Vec2, radius: f32, hardness: f32, opacity: f32) {
+        if radius <= 0.0 || opacity <= 0.0 || self.width == 0 || self.height == 0 {
+            return;
+        }
+        let r_ceil = (radius + 1.0).ceil() as i32;
+        let cx = center.x.round() as i32;
+        let cy = center.y.round() as i32;
+        let min_x = (cx - r_ceil).max(0) as u32;
+        let max_x = ((cx + r_ceil + 1).max(0) as u32).min(self.width);
+        let min_y = (cy - r_ceil).max(0) as u32;
+        let max_y = ((cy + r_ceil + 1).max(0) as u32).min(self.height);
+
+        let r_sq = radius * radius;
+        let h = hardness.clamp(0.05, 1.0);
+        let inner_r = radius * h;
+        let inner_r_sq = inner_r * inner_r;
+        let inv_falloff = 1.0 / (radius - inner_r).max(0.001);
+
+        for y in min_y..max_y {
+            let dy = y as f32 + 0.5 - center.y;
+            let dy_sq = dy * dy;
+            for x in min_x..max_x {
+                let dx = x as f32 + 0.5 - center.x;
+                let d_sq = dx * dx + dy_sq;
+                if d_sq <= r_sq {
+                    let factor = if d_sq <= inner_r_sq {
+                        1.0
+                    } else {
+                        let d = d_sq.sqrt();
+                        (1.0 - (d - inner_r) * inv_falloff).clamp(0.0, 1.0)
+                    };
+                    let add_val = (factor * opacity * 255.0).round() as u8;
+                    let idx = (y as usize) * (self.width as usize) + (x as usize);
+                    if idx < self.mask.len() {
+                        self.mask[idx] = self.mask[idx].saturating_add(add_val);
+                    }
+                }
+            }
+        }
+        self.has_active_selection = true;
+    }
+
+    /// Freehand subtractive selection erasing with brush radius and hardness falloff
+    pub fn erase_circle(&mut self, center: Vec2, radius: f32, hardness: f32, opacity: f32) {
+        if radius <= 0.0 || opacity <= 0.0 || self.width == 0 || self.height == 0 {
+            return;
+        }
+        let r_ceil = (radius + 1.0).ceil() as i32;
+        let cx = center.x.round() as i32;
+        let cy = center.y.round() as i32;
+        let min_x = (cx - r_ceil).max(0) as u32;
+        let max_x = ((cx + r_ceil + 1).max(0) as u32).min(self.width);
+        let min_y = (cy - r_ceil).max(0) as u32;
+        let max_y = ((cy + r_ceil + 1).max(0) as u32).min(self.height);
+
+        let r_sq = radius * radius;
+        let h = hardness.clamp(0.05, 1.0);
+        let inner_r = radius * h;
+        let inner_r_sq = inner_r * inner_r;
+        let inv_falloff = 1.0 / (radius - inner_r).max(0.001);
+
+        for y in min_y..max_y {
+            let dy = y as f32 + 0.5 - center.y;
+            let dy_sq = dy * dy;
+            for x in min_x..max_x {
+                let dx = x as f32 + 0.5 - center.x;
+                let d_sq = dx * dx + dy_sq;
+                if d_sq <= r_sq {
+                    let factor = if d_sq <= inner_r_sq {
+                        1.0
+                    } else {
+                        let d = d_sq.sqrt();
+                        (1.0 - (d - inner_r) * inv_falloff).clamp(0.0, 1.0)
+                    };
+                    let sub_val = (factor * opacity * 255.0).round() as u8;
+                    let idx = (y as usize) * (self.width as usize) + (x as usize);
+                    if idx < self.mask.len() {
+                        self.mask[idx] = self.mask[idx].saturating_sub(sub_val);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Paints continuous line segment into selection mask
+    pub fn paint_segment(
+        &mut self,
+        p0: Vec2,
+        p1: Vec2,
+        radius: f32,
+        hardness: f32,
+        opacity: f32,
+        spacing: f32,
+        is_erase: bool,
+    ) {
+        let dist = p0.distance(p1);
+        let step_size = (radius * 2.0 * spacing.clamp(0.05, 1.0)).max(1.0);
+        let steps = (dist / step_size).ceil() as usize;
+        let steps = steps.max(1);
+
+        for i in 0..=steps {
+            let t = i as f32 / steps as f32;
+            let pt = p0.lerp(p1, t);
+            if is_erase {
+                self.erase_circle(pt, radius, hardness, opacity);
+            } else {
+                self.paint_circle(pt, radius, hardness, opacity);
+            }
+        }
+    }
 }

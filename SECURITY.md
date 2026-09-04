@@ -6,13 +6,26 @@ We provide security updates and patches for the following versions of **Hollow C
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 0.15.x  | :white_check_mark: |
+| 0.14.x  | :white_check_mark: |
 | 0.13.x  | :white_check_mark: |
 | 0.12.x  | :white_check_mark: |
 | 0.11.x  | :white_check_mark: |
 | 0.10.x  | :white_check_mark: |
-| 0.9.x   | :white_check_mark: |
-| 0.8.x   | :white_check_mark: |
-| < 0.8.0 | :x:                |
+| < 0.10.0| :x:                |
+
+---
+
+## Ed25519 Digital Signing & Chain of Trust (VPack 2.0.0)
+
+Starting in **v0.15.0**, all official `.vpack` release packages are cryptographically signed with our sovereign **Ed25519 publisher keypair** to guarantee supply chain integrity and eliminate tampering:
+
+- **Publisher Public Key**: `3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f`
+- **Key Asset**: `hollow-publisher.pub` (distributed alongside every release)
+- **Signature Verification**: VPack 2.0.0 validates the digital signature automatically on testing or extracting:
+  ```bash
+  vpack test hollow-canvas-v0.15.0-windows-x86_64.vpack
+  ```
 
 ---
 
@@ -40,7 +53,7 @@ Every official release distribution package (`.zip` and `.vpack`) undergoes auto
 ### How to Verify a Downloaded Release
 ```powershell
 # 1. Compute SHA-256 on Windows
-certutil -hashfile hollow-canvas-v0.13.1-windows-x86_64.zip SHA256
+certutil -hashfile hollow-canvas-v0.15.0-windows-x86_64.zip SHA256
 
 # 2. Check the VirusTotal analysis report directly in your browser:
 # https://www.virustotal.com/gui/file/<SHA256_HASH>

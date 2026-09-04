@@ -90,12 +90,22 @@ impl SoftwareRenderer {
         doc: &Document,
         pan: Vec2,
         zoom: f32,
+        center_offset: Vec2,
+        viewport_clip: [usize; 4],
         tracing: Option<TracingReferenceConfig>,
         onion_skins: &[OnionSkinFrame],
+        selection_mask: Option<&[u8]>,
     ) {
         if win_w == 0 || win_h == 0 || buffer.len() < win_w * win_h {
             return;
         }
+
+        let [vp_min_x, vp_min_y, vp_max_x, vp_max_y] = [
+            viewport_clip[0].min(win_w),
+            viewport_clip[1].min(win_h),
+            viewport_clip[2].min(win_w),
+            viewport_clip[3].min(win_h),
+        ];
 
         let bg_val = doc.background_value;
         let dark_app_bg = 0xFF04060E;
@@ -105,8 +115,8 @@ impl SoftwareRenderer {
 
         let doc_w = doc.width as f32;
         let doc_h = doc.height as f32;
-        let center_x = (win_w as f32) * 0.5 + pan.x;
-        let center_y = (win_h as f32) * 0.5 + pan.y;
+        let center_x = (win_w as f32) * 0.5 + pan.x + center_offset.x;
+        let center_y = (win_h as f32) * 0.5 + pan.y + center_offset.y;
 
         let canvas_w = doc_w * zoom;
         let canvas_h = doc_h * zoom;
@@ -116,13 +126,53 @@ impl SoftwareRenderer {
         let x1 = (center_x + canvas_w * 0.5).ceil() as isize;
         let y1 = (center_y + canvas_h * 0.5).ceil() as isize;
 
-        let min_x = x0.max(0).min(win_w as isize) as usize;
-        let max_x = x1.max(0).min(win_w as isize) as usize;
-        let min_y = y0.max(0).min(win_h as isize) as usize;
-        let max_y = y1.max(0).min(win_h as isize) as usize;
+        let min_x = (x0.max(vp_min_x as isize).min(vp_max_x as isize)) as usize;
+        let max_x = (x1.max(vp_min_x as isize).min(vp_max_x as isize)) as usize;
+        let min_y = (y0.max(vp_min_y as isize).min(vp_max_y as isize)) as usize;
+        let max_y = (y1.max(vp_min_y as isize).min(vp_max_y as isize)) as usize;
 
         if min_x >= max_x || min_y >= max_y {
             return;
+        }
+
+        // 1. Soft Drop Shadow around canvas boundary (strictly clipped to viewport)
+        let shadow_blur = 14isize;
+        let shadow_offset_y = 5isize;
+        let s_x0 = (x0 - shadow_blur).max(vp_min_x as isize).min(vp_max_x as isize) as usize;
+        let s_x1 = (x1 + shadow_blur).max(vp_min_x as isize).min(vp_max_x as isize) as usize;
+        let s_y0 = (y0 - shadow_blur + shadow_offset_y).max(vp_min_y as isize).min(vp_max_y as isize) as usize;
+        let s_y1 = (y1 + shadow_blur + shadow_offset_y).max(vp_min_y as isize).min(vp_max_y as isize) as usize;
+
+        let cx0 = x0 as f32;
+        let cx1 = x1 as f32;
+        let cy0 = y0 as f32;
+        let cy1 = y1 as f32;
+
+        for sy in s_y0..s_y1 {
+            let row = sy * win_w;
+            let sy_f = sy as f32;
+            for sx in s_x0..s_x1 {
+                let sx_f = sx as f32;
+                let dx = if sx_f < cx0 { cx0 - sx_f } else if sx_f > cx1 { sx_f - cx1 } else { 0.0 };
+                let dy = if sy_f < cy0 { cy0 - sy_f } else if sy_f > cy1 { sy_f - cy1 } else { 0.0 };
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist > 0.0 && dist <= shadow_blur as f32 {
+                    let factor = (1.0 - dist / (shadow_blur as f32)).powi(2);
+                    let shadow_alpha = (factor * 0.55).clamp(0.0, 1.0);
+                    let p_idx = row + sx;
+                    if p_idx < buffer.len() {
+                        let cur_px = buffer[p_idx];
+                        let r = (cur_px >> 16) & 0xFF;
+                        let g = (cur_px >> 8) & 0xFF;
+                        let b = cur_px & 0xFF;
+                        let inv_a = 1.0 - shadow_alpha;
+                        let out_r = ((r as f32 * inv_a) as u32).min(255);
+                        let out_g = ((g as f32 * inv_a) as u32).min(255);
+                        let out_b = ((b as f32 * inv_a) as u32).min(255);
+                        buffer[p_idx] = 0xFF000000 | (out_r << 16) | (out_g << 8) | out_b;
+                    }
+                }
+            }
         }
 
         let req_size = (doc.width * doc.height * 4) as usize;
@@ -270,7 +320,49 @@ impl SoftwareRenderer {
                     (curr_r, curr_g, curr_b)
                 };
 
-                buffer[pixel_idx] = 0xFF000000 | ((final_r as u32) << 16) | ((final_g as u32) << 8) | (final_b as u32);
+                // 6. Quick Mask / Selection Tint Overlay (translucent ruby red tint over selected pixels)
+                let (out_r, out_g, out_b) = if let Some(mask) = selection_mask {
+                    let m_idx = (doc_yi as usize) * (doc.width as usize) + (doc_xi as usize);
+                    if m_idx < mask.len() && mask[m_idx] > 0 {
+                        let m_val = mask[m_idx] as u32;
+                        let tint_a = ((m_val * 75) / 255) as u32; // ~30% max opacity ruby tint
+                        let inv_ta = 255 - tint_a;
+                        let r = ((final_r as u32 * inv_ta + 255 * tint_a) / 255) as u8;
+                        let g = ((final_g as u32 * inv_ta + 55 * tint_a) / 255) as u8;
+                        let b = ((final_b as u32 * inv_ta + 95 * tint_a) / 255) as u8;
+                        (r, g, b)
+                    } else {
+                        (final_r, final_g, final_b)
+                    }
+                } else {
+                    (final_r, final_g, final_b)
+                };
+
+                buffer[pixel_idx] = 0xFF000000 | ((out_r as u32) << 16) | ((out_g as u32) << 8) | (out_b as u32);
+            }
+        }
+
+        // 7. Crisp Canvas Border Frame Outline
+        let border_color = 0xFF354468;
+        let top = min_y;
+        let btm = if max_y > 0 { max_y - 1 } else { 0 };
+        let left = min_x;
+        let right = if max_x > 0 { max_x - 1 } else { 0 };
+
+        for x in left..=right {
+            if top < win_h && x < win_w {
+                buffer[top * win_w + x] = border_color;
+            }
+            if btm < win_h && x < win_w {
+                buffer[btm * win_w + x] = border_color;
+            }
+        }
+        for y in top..=btm {
+            if y < win_h && left < win_w {
+                buffer[y * win_w + left] = border_color;
+            }
+            if y < win_h && right < win_w {
+                buffer[y * win_w + right] = border_color;
             }
         }
     }
@@ -283,6 +375,8 @@ impl SoftwareRenderer {
         doc: &Document,
         pan: Vec2,
         zoom: f32,
+        center_offset: Vec2,
+        viewport_clip: [usize; 4],
         grid_size: u32,
         grid_opacity: f32,
     ) {
@@ -290,16 +384,23 @@ impl SoftwareRenderer {
             return;
         }
 
+        let [vp_min_x, vp_min_y, vp_max_x, vp_max_y] = [
+            viewport_clip[0].min(win_w),
+            viewport_clip[1].min(win_h),
+            viewport_clip[2].min(win_w),
+            viewport_clip[3].min(win_h),
+        ];
+
         let doc_w = doc.width as f32;
         let doc_h = doc.height as f32;
-        let center_x = (win_w as f32) * 0.5 + pan.x;
-        let center_y = (win_h as f32) * 0.5 + pan.y;
+        let center_x = (win_w as f32) * 0.5 + pan.x + center_offset.x;
+        let center_y = (win_h as f32) * 0.5 + pan.y + center_offset.y;
 
-        // Screen bounds of the canvas
-        let x_start = (((0.0 - doc_w * 0.5) * zoom + center_x).round() as isize).max(0).min(win_w as isize) as usize;
-        let x_end = (((doc_w - doc_w * 0.5) * zoom + center_x).round() as isize).max(0).min(win_w as isize) as usize;
-        let y_start = (((0.0 - doc_h * 0.5) * zoom + center_y).round() as isize).max(0).min(win_h as isize) as usize;
-        let y_end = (((doc_h - doc_h * 0.5) * zoom + center_y).round() as isize).max(0).min(win_h as isize) as usize;
+        // Screen bounds of the canvas strictly clipped to viewport
+        let x_start = (((0.0 - doc_w * 0.5) * zoom + center_x).round() as isize).max(vp_min_x as isize).min(vp_max_x as isize) as usize;
+        let x_end = (((doc_w - doc_w * 0.5) * zoom + center_x).round() as isize).max(vp_min_x as isize).min(vp_max_x as isize) as usize;
+        let y_start = (((0.0 - doc_h * 0.5) * zoom + center_y).round() as isize).max(vp_min_y as isize).min(vp_max_y as isize) as usize;
+        let y_end = (((doc_h - doc_h * 0.5) * zoom + center_y).round() as isize).max(vp_min_y as isize).min(vp_max_y as isize) as usize;
 
         if x_start >= x_end || y_start >= y_end {
             return;
@@ -372,11 +473,20 @@ impl SoftwareRenderer {
         doc: &Document,
         pan: Vec2,
         zoom: f32,
+        center_offset: Vec2,
+        viewport_clip: [usize; 4],
         cursor_pos: Vec2,
     ) {
         if win_w < 250 || win_h < 150 {
             return;
         }
+
+        let [vp_min_x, vp_min_y, vp_max_x, vp_max_y] = [
+            viewport_clip[0].min(win_w),
+            viewport_clip[1].min(win_h),
+            viewport_clip[2].min(win_w),
+            viewport_clip[3].min(win_h),
+        ];
 
         let ruler_bg = 0xFF080D1D;
         let ruler_border = 0xFF24335C;
@@ -385,13 +495,14 @@ impl SoftwareRenderer {
 
         let top_ruler_h = 16usize;
         let left_ruler_w = 16usize;
-        let top_y_start = 42usize; // Under header dock
-        let left_x_start = 200usize; // Beside tool dock
+        let top_y_start = vp_min_y;
+        let left_x_start = vp_min_x;
+        let right_x_end = vp_max_x;
 
         let doc_w = doc.width as f32;
         let doc_h = doc.height as f32;
-        let center_x = (win_w as f32) * 0.5 + pan.x;
-        let center_y = (win_h as f32) * 0.5 + pan.y;
+        let center_x = (win_w as f32) * 0.5 + pan.x + center_offset.x;
+        let center_y = (win_h as f32) * 0.5 + pan.y + center_offset.y;
 
         // 1. Render Top Horizontal Ruler
         for ry in 0..top_ruler_h {
@@ -400,7 +511,7 @@ impl SoftwareRenderer {
                 continue;
             }
             let row = y * win_w;
-            for x in left_x_start..win_w.saturating_sub(230) {
+            for x in left_x_start..right_x_end {
                 let pixel_idx = row + x;
                 if pixel_idx < buffer.len() {
                     buffer[pixel_idx] = if ry == top_ruler_h - 1 { ruler_border } else { ruler_bg };
@@ -408,12 +519,14 @@ impl SoftwareRenderer {
             }
         }
 
+        let bottom_y_end = vp_max_y;
+
         // Ticks for top ruler
         let step = if zoom > 4.0 { 10.0 } else if zoom > 1.5 { 50.0 } else if zoom > 0.5 { 100.0 } else { 500.0 };
         let mut cur_tick = 0.0_f32;
         while cur_tick <= doc_w {
             let sx = ((cur_tick - doc_w * 0.5) * zoom + center_x).round() as isize;
-            if sx >= left_x_start as isize && sx < (win_w - 230) as isize {
+            if sx >= left_x_start as isize && sx < right_x_end as isize {
                 let tick_len = if (cur_tick % (step * 2.0)).abs() < 0.1 { 10 } else { 5 };
                 for ty in (top_ruler_h - tick_len)..top_ruler_h {
                     let y = top_y_start + ty;
@@ -428,7 +541,7 @@ impl SoftwareRenderer {
 
         // Top Cursor Marker
         let cursor_sx = ((cursor_pos.x - doc_w * 0.5) * zoom + center_x).round() as isize;
-        if cursor_sx >= left_x_start as isize && cursor_sx < (win_w - 230) as isize {
+        if cursor_sx >= left_x_start as isize && cursor_sx < right_x_end as isize {
             for ty in 0..top_ruler_h {
                 let y = top_y_start + ty;
                 let idx = y * win_w + cursor_sx as usize;
@@ -439,7 +552,7 @@ impl SoftwareRenderer {
         }
 
         // 2. Render Left Vertical Ruler
-        for y in (top_y_start + top_ruler_h)..win_h.saturating_sub(28) {
+        for y in (top_y_start + top_ruler_h)..bottom_y_end {
             let row = y * win_w;
             for rx in 0..left_ruler_w {
                 let x = left_x_start + rx;
@@ -454,7 +567,7 @@ impl SoftwareRenderer {
         let mut cur_tick_y = 0.0_f32;
         while cur_tick_y <= doc_h {
             let sy = ((cur_tick_y - doc_h * 0.5) * zoom + center_y).round() as isize;
-            if sy >= (top_y_start + top_ruler_h) as isize && sy < (win_h - 28) as isize {
+            if sy >= (top_y_start + top_ruler_h) as isize && sy < bottom_y_end as isize {
                 let tick_len = if (cur_tick_y % (step * 2.0)).abs() < 0.1 { 10 } else { 5 };
                 for tx in (left_ruler_w - tick_len)..left_ruler_w {
                     let x = left_x_start + tx;
@@ -469,7 +582,7 @@ impl SoftwareRenderer {
 
         // Left Cursor Marker
         let cursor_sy = ((cursor_pos.y - doc_h * 0.5) * zoom + center_y).round() as isize;
-        if cursor_sy >= (top_y_start + top_ruler_h) as isize && cursor_sy < (win_h - 28) as isize {
+        if cursor_sy >= (top_y_start + top_ruler_h) as isize && cursor_sy < bottom_y_end as isize {
             for tx in 0..left_ruler_w {
                 let x = left_x_start + tx;
                 let idx = cursor_sy as usize * win_w + x;
@@ -610,24 +723,25 @@ impl SoftwareRenderer {
         }
     }
 
-    pub fn draw_screen_line(&self, buffer: &mut [u32], win_w: usize, win_h: usize, p0: Vec2, p1: Vec2, color: u32, dashed: bool) {
+    pub fn draw_screen_line(&self, buffer: &mut [u32], win_w: usize, win_h: usize, p0: Vec2, p1: Vec2, color: u32, dashed: bool, clip: [usize; 4]) {
         let dist = p0.distance(p1);
         let steps = (dist.ceil() as usize).max(1);
+        let [vx0, vy0, vx1, vy1] = clip;
         for i in 0..=steps {
             if dashed && ((i / 6) % 2 == 1) {
                 continue;
             }
             let t = i as f32 / steps as f32;
             let p = p0.lerp(p1, t);
-            let x = p.x.round() as i32;
-            let y = p.y.round() as i32;
-            if x >= 0 && x < win_w as i32 && y >= 0 && y < win_h as i32 {
-                buffer[y as usize * win_w + x as usize] = color;
+            let x = p.x.round() as usize;
+            let y = p.y.round() as usize;
+            if x >= vx0 && x < vx1 && y >= vy0 && y < vy1 && x < win_w && y < win_h {
+                buffer[y * win_w + x] = color;
             }
         }
     }
 
-    pub fn draw_screen_rect(&self, buffer: &mut [u32], win_w: usize, win_h: usize, p0: Vec2, p1: Vec2, color: u32, dashed: bool) {
+    pub fn draw_screen_rect(&self, buffer: &mut [u32], win_w: usize, win_h: usize, p0: Vec2, p1: Vec2, color: u32, dashed: bool, clip: [usize; 4]) {
         let min_x = p0.x.min(p1.x);
         let max_x = p0.x.max(p1.x);
         let min_y = p0.y.min(p1.y);
@@ -638,13 +752,13 @@ impl SoftwareRenderer {
         let br = Vec2::new(max_x, max_y);
         let bl = Vec2::new(min_x, max_y);
 
-        self.draw_screen_line(buffer, win_w, win_h, tl, tr, color, dashed);
-        self.draw_screen_line(buffer, win_w, win_h, tr, br, color, dashed);
-        self.draw_screen_line(buffer, win_w, win_h, br, bl, color, dashed);
-        self.draw_screen_line(buffer, win_w, win_h, bl, tl, color, dashed);
+        self.draw_screen_line(buffer, win_w, win_h, tl, tr, color, dashed, clip);
+        self.draw_screen_line(buffer, win_w, win_h, tr, br, color, dashed, clip);
+        self.draw_screen_line(buffer, win_w, win_h, br, bl, color, dashed, clip);
+        self.draw_screen_line(buffer, win_w, win_h, bl, tl, color, dashed, clip);
     }
 
-    pub fn draw_screen_ellipse(&self, buffer: &mut [u32], win_w: usize, win_h: usize, p0: Vec2, p1: Vec2, color: u32, dashed: bool) {
+    pub fn draw_screen_ellipse(&self, buffer: &mut [u32], win_w: usize, win_h: usize, p0: Vec2, p1: Vec2, color: u32, dashed: bool, clip: [usize; 4]) {
         let center = (p0 + p1) * 0.5;
         let rx = (p1.x - p0.x).abs() * 0.5;
         let ry = (p1.y - p0.y).abs() * 0.5;
@@ -654,35 +768,37 @@ impl SoftwareRenderer {
 
         let circumference = std::f32::consts::PI * (3.0 * (rx + ry) - ((3.0 * rx + ry) * (rx + 3.0 * ry)).sqrt());
         let steps = (circumference.ceil() as usize).max(12);
+        let [vx0, vy0, vx1, vy1] = clip;
 
         for i in 0..steps {
             if dashed && ((i / 6) % 2 == 1) {
                 continue;
             }
             let theta = (i as f32 / steps as f32) * std::f32::consts::TAU;
-            let x = (center.x + theta.cos() * rx).round() as i32;
-            let y = (center.y + theta.sin() * ry).round() as i32;
-            if x >= 0 && x < win_w as i32 && y >= 0 && y < win_h as i32 {
-                buffer[y as usize * win_w + x as usize] = color;
+            let x = (center.x + theta.cos() * rx).round() as usize;
+            let y = (center.y + theta.sin() * ry).round() as usize;
+            if x >= vx0 && x < vx1 && y >= vy0 && y < vy1 && x < win_w && y < win_h {
+                buffer[y * win_w + x] = color;
             }
         }
     }
 
-    pub fn draw_screen_crosshair(&self, buffer: &mut [u32], win_w: usize, win_h: usize, center: Vec2, color: u32) {
-        let cx = center.x.round() as i32;
-        let cy = center.y.round() as i32;
-        let size = 7;
+    pub fn draw_screen_crosshair(&self, buffer: &mut [u32], win_w: usize, win_h: usize, center: Vec2, color: u32, clip: [usize; 4]) {
+        let cx = center.x.round() as usize;
+        let cy = center.y.round() as usize;
+        let [vx0, vy0, vx1, vy1] = clip;
+        let size = 7isize;
 
         for dx in -size..=size {
-            let x = cx + dx;
-            if x >= 0 && x < win_w as i32 && cy >= 0 && cy < win_h as i32 {
-                buffer[cy as usize * win_w + x as usize] = color;
+            let x = (cx as isize + dx) as usize;
+            if x >= vx0 && x < vx1 && cy >= vy0 && cy < vy1 && x < win_w && cy < win_h {
+                buffer[cy * win_w + x] = color;
             }
         }
         for dy in -size..=size {
-            let y = cy + dy;
-            if cx >= 0 && cx < win_w as i32 && y >= 0 && y < win_h as i32 {
-                buffer[y as usize * win_w + cx as usize] = color;
+            let y = (cy as isize + dy) as usize;
+            if cx >= vx0 && cx < vx1 && y >= vy0 && y < vy1 && cx < win_w && y < win_h {
+                buffer[y * win_w + cx] = color;
             }
         }
     }

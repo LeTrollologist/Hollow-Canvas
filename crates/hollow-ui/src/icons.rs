@@ -247,5 +247,21 @@ pub fn draw_tool_icon(painter: &Painter, rect: Rect, tool: ToolType, color: Colo
             painter.circle_filled(p_top, 2.5_f32, color);
             painter.circle_filled(p_tip, 1.2_f32, color);
         }
+
+        ToolType::SelectionBrush => {
+            // Brush with dashed selection ring
+            let p1 = pos2(cx - r * 0.6_f32, cy + r * 0.6_f32);
+            let p2 = pos2(cx + r * 0.5_f32, cy - r * 0.5_f32);
+            painter.line_segment([p1, p2], Stroke::new(2.5_f32, color));
+            let ring_c = pos2(cx - r * 0.45_f32, cy + r * 0.45_f32);
+            painter.circle_stroke(ring_c, 3.5_f32, Stroke::new(1.0_f32, color));
+        }
+
+        ToolType::SelectionEraser => {
+            // Angled eraser block with dashed ring
+            let e_rect = Rect::from_center_size(pos2(cx, cy), Vec2::new(r * 1.3_f32, r * 0.8_f32));
+            painter.rect_stroke(e_rect, 2.0_f32, stroke);
+            painter.line_segment([pos2(e_rect.left() + 4.0, e_rect.top()), pos2(e_rect.left() + 4.0, e_rect.bottom())], stroke);
+        }
     }
 }

@@ -124,17 +124,17 @@ impl StrokeRasterizer {
 
         let radius_sq = radius * radius;
         let clamped_hardness = hardness.clamp(0.0, 0.999);
-        let inner_radius_sq = (radius * clamped_hardness) * (radius * clamped_hardness);
-        let radius_i = radius.ceil() as i32;
+        // Antialiasing fringe: guarantee at least a 1.0-subpixel smooth falloff transition at the perimeter
+        let aa_fringe = 1.0_f32.min(radius * 0.5);
+        let inner_r = (radius * clamped_hardness).min(radius - aa_fringe).max(0.0);
+        let inner_radius_sq = inner_r * inner_r;
 
-        let center_x_i = stamp_center.x.round() as i32;
-        let center_y_i = stamp_center.y.round() as i32;
+        let min_x = ((stamp_center.x - radius - 0.5).floor() as i32).max(0);
+        let max_x = ((stamp_center.x + radius + 0.5).ceil() as i32).min(doc_w as i32 - 1);
+        let min_y = ((stamp_center.y - radius - 0.5).floor() as i32).max(0);
+        let max_y = ((stamp_center.y + radius + 0.5).ceil() as i32).min(doc_h as i32 - 1);
 
-        for dy in -radius_i..=radius_i {
-            let py_i = center_y_i + dy;
-            if py_i < 0 || py_i >= doc_h as i32 {
-                continue;
-            }
+        for py_i in min_y..=max_y {
             let y = py_i as u32;
             let dy_f = (y as f32 + 0.5) - stamp_center.y;
             let dy_sq = dy_f * dy_f;
@@ -143,11 +143,7 @@ impl StrokeRasterizer {
                 continue;
             }
 
-            for dx in -radius_i..=radius_i {
-                let px_i = center_x_i + dx;
-                if px_i < 0 || px_i >= doc_w as i32 {
-                    continue;
-                }
+            for px_i in min_x..=max_x {
                 let x = px_i as u32;
                 let dx_f = (x as f32 + 0.5) - stamp_center.x;
                 let d_sq = dx_f * dx_f + dy_sq;
@@ -155,7 +151,14 @@ impl StrokeRasterizer {
                 if d_sq <= radius_sq {
                     let d = d_sq.sqrt();
                     let mut alpha = match tool {
-                        ToolType::Pencil => opacity,
+                        ToolType::Pencil => {
+                            if d_sq <= inner_radius_sq {
+                                opacity
+                            } else {
+                                let edge = (1.0 - (d - inner_r) / (radius - inner_r).max(0.001)).clamp(0.0, 1.0);
+                                edge * opacity
+                            }
+                        }
                         ToolType::Chalk => {
                             let noise = hash21(x, y, (step_index as u32).wrapping_mul(2654435761));
                             if noise > 0.45 {
@@ -193,8 +196,7 @@ impl StrokeRasterizer {
                                 let base_alpha = if d_sq <= inner_radius_sq {
                                     1.0
                                 } else {
-                                    let inner_r = radius * clamped_hardness;
-                                    (1.0 - (d - inner_r) / (radius - inner_r)).clamp(0.0, 1.0)
+                                    (1.0 - (d - inner_r) / (radius - inner_r).max(0.001)).clamp(0.0, 1.0)
                                 };
                                 base_alpha * opacity
                             }
@@ -203,8 +205,7 @@ impl StrokeRasterizer {
                             let base_alpha = if d_sq <= inner_radius_sq {
                                 1.0
                             } else {
-                                let inner_r = radius * clamped_hardness;
-                                (1.0 - (d - inner_r) / (radius - inner_r)).clamp(0.0, 1.0)
+                                (1.0 - (d - inner_r) / (radius - inner_r).max(0.001)).clamp(0.0, 1.0)
                             };
                             base_alpha * opacity
                         }

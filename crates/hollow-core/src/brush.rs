@@ -26,6 +26,8 @@ pub enum ToolType {
     Transform,
     Crop,
     Eyedropper,
+    SelectionBrush,
+    SelectionEraser,
 }
 
 impl ToolType {
@@ -52,6 +54,8 @@ impl ToolType {
             Self::Transform => "Transform",
             Self::Crop => "Crop",
             Self::Eyedropper => "Eyedropper",
+            Self::SelectionBrush => "Sel Brush",
+            Self::SelectionEraser => "Sel Erase",
         }
     }
 
@@ -78,6 +82,8 @@ impl ToolType {
             Self::Transform => "⤢",
             Self::Crop => "⛶",
             Self::Eyedropper => "◉",
+            Self::SelectionBrush => "🖌",
+            Self::SelectionEraser => "🧹",
         }
     }
 
@@ -91,7 +97,13 @@ impl ToolType {
                 | Self::Spray
                 | Self::Smudge
                 | Self::Eraser
+                | Self::SelectionBrush
+                | Self::SelectionEraser
         )
+    }
+
+    pub fn is_selection_stroke_tool(&self) -> bool {
+        matches!(self, Self::SelectionBrush | Self::SelectionEraser)
     }
 
     pub fn is_shape_tool(&self) -> bool {
@@ -104,12 +116,16 @@ impl ToolType {
     pub fn is_selection_tool(&self) -> bool {
         matches!(
             self,
-            Self::Marquee | Self::Lasso | Self::Wand
+            Self::Marquee | Self::Lasso | Self::Wand | Self::SelectionBrush | Self::SelectionEraser
         )
     }
 
     pub fn is_painting_tool(&self) -> bool {
-        self.is_freehand_stroke_tool() || self.is_shape_tool() || *self == Self::Polygon || *self == Self::Fill || *self == Self::Gradient
+        (self.is_freehand_stroke_tool() && !self.is_selection_stroke_tool())
+            || self.is_shape_tool()
+            || *self == Self::Polygon
+            || *self == Self::Fill
+            || *self == Self::Gradient
     }
 }
 

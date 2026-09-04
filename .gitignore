@@ -9,3 +9,8 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+*.priv
+keys/*.priv
+scratch/
+exports/
+*.mp4

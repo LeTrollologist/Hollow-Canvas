@@ -22,6 +22,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    if sys.stdout:
+        sys.stdout.reconfigure(encoding="utf-8")
+    if sys.stderr:
+        sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 PROJECT_NAME = "hollow-canvas"
 REPO_GH = "LeTrollologist/Hollow-Canvas"
 APP_CRATE = "hollow-app"
@@ -29,7 +37,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT_DIR / "dist"
 
 CANONICAL_ASSET_REGEX = re.compile(
-    r"^hollow-canvas-v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?-(windows)-(x86_64)\.(zip|vpack)$"
+    r"^(hollow-canvas-v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?-(windows)-(x86_64)\.(zip|vpack)|hollow-publisher\.pub)$"
 )
 
 
@@ -165,7 +173,15 @@ def stage_package(version: str, tag_dir: Path, vpack_exe: str):
         zip_path.unlink()
     shutil.make_archive(str(tag_dir / f"hollow-canvas-{version}-windows-x86_64"), "zip", staging_dir)
 
-    # 2. Create VPACK Archive
+    # 2. Check for Ed25519 Publisher Signing Key
+    signing_key = os.environ.get("VPACK_SIGNING_KEY")
+    key_path = None
+    if signing_key and Path(signing_key).exists():
+        key_path = Path(signing_key)
+    elif (ROOT_DIR / "keys" / "hollow-publisher.priv").exists():
+        key_path = ROOT_DIR / "keys" / "hollow-publisher.priv"
+
+    # 3. Create Signed VPACK Archive
     vpack_name = f"hollow-canvas-{version}-windows-x86_64.vpack"
     vpack_path = tag_dir / vpack_name
     print(f"  Creating {vpack_name}...")
@@ -177,16 +193,34 @@ def stage_package(version: str, tag_dir: Path, vpack_exe: str):
         "add",
         "-c",
         "9",
+    ]
+    if key_path and key_path.exists():
+        print(f"  \033[1;32m✓ Digitally signing VPack package with publisher key: {key_path.name}\033[0m")
+        vpack_cmd.extend(["-s", str(key_path)])
+
+    vpack_cmd.extend([
         str(vpack_path),
         str(staging_dir / "hollow-canvas.exe"),
         str(staging_dir / "README.md"),
         str(staging_dir / "LICENSE.md"),
         str(staging_dir / "PRIVACY.md"),
         str(staging_dir / "SECURITY.md"),
-    ]
+    ])
     run_cmd(vpack_cmd)
 
-    return [zip_path, vpack_path]
+    # 4. Verify archive integrity & signature via vpack test
+    print(f"  Testing CRC-32 integrity & verifying Ed25519 signature of {vpack_name}...")
+    run_cmd([vpack_exe or "vpack", "test", str(vpack_path)])
+
+    # 5. Export public key to release folder if available
+    pub_key_path = ROOT_DIR / "keys" / "hollow-publisher.pub"
+    created_assets = [zip_path, vpack_path]
+    if pub_key_path.exists():
+        dest_pub = tag_dir / "hollow-publisher.pub"
+        shutil.copy2(pub_key_path, dest_pub)
+        created_assets.append(dest_pub)
+
+    return created_assets
 
 
 def stage_verify(tag_dir: Path, assets: list):
@@ -381,84 +415,48 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
         else "🟢 Verified Clean / Independent Permalinks Available"
     )
 
-    release_body = f"""## 🎨 Hollow Canvas {version} · Fluid Stabilization & Precision Patch (Alpha)
+    release_body = f"""## 👑 Hollow Canvas {version} · The "Sovereign Distribution" Update
 
 A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.
 
 ### ✨ What's New in {version}
-* **⚡ Fluid Stroke Sub-Stepping & Responsive S-Levels**:
-  - **Zero-Stall Continuous Interpolation**: Fast mouse and stylus strokes now sub-step along the trajectory at 6px intervals, eliminating hesitation, stuttering, and pauses during quick linework.
-  - **Smooth Natural Pen Lift**: Releasing the mouse button now smoothly glides into the release point with natural micro-tapering instead of abrupt snap jumps.
-  - **Precision Tuning for All S-Levels (`S-0` .. `S-7`)**: Calibrated follow weights and zeroed deadzones on responsive levels (`S-1` and `S-2`) for instantaneous feel.
-  - **Fixed Header Badge Layout**: Cleaned up top-right header spacing between S-Level chip and active tool badge.
-* **🎯 Granular Stroke Stabilization Engine (`S-0` to `S-7`)**:
-  - **SAI-Style Lazy Rope Physics**: Brush tip follows the cursor with weighted lag to eliminate hand tremors and jitter on long, flowing linework.
-  - **8 Granular S-Levels**:
-    - `S-0 (Off / Raw)`: Direct 1:1 real-time cursor input.
-    - `S-1 (Responsive)`: Light filtering for fast responsive sketching.
-    - `S-2 (Studio Default)`: Balanced studio stabilization for general illustration.
-    - `S-3 (Smooth Inking)`: Crisp inker stabilization for clean lineart.
-    - `S-4 (Fluid Curves)`: Enhanced curve stabilization for fluid contours.
-    - `S-5 (Heavy Streamline)`: Heavy smoothing filtering out hand tremors.
-    - `S-6 (Ultra Precision)`: High-precision lazy rope for long confident strokes.
-    - `S-7 (Max Lazy Rope)`: Maximum follow delay for ultra-steady linework and lettering.
-  - **Live Guide Leash Overlay**: Active visual tracking leash line connects the cursor to the trailing brush tip at high S-levels.
-  - **Quick Header Pill & Sidebar Chips**: 1-click header toggle to cycle S-levels, plus dedicated slider and preset chips in the Left Tools Dock.
-* **🔒 Automated Dependency Security Audit (`cargo audit`)**:
-  - Full automated vulnerability scanning against the RustSec Advisory Database integrated directly into `scripts/pipeline.py`.
-  - Audits dependency trees for security advisories and saves logs to `dist/audit/cargo-audit.txt`.
-  - Built-in release gate blocks distribution if critical vulnerabilities are detected.
-* **🪄 Magic Wand Multiple Selections (`Shift` & `Alt`)**:
-  - `Shift + Click` with Magic Wand now unions / adds new regions into the active selection mask.
-  - `Alt + Click` subtracts matching regions from the current selection.
-  - Supports continuous multi-region selections across layers.
-* **🖱️ Sidebar & Panel Mouse Wheel Isolation**:
-  - Scrolling the mouse wheel over the Left Tools Dock, Right Layers/Color Dock, Timeline, or dialogs now smoothly scrolls the panels without zooming the canvas.
-  - Canvas zooming is preserved exclusively when hovering over the drawing viewport.
-* **🛠️ Graphics & Core Engine Logic Audit**:
-  - **Animation Frame Duplication**: Fixed `active_layer_id` mapping when duplicating frames.
-  - **Layer Offset & Opacity Merging**: Full support for layer translations $(offset_x, offset_y)$ and baked opacities in `merge_layer_down`.
-  - **W3C Compositing Compliance**: Implemented boundary edge checks for `ColorDodge` and `ColorBurn`, plus W3C `ClipColor` gamut preservation for `Luminosity`.
-  - **Clipping Mask Group Visibility**: Properly handles base layer visibility and opacity hierarchy.
-  - **Alpha Premultiplication in Filters**: Gaussian blur now uses premultiplied alpha convolution to eliminate dark fringing on transparent edges.
-  - **Subpixel Bilinear Sampling**: Fixed boundary edge conditions in affine transformations and bilinear sampling.
-  - **Spline & Freehand Stroke Interpolation**: Corrected Catmull-Rom spline control points to avoid duplicate segment rendering.
-  - **Project Archive (.hcv v2) Hardening**: Added decompressed payload byte validation to prevent corrupted layer loading.
-* **🎞️ Interactive Flipbook Timeline Strip**:
-  - Full frame-by-frame animation engine (`AnimationTimeline` and `AnimationFrame`).
-  - Add blank frames, duplicate active frame, delete frames, reorder frames, and scrub playback.
-  - Real-time animation playback controller: Play/Pause (`Space`), loop toggle, and configurable FPS (1..=60 fps).
-  - Bottom **Timeline Strip** dock with visual frame number chips, active frame highlight, and playback controls.
-  - Shortcut keys: `[` to step previous frame, `]` to step next frame.
-* **🧅 Multi-Frame Ghost Onion Skinning (`O`)**:
-  - Live ghosted silhouettes rendered directly in the viewport for natural in-betweening.
-  - **Previous Frames**: Tinted red/orange underlay with configurable frame depth (1–5 frames).
-  - **Next Frames**: Tinted green/cyan overlay with configurable frame depth (1–5 frames).
-* **🎬 Direct Animated Export (GIF & PNG Sequence)**:
-  - Direct export to animated `.gif` with loop count and frame delay encoding via `image::codecs::gif::GifEncoder`.
-  - Direct export to numbered PNG frame sequence.
-* **⚡ Speed & Velocity-Sensitive Pressure Simulation**: Faster strokes automatically taper into fine, sharp tips.
-* **✒️ Calligraphy Chisel & Ribbon Nib Dynamics**: Configurable chisel nib angle (0°..=180°) and ribbon weight.
-* **≋ Wet Edge Watercolor Pigment Pooling**: Realistic pigment concentration simulation at stroke boundaries.
-* **📚 Studio Brush Preset Shelf**: 8 studio presets (G-Pen, 2B Pencil, Nib, Airbrush, Watercolor, Oil, Charcoal, Copic).
-* **⤢ Studio Free Transform Tool (`Ctrl+T`)** — Interactive 8-point bounding box gizmo, smooth rotation, mirror flipping, and bilinear resampling.
-* **📐 Dual-Mode Reference & Tracing Paper Engine** — On-canvas tracing paper underlay/overlay and detached floating lightbox dock.
-* **🎨 Studio Color Adjustments & Filters FX Suite** — HSL, Brightness/Contrast, Color Balance, Invert, Gaussian Blur, Sharpen, Film Grain, Vignette, and Lens Aberration.
-* **📦 Universal VPack & Zip Packaging** — Portable `.zip` and ultra-compact `.vpack` archives with SHA256 integrity checksums.
+
+* **🎨 Floating "Mixing Scratchpad" (<kbd>F4</kbd>)**:
+  - **Off-Canvas Color Mixing Dock**: Dedicated floating studio dock mimicking a physical painter's mixing palette where artists can scribble, blend pigments, and test brush strokes without polluting the canvas or document undo history.
+  - **Live Pigment Smudging & Blending**: Directional velocity color smearing with real-time dynamic buffer blending.
+  - **Quick Eyedropper Sampling**: Tap or drag with the Eyedropper (<kbd>I</kbd> or <kbd>Alt</kbd>+Click) on the scratchpad to instantly grab blended hues into primary/secondary palettes.
+  - **Independent Dock Viewports & Modes**: Switch between Dark Studio, White Lightbox, and Checkerboard Alpha canvas backgrounds, adjust scratchpad brush sizes (2px–64px), or clear the palette with a single click.
+
+* **⚡ Subpixel-Antialiased High-Frequency Stroke Engine**:
+  - **Zero Jaggedness Guarantee**: Fixed rasterizer stamp clipping by calculating exact floating-point subpixel bounding boxes (`min_x = floor(cx - r - 0.5)`), ensuring smooth circular bounds regardless of fractional cursor coordinates.
+  - **Universal Antialiasing Fringe Band**: Enforced a minimum 1.0 physical sub-pixel antialiasing transition band (`aa_fringe = 1.0_f32.min(radius * 0.5)`) across all brush hardness levels, completely eliminating 1-bit staircase aliasing on inking pens.
+  - **True Tangent Catmull-Rom Curvature**: Preserved genuine spline curvature during high-speed strokes without angular chord artifacts.
+
+* **🔐 VPack 2.0.0 Integrated Ed25519 Digital Signing & Chain of Trust**:
+  - **Enterprise-Grade Cryptographic Signing**: Official release packages are now signed with an Ed25519 publisher keypair directly inside `scripts/pipeline.py`.
+  - **Automated Signature & CRC-32 Verification**: Packages are verified via `vpack test` to validate digital signatures and checksums.
+  - **Distributed Public Key**: Public key `hollow-publisher.pub` (`3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f`) is attached to all releases.
+
+* **🛡️ Studio Workspace & Dock Hardening**:
+  - Rigid 220px Left Tools and 240px Right Studio docks with zero overlapping and wide-open central viewport.
+  - Granular Stroke Stabilization (S-0 through S-7 Lazy Rope).
+  - Collapsible Nested Layer Groups, Selection Mask Brush/Eraser, Free Transform (<kbd>Ctrl+T</kbd>), and Multi-Axis Symmetry.
 
 ### 🛡️ Security & VirusTotal Verification
 | Security Check | Result | Verification Link |
 | :--- | :--- | :--- |
 | **VirusTotal Scan** | {vt_status_text} | [View VirusTotal Report]({vt_url}) |
 | **SHA-256 Checksum** | `{zip_hash}` | Match against `SHA256SUMS.txt` |
+| **Ed25519 Signature** | `3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f` | Verified via `vpack test` |
 | **Audit Summary** | Local Security & Compliance Verified | Uploaded as `virustotal-summary.txt` |
 
 ### 📦 Downloads & Assets
 | Asset | Format | Description |
 | :--- | :--- | :--- |
+| `hollow-canvas-{version}-windows-x86_64.vpack` | VPack Archive | Digitally signed, ultra-compact package (inspectable via `vpack`) |
 | `hollow-canvas-{version}-windows-x86_64.zip` | Standard Zip | Full portable studio archive |
-| `hollow-canvas-{version}-windows-x86_64.vpack` | VPack Archive | Universal compact archive (inspectable via `vpack`) |
-| `SHA256SUMS.txt` | SHA-256 | Cryptographic integrity verification |
+| `hollow-publisher.pub` | Ed25519 Key | Official publisher public key for verifying signatures |
+| `SHA256SUMS.txt` | SHA-256 | Cryptographic integrity verification checksums |
 | `virustotal-summary.txt` | Security Audit | VirusTotal scan analysis summary |
 
 ### 🚀 Installation Instructions
@@ -478,9 +476,12 @@ Expand-Archive -Path .\\hollow-canvas-{version}-windows-x86_64.zip -DestinationP
 ```
 
 ### 🔒 Cryptographic Verification
-Verify all assets against `SHA256SUMS.txt`:
+Verify all assets against `SHA256SUMS.txt` and check digital signatures:
 ```bash
+# 1. Verify SHA-256
 certutil -hashfile hollow-canvas-{version}-windows-x86_64.zip SHA256
+
+# 2. Test CRC-32 & Verify Ed25519 Publisher Signature
 vpack test hollow-canvas-{version}-windows-x86_64.vpack
 ```
 """

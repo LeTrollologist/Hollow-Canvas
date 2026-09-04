@@ -1,14 +1,14 @@
 [package]
 name = "hollow-render"
-version = "0.13.1"
+version = "0.15.0"
 edition = "2021"
-description = "Fast software rasterizer, pixel compositor, and egui primitive backend for Hollow Canvas"
+description = "Fast software rasterizer and egui primitive compositing engine for Hollow Canvas"
 
 [lib]
 test = false
 
 [dependencies]
-hollow-core = { path = "../hollow-core", version = "0.13.1" }
+hollow-core = { path = "../hollow-core", version = "0.15.0" }
 egui = { workspace = true }
 glam = { workspace = true }
 log = { workspace = true }
