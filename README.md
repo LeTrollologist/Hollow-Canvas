@@ -21,6 +21,12 @@
 
 ### Key Highlights
 
+- ⛶ **Free Transform & Mesh Warp (<kbd>Ctrl+T</kbd>)**: Studio-grade non-destructive pixel deformation supporting 4 operational modes:
+  - **Affine 2D**: Scale, rotate, skew, translate, flip, custom pivot with interactive bounding box and rotation stalk.
+  - **Perspective Quad**: 4-corner homography warping with analytical direct linear transformation (DLT) matrix inversion for true 3D planar alignment.
+  - **Bicubic Mesh Grid**: Configurable $N \times M$ control grids (3x3, 4x4, 5x5, 6x6, 8x8) with draggable vertex pins and inverse bilinear quad mapping.
+  - **Thin Plate Splines (TPS)**: Multi-pin landmark warping driven by radial basis function kernels with Gauss-Jordan partial pivoting solvers for organic elasticity.
+  - **Subpixel Sampling Filters**: Real-time Bicubic (16-sample Catmull-Rom), Bilinear, and Nearest-neighbor interpolation.
 - 📐 **Visual Perspective Rulers (1, 2, and 3-Point)**: Horizon line elevation & tilt, multi-colored radial vanishing point rays (Azure Blue, Turquoise Green, Violet Pink), and a real-time **Constraint Snapping Engine (<kbd>Ctrl+Shift+P</kbd>)** that projects brush strokes onto perspective vectors.
 - ✨ **Non-Destructive Adjustment Layers**: Real-time, zero-allocation filter passes during composite steps (`Brightness/Contrast`, `HSL`, `Color Balance`, `Invert`, `Posterize`, `Threshold`, `Sepia`) that dynamically affect layers underneath without altering base pixel data.
 - 🎨 **Floating Mixing Scratchpad (<kbd>F4</kbd>)**: Persistent off-canvas color mixing dock for scribbling, smudging pigments, and eyedropper sampling without modifying the main document or history.
@@ -46,10 +52,10 @@ The workspace is organized into modular, decoupled Rust crates:
 Hollow Canvas/
 ├── assets/           # Application icons (SVG, ICO, PNG) and banner art
 ├── crates/
-│   ├── hollow-core/  # Core domain models, perspective geometry, adjustment filters, layers, and rasterizers
+│   ├── hollow-core/  # Core domain models, perspective geometry, affine/quad/mesh/TPS deformation, adjustment filters, layers, and rasterizers
 │   ├── hollow-render/# Software renderer, perspective guides, texture caching, grid/ruler overlays, and UI primitives
 │   ├── hollow-io/    # Binary HCV v4 project serialization, PNG export, and file parsing
-│   ├── hollow-ui/    # Modern egui-based dock panels, tools shelf, perspective dock, adjustment modals, and palettes
+│   ├── hollow-ui/    # Modern egui-based dock panels, tools shelf, transform studio, perspective dock, adjustment modals, and palettes
 │   └── hollow-app/   # Native Win32 desktop application orchestrator and message loop
 ```
 
@@ -63,18 +69,18 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 [**VPack Archiver**](https://github.com/LeTrollologist/vpack-archiver) is the high-performance universal archive manager for `.vpack` packages.
 
-1. Download [`hollow-canvas-v0.16.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) and [`hollow-publisher.pub`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v0.17.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) and [`hollow-publisher.pub`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the package with `vpack`:
    ```bash
    # Extract all files
-   vpack extract hollow-canvas-v0.16.0-windows-x86_64.vpack
+   vpack extract hollow-canvas-v0.17.0-windows-x86_64.vpack
 
    # Or extract to a custom directory
-   vpack extract hollow-canvas-v0.16.0-windows-x86_64.vpack -o ./HollowCanvas/
+   vpack extract hollow-canvas-v0.17.0-windows-x86_64.vpack -o ./HollowCanvas/
    ```
 3. *(Optional)* Verify Ed25519 signature and CRC-32 integrity:
    ```bash
-   vpack test hollow-canvas-v0.16.0-windows-x86_64.vpack
+   vpack test hollow-canvas-v0.17.0-windows-x86_64.vpack
    ```
 4. Run `hollow-canvas.exe`.
 
@@ -84,10 +90,10 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 No additional archive tools required — works with standard Windows extraction:
 
-1. Download [`hollow-canvas-v0.16.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v0.17.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the zip file using PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\hollow-canvas-v0.16.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
+   Expand-Archive -Path .\hollow-canvas-v0.17.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
    ```
 3. Double-click `HollowCanvas\hollow-canvas.exe` to launch immediately.
 

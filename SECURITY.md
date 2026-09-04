@@ -6,6 +6,7 @@ We provide security updates and patches for the following versions of **Hollow C
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 0.17.x  | :white_check_mark: |
 | 0.16.x  | :white_check_mark: |
 | 0.15.x  | :white_check_mark: |
 | 0.14.x  | :white_check_mark: |
@@ -25,7 +26,7 @@ Starting in **v0.15.0**, all official `.vpack` release packages are cryptographi
 - **Key Asset**: `hollow-publisher.pub` (distributed alongside every release)
 - **Signature Verification**: VPack 2.0.0 validates the digital signature automatically on testing or extracting:
   ```bash
-  vpack test hollow-canvas-v0.16.0-windows-x86_64.vpack
+  vpack test hollow-canvas-v0.17.0-windows-x86_64.vpack
   ```
 
 ---
@@ -54,7 +55,7 @@ Every official release distribution package (`.zip` and `.vpack`) undergoes auto
 ### How to Verify a Downloaded Release
 ```powershell
 # 1. Compute SHA-256 on Windows
-certutil -hashfile hollow-canvas-v0.15.0-windows-x86_64.zip SHA256
+certutil -hashfile hollow-canvas-v0.17.0-windows-x86_64.zip SHA256
 
 # 2. Check the VirusTotal analysis report directly in your browser:
 # https://www.virustotal.com/gui/file/<SHA256_HASH>

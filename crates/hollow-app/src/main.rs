@@ -180,8 +180,135 @@ struct HollowCanvasDesktopApp {
     current_velocity: f32,
     last_anim_tick: Instant,
     stabilized_pos: Option<Vec2>,
+    stroke_dirty: bool,
     stroke_perspective_axis: Option<Vec2>,
     has_initialized_view: bool,
+}
+
+fn hit_test_transform_handle(
+    state: &AppState,
+    screen_pos: Vec2,
+    win_w: f32,
+    win_h: f32,
+) -> Option<hollow_ui::state::TransformHandle> {
+    if !state.transform_session.is_active {
+        return None;
+    }
+    let session = &state.transform_session;
+    let hit_dist_screen = 14.0_f32;
+
+    match session.mode {
+        hollow_core::transform::TransformMode::Affine => {
+            let origin = session.patch_origin;
+            let pw = session.patch_w as f32;
+            let ph = session.patch_h as f32;
+
+            let corners_canvas = [
+                origin,
+                origin + Vec2::new(pw, 0.0),
+                origin + Vec2::new(pw, ph),
+                origin + Vec2::new(0.0, ph),
+            ];
+
+            let corners_screen: Vec<Vec2> = corners_canvas
+                .iter()
+                .map(|&c| {
+                    let tc = session.transform.forward(c);
+                    state.canvas_to_screen(tc, win_w, win_h)
+                })
+                .collect();
+
+            // 1. Rotation handle
+            let top_mid = (corners_screen[0] + corners_screen[1]) * 0.5;
+            let edge_dir = (corners_screen[1] - corners_screen[0]).normalize_or_zero();
+            let normal = Vec2::new(-edge_dir.y, edge_dir.x);
+            let rot_handle = top_mid + normal * 24.0;
+            if screen_pos.distance(rot_handle) <= hit_dist_screen {
+                return Some(hollow_ui::state::TransformHandle::RotateStem);
+            }
+
+            // 2. Pivot point
+            let pivot_sp = state.canvas_to_screen(session.transform.pivot + session.transform.translation, win_w, win_h);
+            if screen_pos.distance(pivot_sp) <= hit_dist_screen {
+                return Some(hollow_ui::state::TransformHandle::Pivot);
+            }
+
+            // 3. Corner handles
+            let corner_handles = [
+                hollow_ui::state::TransformHandle::TopLeft,
+                hollow_ui::state::TransformHandle::TopRight,
+                hollow_ui::state::TransformHandle::BottomRight,
+                hollow_ui::state::TransformHandle::BottomLeft,
+            ];
+            for (i, &ch) in corner_handles.iter().enumerate() {
+                if screen_pos.distance(corners_screen[i]) <= hit_dist_screen {
+                    return Some(ch);
+                }
+            }
+
+            // 4. Midpoint handles
+            let mid_handles = [
+                hollow_ui::state::TransformHandle::TopCenter,
+                hollow_ui::state::TransformHandle::MidRight,
+                hollow_ui::state::TransformHandle::BottomCenter,
+                hollow_ui::state::TransformHandle::MidLeft,
+            ];
+            for i in 0..4 {
+                let mid = (corners_screen[i] + corners_screen[(i + 1) % 4]) * 0.5;
+                if screen_pos.distance(mid) <= hit_dist_screen {
+                    return Some(mid_handles[i]);
+                }
+            }
+
+            // 5. Inside bounding box -> BodyTranslate
+            let canvas_pos = state.screen_to_canvas(screen_pos, win_w, win_h);
+            let src_canvas_pt = session.transform.inverse(canvas_pos);
+            let local_x = src_canvas_pt.x - origin.x;
+            let local_y = src_canvas_pt.y - origin.y;
+            if local_x >= 0.0 && local_x <= pw && local_y >= 0.0 && local_y <= ph {
+                return Some(hollow_ui::state::TransformHandle::BodyTranslate);
+            }
+        }
+        hollow_core::transform::TransformMode::PerspectiveQuad => {
+            for (i, &c) in session.quad.dst_corners.iter().enumerate() {
+                let sp = state.canvas_to_screen(c, win_w, win_h);
+                if screen_pos.distance(sp) <= hit_dist_screen {
+                    return Some(hollow_ui::state::TransformHandle::QuadCorner(i));
+                }
+            }
+        }
+        hollow_core::transform::TransformMode::MeshGrid => {
+            let mut best_dist = hit_dist_screen;
+            let mut best_idx = None;
+            for (idx, &v) in session.mesh_grid.vertices.iter().enumerate() {
+                let sp = state.canvas_to_screen(v, win_w, win_h);
+                let d = screen_pos.distance(sp);
+                if d <= best_dist {
+                    best_dist = d;
+                    best_idx = Some(idx);
+                }
+            }
+            if let Some(idx) = best_idx {
+                return Some(hollow_ui::state::TransformHandle::MeshVertex(idx));
+            }
+        }
+        hollow_core::transform::TransformMode::ThinPlateSpline => {
+            let mut best_dist = hit_dist_screen;
+            let mut best_idx = None;
+            for (idx, &p) in session.tps_target_pins.iter().enumerate() {
+                let sp = state.canvas_to_screen(p, win_w, win_h);
+                let d = screen_pos.distance(sp);
+                if d <= best_dist {
+                    best_dist = d;
+                    best_idx = Some(idx);
+                }
+            }
+            if let Some(idx) = best_idx {
+                return Some(hollow_ui::state::TransformHandle::TpsPin(idx));
+            }
+        }
+    }
+    None
 }
 
 impl HollowCanvasDesktopApp {
@@ -319,6 +446,117 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             let canvas_pos = app.state.screen_to_canvas(screen_pos, app.win_w as f32, app.win_h as f32);
             app.state.cursor_canvas_pos = canvas_pos;
 
+            if app.is_pointer_down && app.state.transform_session.is_active {
+                if let Some(handle) = app.state.transform_session.active_handle {
+                    let delta = canvas_pos - app.state.transform_session.drag_start_canvas_pos;
+                    match handle {
+                        hollow_ui::state::TransformHandle::BodyTranslate => {
+                            app.state.transform_session.transform.translation = app.state.transform_session.initial_transform.translation + delta;
+                        }
+                        hollow_ui::state::TransformHandle::Pivot => {
+                            let cur_pivot = app.state.transform_session.initial_transform.pivot;
+                            app.state.transform_session.transform.pivot = cur_pivot + delta;
+                        }
+                        hollow_ui::state::TransformHandle::RotateStem => {
+                            let pivot_canvas = app.state.transform_session.transform.pivot + app.state.transform_session.transform.translation;
+                            let initial_vec = app.state.transform_session.drag_start_canvas_pos - pivot_canvas;
+                            let current_vec = canvas_pos - pivot_canvas;
+                            let angle_diff = current_vec.y.atan2(current_vec.x) - initial_vec.y.atan2(initial_vec.x);
+                            app.state.transform_session.transform.rotation_rad = app.state.transform_session.initial_transform.rotation_rad + angle_diff;
+                        }
+                        hollow_ui::state::TransformHandle::TopLeft
+                        | hollow_ui::state::TransformHandle::TopRight
+                        | hollow_ui::state::TransformHandle::BottomRight
+                        | hollow_ui::state::TransformHandle::BottomLeft
+                        | hollow_ui::state::TransformHandle::TopCenter
+                        | hollow_ui::state::TransformHandle::MidRight
+                        | hollow_ui::state::TransformHandle::BottomCenter
+                        | hollow_ui::state::TransformHandle::MidLeft => {
+                            let initial_t = app.state.transform_session.initial_transform;
+                            let pivot = initial_t.pivot;
+                            let rot = initial_t.rotation_rad;
+                            let cos_r = (-rot).cos();
+                            let sin_r = (-rot).sin();
+                            let rot_2d = |v: Vec2| Vec2::new(v.x * cos_r - v.y * sin_r, v.x * sin_r + v.y * cos_r);
+                            let local_start = rot_2d(app.state.transform_session.drag_start_canvas_pos - pivot - initial_t.translation);
+                            let local_cur = rot_2d(canvas_pos - pivot - initial_t.translation);
+                            let local_delta = local_cur - local_start;
+
+                            let pw = app.state.transform_session.patch_w as f32;
+                            let ph = app.state.transform_session.patch_h as f32;
+                            let half_w = (pw * 0.5).max(1.0);
+                            let half_h = (ph * 0.5).max(1.0);
+
+                            let mut scale_x = initial_t.scale.x;
+                            let mut scale_y = initial_t.scale.y;
+
+                            match handle {
+                                hollow_ui::state::TransformHandle::TopLeft => {
+                                    scale_x = (initial_t.scale.x * half_w - local_delta.x) / half_w;
+                                    scale_y = (initial_t.scale.y * half_h - local_delta.y) / half_h;
+                                }
+                                hollow_ui::state::TransformHandle::TopRight => {
+                                    scale_x = (initial_t.scale.x * half_w + local_delta.x) / half_w;
+                                    scale_y = (initial_t.scale.y * half_h - local_delta.y) / half_h;
+                                }
+                                hollow_ui::state::TransformHandle::BottomRight => {
+                                    scale_x = (initial_t.scale.x * half_w + local_delta.x) / half_w;
+                                    scale_y = (initial_t.scale.y * half_h + local_delta.y) / half_h;
+                                }
+                                hollow_ui::state::TransformHandle::BottomLeft => {
+                                    scale_x = (initial_t.scale.x * half_w - local_delta.x) / half_w;
+                                    scale_y = (initial_t.scale.y * half_h + local_delta.y) / half_h;
+                                }
+                                hollow_ui::state::TransformHandle::TopCenter => {
+                                    scale_y = (initial_t.scale.y * half_h - local_delta.y) / half_h;
+                                }
+                                hollow_ui::state::TransformHandle::BottomCenter => {
+                                    scale_y = (initial_t.scale.y * half_h + local_delta.y) / half_h;
+                                }
+                                hollow_ui::state::TransformHandle::MidLeft => {
+                                    scale_x = (initial_t.scale.x * half_w - local_delta.x) / half_w;
+                                }
+                                hollow_ui::state::TransformHandle::MidRight => {
+                                    scale_x = (initial_t.scale.x * half_w + local_delta.x) / half_w;
+                                }
+                                _ => {}
+                            }
+
+                            if app.state.transform_session.lock_aspect {
+                                let max_s = scale_x.abs().max(scale_y.abs());
+                                scale_x = max_s * scale_x.signum().max(0.01);
+                                scale_y = max_s * scale_y.signum().max(0.01);
+                            }
+
+                            app.state.transform_session.transform.scale = Vec2::new(scale_x.max(0.02), scale_y.max(0.02));
+                        }
+                        hollow_ui::state::TransformHandle::QuadCorner(i) => {
+                            if i < 4 {
+                                app.state.transform_session.quad.dst_corners[i] = canvas_pos;
+                                app.state.transform_session.quad.recompute();
+                            }
+                        }
+                        hollow_ui::state::TransformHandle::MeshVertex(idx) => {
+                            if idx < app.state.transform_session.mesh_grid.vertices.len() {
+                                app.state.transform_session.mesh_grid.vertices[idx] = canvas_pos;
+                            }
+                        }
+                        hollow_ui::state::TransformHandle::TpsPin(idx) => {
+                            if idx < app.state.transform_session.tps_target_pins.len() {
+                                app.state.transform_session.tps_target_pins[idx] = canvas_pos;
+                                app.state.transform_session.tps = hollow_core::transform::ThinPlateSpline2D::solve(
+                                    &app.state.transform_session.tps_target_pins,
+                                    &app.state.transform_session.tps_source_pins,
+                                );
+                            }
+                        }
+                    }
+                    app.state.update_transform_preview();
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                    return 0;
+                }
+            }
+
             if app.is_drawing_on_canvas && !app.is_space_down && !app.is_middle_panning {
                 let tool = app.state.brush.tool;
                 if tool == ToolType::Move {
@@ -425,6 +663,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     if move_dist >= 0.5 {
                         let pt = BrushPoint::new(target_pos, pressure);
                         app.stroke_points.push(pt);
+                        app.stroke_dirty = true;
                         let n = app.stroke_points.len();
 
                         if tool.is_selection_stroke_tool() {
@@ -511,11 +750,29 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 return 0;
             }
 
+            let canvas_pos = app.state.screen_to_canvas(screen_pos, app.win_w as f32, app.win_h as f32);
+
+            if app.state.transform_session.is_active {
+                if let Some(handle) = hit_test_transform_handle(&app.state, screen_pos, app.win_w as f32, app.win_h as f32) {
+                    app.state.transform_session.active_handle = Some(handle);
+                    app.state.transform_session.drag_start_canvas_pos = canvas_pos;
+                    app.state.transform_session.initial_transform = app.state.transform_session.transform;
+                    app.is_drawing_on_canvas = false;
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                    return 0;
+                } else if app.state.transform_session.mode == hollow_core::transform::TransformMode::ThinPlateSpline {
+                    app.state.add_tps_pin(canvas_pos);
+                    app.is_drawing_on_canvas = false;
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                    return 0;
+                }
+            }
+
+            app.stroke_dirty = false;
             app.is_drawing_on_canvas = true;
             app.stroke_perspective_axis = None;
             app.last_point_time = Instant::now();
             app.current_velocity = 0.0;
-            let canvas_pos = app.state.screen_to_canvas(screen_pos, app.win_w as f32, app.win_h as f32);
             app.last_canvas_pos = Some(canvas_pos);
             app.last_pan_screen_pos = Some(screen_pos);
             app.stroke_points.clear();
@@ -584,6 +841,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         sel,
                         app.state.wand_tolerance,
                     );
+                    app.stroke_dirty = true;
                 }
             } else if tool == ToolType::Gradient {
                 if let Some(layer) = app.state.document.active_layer() {
@@ -614,6 +872,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     let pts = app.state.polygon_points.clone();
                     let sel = app.state.selection.as_ref();
                     StrokeRasterizer::rasterize_polygon(&mut app.state.document, &pts, &app.state.brush, &app.state.symmetry, sel);
+                    app.stroke_dirty = true;
                     app.state.polygon_points.clear();
                     app.state.set_status("Polygon committed");
                 } else {
@@ -667,6 +926,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     let point = BrushPoint::new(canvas_pos, 1.0);
                     let sel = app.state.selection.as_ref();
                     StrokeRasterizer::paint_dot(&mut app.state.document, point, &app.state.brush, &app.state.symmetry, sel);
+                    app.stroke_dirty = true;
                 }
                 app.stabilized_pos = Some(canvas_pos);
             }
@@ -723,20 +983,31 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
             }
 
+            if app.state.transform_session.is_active {
+                if app.state.transform_session.active_handle.is_some() {
+                    app.state.transform_session.active_handle = None;
+                    app.state.update_transform_preview();
+                }
+            }
+
             if let Some(start) = app.state.drag_start_canvas_pos.take() {
                 let sel = app.state.selection.as_ref();
                 match tool {
                     ToolType::Line => {
                         StrokeRasterizer::rasterize_line(&mut app.state.document, start, canvas_pos, &app.state.brush, &app.state.symmetry, sel);
+                        app.stroke_dirty = true;
                     }
                     ToolType::Rect => {
                         StrokeRasterizer::rasterize_rect(&mut app.state.document, start, canvas_pos, &app.state.brush, &app.state.symmetry, sel);
+                        app.stroke_dirty = true;
                     }
                     ToolType::Ellipse => {
                         StrokeRasterizer::rasterize_ellipse(&mut app.state.document, start, canvas_pos, &app.state.brush, &app.state.symmetry, sel);
+                        app.stroke_dirty = true;
                     }
                     ToolType::Gradient => {
                         StrokeRasterizer::rasterize_gradient(&mut app.state.document, start, canvas_pos, &app.state.brush, sel);
+                        app.stroke_dirty = true;
                         app.state.set_status("Gradient applied");
                     }
                     ToolType::Marquee => {
@@ -833,17 +1104,22 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             }
 
             if app.active_snapshot_taken {
-                if let Some(layer) = app.state.document.active_layer() {
-                    if app.before_stroke_pixels != layer.pixels {
+                if app.stroke_dirty {
+                    if let Some(layer) = app.state.document.active_layer() {
+                        let before = std::mem::take(&mut app.before_stroke_pixels);
+                        let after = layer.pixels.clone();
                         let cmd = Box::new(LayerPixelsSnapshotCommand {
                             layer_id: layer.id,
                             description: app.state.brush.tool.label(),
-                            before_pixels: app.before_stroke_pixels.clone(),
-                            after_pixels: layer.pixels.clone(),
+                            before_pixels: before,
+                            after_pixels: after,
                         });
                         app.state.history.push(cmd);
                     }
+                } else {
+                    app.before_stroke_pixels.clear();
                 }
+                app.stroke_dirty = false;
                 app.active_snapshot_taken = false;
             }
             app.last_canvas_pos = None;
@@ -1550,6 +1826,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         current_velocity: 0.0,
         last_anim_tick: Instant::now(),
         stabilized_pos: None,
+        stroke_dirty: false,
         stroke_perspective_axis: None,
         has_initialized_view: false,
     });

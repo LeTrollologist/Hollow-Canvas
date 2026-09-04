@@ -1,6 +1,6 @@
 [package]
 name = "hollow-ui"
-version = "0.16.0"
+version = "0.17.0"
 edition = "2021"
 description = "Immediate-mode user interface, studio panels, palette docks, and modals for Hollow Canvas"
 
@@ -8,9 +8,9 @@ description = "Immediate-mode user interface, studio panels, palette docks, and 
 test = false
 
 [dependencies]
-hollow-core = { path = "../hollow-core", version = "0.16.0" }
-hollow-render = { path = "../hollow-render", version = "0.16.0" }
-hollow-io = { path = "../hollow-io", version = "0.16.0" }
+hollow-core = { path = "../hollow-core", version = "0.17.0" }
+hollow-render = { path = "../hollow-render", version = "0.17.0" }
+hollow-io = { path = "../hollow-io", version = "0.17.0" }
 egui = { workspace = true }
 glam = { workspace = true }
 log = { workspace = true }

@@ -415,36 +415,32 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
         else "🟢 Verified Clean / Independent Permalinks Available"
     )
 
-    release_body = f"""## 🌟 Hollow Canvas {version} · The "Vision & Light" Update
+    release_body = f"""## 🌟 Hollow Canvas {version} · The "Deformation" Update
 
 A modern, high-performance, local-first digital illustration, concept art, and graphics studio built with 100% pure native Rust.
 
 ### ✨ What's New in {version}
 
+* **⛶ Free Transform & Mesh Warp Engine (<kbd>Ctrl+T</kbd>)**:
+  - **4 Comprehensive Deformation Modes**:
+    - **⛶ Affine 2D**: Scale (5%–400%), Rotate (-180° to +180°), Skew, Translate, Flip Horizontal/Vertical, and draggable pivot point.
+    - **☖ Perspective Quad**: 4-corner homography deformation with analytical Direct Linear Transformation (DLT) matrix inversion for true 3D planar alignment.
+    - **▦ Bicubic Mesh Grid**: Configurable $N \times M$ control grids (3×3, 4×4, 5×5, 6×6, 8×8) with draggable vertex pins and inverse bilinear quad mapping.
+    - **✦ Thin Plate Splines (TPS)**: Multi-pin landmark warping driven by radial basis function kernels $U(r) = r^2 \\ln(r + 10^{-6})$ with Gauss-Jordan partial pivoting solvers for organic elasticity.
+  - **Subpixel Sampling Filters**: Real-time Bicubic (16-sample Catmull-Rom), Bilinear, and Nearest-neighbor interpolation.
+  - **Floating Transform & Warp Studio HUD**: Dedicated floating inspector with mode switcher, grid density presets, aspect-ratio lock, and reset controls.
+  - **Interactive On-Canvas Gizmos**: Bounding boxes, rotation stalks, glowing corner rings, mesh grid wireframes, and TPS landmark displacement vectors.
+
+* **⚡ Fast-Drawing Mouse-Up Stutter & Lag Fix**:
+  - Completely eliminated the $O(N)$ 33MB full-canvas equality check (`before_stroke_pixels != layer.pixels`) and redundant 33MB heap clones on mouse release.
+  - Replaced with zero-allocation dirty stroke tracking (`stroke_dirty`) and zero-copy snapshot swapping (`std::mem::take`), ensuring instantaneous 60 FPS mouse-up response even during intense high-speed sketching.
+
 * **📐 Visual Perspective Rulers (1, 2, and 3-Point)**:
-  - **Multi-Point Perspective Engine**: Full support for 1-Point (central focus), 2-Point (architectural & environmental design), and 3-Point (extreme zenith / nadir bird's eye & worm's eye views) projections.
-  - **Interactive Horizon & Vanishing Points**: Freely adjust horizon line elevation, tilt angle (-45° to +45°), and vanishing point coordinates on or beyond the canvas bounds.
-  - **Radial Guide Rays Overlay**: High-visibility guide ray projection with distinct chromatic coding per vanishing point (Azure Blue, Turquoise Green, Violet Pink) and customizable density/opacity.
-  - **Constraint Snapping Engine (<kbd>Ctrl+Shift+P</kbd>)**: Vector projection algorithm in the input loop that aligns and snaps brush strokes onto the closest perspective vector in real time with configurable snap strictness.
-  - **Floating Perspective Studio Dock (<kbd>F5</kbd>)**: Dedicated floating control panel for selecting presets, calibrating vanishing points, and toggling guide overlays.
+  - Multi-point vanishing guides, horizon elevation/tilt, radial rays, and dynamic stroke constraint snapping (<kbd>Ctrl+Shift+P</kbd>).
 
-* **✨ Non-Destructive Adjustment Layers**:
-  - **Zero-Allocation Composite Filter Passes**: Dynamic adjustment layers that mathematically transform underlying pixels during compositing without mutating base layer data.
-  - **7 Real-Time Adjustment Types**:
-    - **☀️ Brightness & Contrast**: Calibrated linear & power curve luminance adjustments.
-    - **🎨 Hue / Saturation / Lightness (HSL)**: 360° chromatic hue rotation and saturation scaling.
-    - **⚖️ RGB Color Balance**: Independent Cyan-Red, Magenta-Green, and Yellow-Blue channel shifts.
-    - **🔄 Invert**: Instant photometric negative inversion.
-    - **🎚️ Posterize**: Quantized tonal level reduction (2–32 levels).
-    - **🌓 Threshold**: High-contrast binary luminance cutoff (0–255).
-    - **🎞️ Vintage Sepia**: Classic warm monochrome photographic tone.
-  - **Floating Adjustment Settings Inspector**: Live parameter sliders with immediate 60+ FPS viewport feedback.
-  - **Layer Opacity & Clipping Masks**: Full support for adjustment layer opacity blending, folder group hierarchy, and clipping masks to restrict effects to specific base layers.
-  - **Binary Project Format v4 (`HCV\x04`)**: Forward/backward-compatible serialization of adjustment layers and parameters.
-
-* **🎨 Floating Mixing Scratchpad & Subpixel Antialiasing Engine**:
-  - Persistent off-canvas color mixing dock (<kbd>F4</kbd>) with smudging and eyedropper sampling.
-  - Subpixel-antialiased stroke engine with Catmull-Rom curvature and S-0..S-7 Lazy Rope stabilization.
+* **✨ Non-Destructive Adjustment Layers & Floating Mixing Scratchpad**:
+  - Zero-allocation composite filter passes (Brightness/Contrast, HSL, Color Balance, Invert, Posterize, Threshold, Sepia).
+  - Off-canvas color mixing dock (<kbd>F4</kbd>) with pigment smudging and eyedropper sampling.
 
 * **🔐 VPack 2.0.0 Integrated Ed25519 Digital Signing & Chain of Trust**:
   - Releases signed with official Ed25519 publisher key (`3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f`).

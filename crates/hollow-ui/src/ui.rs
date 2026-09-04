@@ -96,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.16.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v0.17.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -904,7 +904,26 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                         state.update_transform_preview();
                                     }
                                 });
-                                ui.checkbox(&mut state.transform_session.is_bilinear, "Smooth Bilinear");
+                                egui::ComboBox::from_label("Filter")
+                                    .selected_text(match state.transform_session.interpolation {
+                                        hollow_core::transform::InterpolationMode::Nearest => "Nearest",
+                                        hollow_core::transform::InterpolationMode::Bilinear => "Bilinear",
+                                        hollow_core::transform::InterpolationMode::Bicubic => "Bicubic",
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        if ui.selectable_label(state.transform_session.interpolation == hollow_core::transform::InterpolationMode::Bicubic, "Bicubic").clicked() {
+                                            state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Bicubic;
+                                            state.update_transform_preview();
+                                        }
+                                        if ui.selectable_label(state.transform_session.interpolation == hollow_core::transform::InterpolationMode::Bilinear, "Bilinear").clicked() {
+                                            state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Bilinear;
+                                            state.update_transform_preview();
+                                        }
+                                        if ui.selectable_label(state.transform_session.interpolation == hollow_core::transform::InterpolationMode::Nearest, "Nearest").clicked() {
+                                            state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Nearest;
+                                            state.update_transform_preview();
+                                        }
+                                    });
                             }
                         }
                         _ => {}
@@ -2993,6 +3012,133 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         state.show_perspective_dock = is_open;
     }
 
+    // ── 10.5. FLOATING TRANSFORM & MESH WARP STUDIO HUD ──
+    if state.transform_session.is_active {
+        egui::Window::new("⛶ Transform & Warp Studio")
+            .fixed_size(Vec2::new(340.0, 220.0))
+            .collapsible(false)
+            .default_pos(egui::pos2((ctx.screen_rect().width() - 340.0) * 0.5, 52.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let cur_mode = state.transform_session.mode;
+                    if ui.selectable_label(cur_mode == hollow_core::transform::TransformMode::Affine, "⛶ Free").on_hover_text("Standard Affine Box (Scale, Rotate, Skew, Translate)").clicked() {
+                        state.set_transform_mode(hollow_core::transform::TransformMode::Affine);
+                    }
+                    if ui.selectable_label(cur_mode == hollow_core::transform::TransformMode::PerspectiveQuad, "☖ Quad").on_hover_text("4-Corner Perspective Quad Warping").clicked() {
+                        state.set_transform_mode(hollow_core::transform::TransformMode::PerspectiveQuad);
+                    }
+                    if ui.selectable_label(cur_mode == hollow_core::transform::TransformMode::MeshGrid, "▦ Mesh").on_hover_text("Bicubic Mesh Grid Deformation").clicked() {
+                        state.set_transform_mode(hollow_core::transform::TransformMode::MeshGrid);
+                    }
+                    if ui.selectable_label(cur_mode == hollow_core::transform::TransformMode::ThinPlateSpline, "✦ TPS Pins").on_hover_text("Thin Plate Spline Multi-Pin Landmark Warping").clicked() {
+                        state.set_transform_mode(hollow_core::transform::TransformMode::ThinPlateSpline);
+                    }
+                });
+
+                ui.add_space(4.0);
+                ui.separator();
+
+                match state.transform_session.mode {
+                    hollow_core::transform::TransformMode::Affine => {
+                        let mut rot_deg = state.transform_session.transform.rotation_rad.to_degrees();
+                        if ui.add(egui::Slider::new(&mut rot_deg, -180.0..=180.0).text("Angle (°)")).changed() {
+                            state.transform_session.transform.rotation_rad = rot_deg.to_radians();
+                            state.update_transform_preview();
+                        }
+                        let mut scale_pct = state.transform_session.transform.scale.x * 100.0;
+                        if ui.add(egui::Slider::new(&mut scale_pct, 5.0..=400.0).text("Scale (%)")).changed() {
+                            let s = scale_pct / 100.0;
+                            state.transform_session.transform.scale = glam::Vec2::new(s, s);
+                            state.update_transform_preview();
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("⇄ Flip H").clicked() {
+                                state.transform_session.transform.flip_h = !state.transform_session.transform.flip_h;
+                                state.update_transform_preview();
+                            }
+                            if ui.button("⇅ Flip V").clicked() {
+                                state.transform_session.transform.flip_v = !state.transform_session.transform.flip_v;
+                                state.update_transform_preview();
+                            }
+                            ui.checkbox(&mut state.transform_session.lock_aspect, "Lock Ratio");
+                        });
+                    }
+                    hollow_core::transform::TransformMode::PerspectiveQuad => {
+                        ui.label(RichText::new("Drag the 4 corner handles on canvas to create perspective planes.").size(9.5).color(Color32::from_rgb(170, 185, 220)));
+                        if ui.button("↺ Reset Quad Corners").clicked() {
+                            state.reset_transform_deformation();
+                        }
+                    }
+                    hollow_core::transform::TransformMode::MeshGrid => {
+                        ui.horizontal(|ui| {
+                            ui.label("Density:");
+                            let densities = [(3, 3, "3×3"), (4, 4, "4×4"), (5, 5, "5×5"), (6, 6, "6×6"), (8, 8, "8×8")];
+                            for (r, c, lbl) in densities {
+                                let is_active = state.transform_session.grid_rows == r && state.transform_session.grid_cols == c;
+                                if ui.selectable_label(is_active, lbl).clicked() {
+                                    state.set_transform_grid_density(r, c);
+                                }
+                            }
+                        });
+                        if ui.button("↺ Reset Mesh Grid").clicked() {
+                            state.reset_transform_deformation();
+                        }
+                    }
+                    hollow_core::transform::TransformMode::ThinPlateSpline => {
+                        ui.label(RichText::new(format!("Active Landmark Pins: {}", state.transform_session.tps_target_pins.len())).size(9.5).color(accent_c32));
+                        ui.horizontal(|ui| {
+                            if ui.button("+ Add Center Pin").clicked() {
+                                let center = state.transform_session.patch_origin + glam::Vec2::new(
+                                    state.transform_session.patch_w as f32 * 0.5,
+                                    state.transform_session.patch_h as f32 * 0.5,
+                                );
+                                state.add_tps_pin(center);
+                            }
+                            if ui.button("↺ Reset Pins").clicked() {
+                                state.reset_transform_deformation();
+                            }
+                        });
+                    }
+                }
+
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("Interpolation:");
+                    let interp = state.transform_session.interpolation;
+                    if ui.selectable_label(interp == hollow_core::transform::InterpolationMode::Bicubic, "Bicubic").on_hover_text("High-quality smooth Catmull-Rom cubic sampling").clicked() {
+                        state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Bicubic;
+                        state.update_transform_preview();
+                    }
+                    if ui.selectable_label(interp == hollow_core::transform::InterpolationMode::Bilinear, "Bilinear").clicked() {
+                        state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Bilinear;
+                        state.update_transform_preview();
+                    }
+                    if ui.selectable_label(interp == hollow_core::transform::InterpolationMode::Nearest, "Nearest").on_hover_text("Crisp pixel art nearest neighbor").clicked() {
+                        state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Nearest;
+                        state.update_transform_preview();
+                    }
+                });
+
+                ui.add_space(4.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("✓ Apply (Enter)").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                        state.commit_transform_session();
+                    }
+                    if ui.button(RichText::new("✕ Cancel (Esc)").strong().color(Color32::from_rgb(250, 120, 120))).clicked() {
+                        state.cancel_transform_session();
+                    }
+                });
+            });
+    }
+
+    // ── ON-CANVAS TRANSFORM GIZMOS ──
+    if state.transform_session.is_active {
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("transform_gizmos_layer")));
+        let screen_rect = ctx.screen_rect();
+        render_transform_gizmos(&painter, state, screen_rect.width(), screen_rect.height(), accent_c32);
+    }
+
     // ── 11. ABOUT HOLLOW CANVAS MODAL ──
     if state.show_about_dialog {
         egui::Window::new("About Hollow Canvas")
@@ -3005,7 +3151,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.16.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 0.17.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);
@@ -3013,7 +3159,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.add_space(6.0);
 
                 ui.label(RichText::new("Features & Guarantees:").size(10.0).strong().color(Color32::from_rgb(205, 215, 240)));
-                ui.label(RichText::new("• 📐 Visual Perspective Rulers: 1, 2, and 3-Point Vanishing Guides with Dynamic Stroke Constraint Snapping\n• ✨ Real-Time Non-Destructive Adjustment Layers (Brightness/Contrast, HSL, Color Balance, Invert, Posterize, Threshold, Sepia)\n• 🎨 Floating Mixing Scratchpad: Off-canvas color mixing, pigment smudging, and eyedropper dock\n• 🎯 Subpixel-Antialiased Stroke Engine with True Tangent Catmull-Rom Curvature\n• ⚡ S-Level Stroke Stabilization (S-0 .. S-7 Lazy Rope & Tremor Filtering)\n• 📁 Collapsible Nested Layer Groups & Clipping Masks\n• 🪄 Magic Wand, Gradients, Shapes, Multi-Axis Symmetry\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Signed VPack 2.0.0 & Zip portable distribution (Ed25519 Chain of Trust)").size(10.0).color(Color32::from_rgb(155, 165, 195)));
+                ui.label(RichText::new("• ⛶ Free Transform & Mesh Warp: Affine, Perspective Quad, Bicubic Mesh Grid & Thin Plate Splines (TPS)\n• 📐 Visual Perspective Rulers: 1, 2, and 3-Point Vanishing Guides with Dynamic Stroke Constraint Snapping\n• ✨ Real-Time Non-Destructive Adjustment Layers (Brightness/Contrast, HSL, Color Balance, Invert, Posterize, Threshold, Sepia)\n• 🎨 Floating Mixing Scratchpad: Off-canvas color mixing, pigment smudging, and eyedropper dock\n• 🎯 Subpixel-Antialiased Stroke Engine with True Tangent Catmull-Rom Curvature\n• ⚡ S-Level Stroke Stabilization (S-0 .. S-7 Lazy Rope & Tremor Filtering)\n• 📁 Collapsible Nested Layer Groups & Clipping Masks\n• 🪄 Magic Wand, Gradients, Shapes, Multi-Axis Symmetry\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Signed VPack 2.0.0 & Zip portable distribution (Ed25519 Chain of Trust)").size(10.0).color(Color32::from_rgb(155, 165, 195)));
 
                 ui.add_space(8.0);
                 ui.separator();
@@ -3065,7 +3211,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         ("Ctrl + S", "Save Project (.hcv)"),
                         ("Ctrl + O", "Open Project (.hcv)"),
                         ("Ctrl + E", "Export PNG Image"),
-                        ("Ctrl + T", "Free Transform Layer / Selection"),
+                        ("Ctrl + T", "Free Transform & Mesh Warp Layer / Selection"),
                         ("Ctrl + A", "Select All"),
                         ("Ctrl + I", "Invert Layer Colors"),
                         ("Ctrl + Z", "Undo Action"),
@@ -3089,5 +3235,180 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     state.show_help = false;
                 }
             });
+    }
+}
+
+/// Renders on-canvas interactive transform gizmos, wireframe grids, handles, and TPS pin vectors
+fn render_transform_gizmos(
+    painter: &egui::Painter,
+    state: &AppState,
+    win_w: f32,
+    win_h: f32,
+    accent_c32: Color32,
+) {
+    if !state.transform_session.is_active {
+        return;
+    }
+
+    let session = &state.transform_session;
+    let white = Color32::from_rgb(255, 255, 255);
+    let shadow = Color32::from_rgba_unmultiplied(0, 0, 0, 180);
+    let cyan = Color32::from_rgb(80, 230, 255);
+
+    match session.mode {
+        hollow_core::transform::TransformMode::Affine => {
+            let origin = session.patch_origin;
+            let pw = session.patch_w as f32;
+            let ph = session.patch_h as f32;
+
+            let corners_canvas = [
+                origin,
+                origin + glam::Vec2::new(pw, 0.0),
+                origin + glam::Vec2::new(pw, ph),
+                origin + glam::Vec2::new(0.0, ph),
+            ];
+
+            let corners_screen: Vec<egui::Pos2> = corners_canvas
+                .iter()
+                .map(|&c| {
+                    let tc = session.transform.forward(c);
+                    let sp = state.canvas_to_screen(tc, win_w, win_h);
+                    egui::pos2(sp.x, sp.y)
+                })
+                .collect();
+
+            // Draw bounding quad
+            for i in 0..4 {
+                let p0 = corners_screen[i];
+                let p1 = corners_screen[(i + 1) % 4];
+                painter.line_segment([p0, p1], Stroke::new(2.5_f32, shadow));
+                painter.line_segment([p0, p1], Stroke::new(1.5_f32, accent_c32));
+            }
+
+            // Draw rotation stem
+            let top_mid = (corners_screen[0].to_vec2() + corners_screen[1].to_vec2()) * 0.5;
+            let edge_dir = (corners_screen[1] - corners_screen[0]).normalized();
+            let normal = egui::vec2(-edge_dir.y, edge_dir.x);
+            let rot_handle = top_mid + normal * 24.0;
+            painter.line_segment([top_mid.to_pos2(), rot_handle.to_pos2()], Stroke::new(2.0_f32, shadow));
+            painter.line_segment([top_mid.to_pos2(), rot_handle.to_pos2()], Stroke::new(1.2_f32, accent_c32));
+            painter.circle_filled(rot_handle.to_pos2(), 5.0, accent_c32);
+            painter.circle_stroke(rot_handle.to_pos2(), 5.0, Stroke::new(1.5_f32, white));
+
+            // Draw 8 handle boxes
+            let mut handles = Vec::new();
+            handles.extend(corners_screen.iter().cloned());
+            for i in 0..4 {
+                let mid = (corners_screen[i].to_vec2() + corners_screen[(i + 1) % 4].to_vec2()) * 0.5;
+                handles.push(mid.to_pos2());
+            }
+
+            for hp in handles {
+                let r = Rect::from_center_size(hp, egui::vec2(8.0, 8.0));
+                painter.rect_filled(r, 1.0, shadow);
+                painter.rect_filled(r.shrink(1.0), 1.0, white);
+                painter.rect_stroke(r.shrink(1.0), 1.0, Stroke::new(1.0_f32, accent_c32));
+            }
+
+            // Draw pivot point
+            let pivot_sp = state.canvas_to_screen(session.transform.pivot + session.transform.translation, win_w, win_h);
+            painter.circle_stroke(egui::pos2(pivot_sp.x, pivot_sp.y), 6.0, Stroke::new(1.5_f32, white));
+            painter.circle_filled(egui::pos2(pivot_sp.x, pivot_sp.y), 2.0, accent_c32);
+        }
+        hollow_core::transform::TransformMode::PerspectiveQuad => {
+            let corners_screen: Vec<egui::Pos2> = session
+                .quad
+                .dst_corners
+                .iter()
+                .map(|&c| {
+                    let sp = state.canvas_to_screen(c, win_w, win_h);
+                    egui::pos2(sp.x, sp.y)
+                })
+                .collect();
+
+            // Draw quad outline
+            for i in 0..4 {
+                let p0 = corners_screen[i];
+                let p1 = corners_screen[(i + 1) % 4];
+                painter.line_segment([p0, p1], Stroke::new(2.5_f32, shadow));
+                painter.line_segment([p0, p1], Stroke::new(1.5_f32, cyan));
+            }
+
+            // Draw 4 corner handles with glowing cyan rings
+            for (i, &cp) in corners_screen.iter().enumerate() {
+                painter.circle_filled(cp, 7.0, Color32::from_rgb(15, 25, 45));
+                painter.circle_stroke(cp, 7.0, Stroke::new(2.0_f32, cyan));
+                painter.circle_filled(cp, 3.5, white);
+                painter.text(
+                    cp + egui::vec2(10.0, -10.0),
+                    egui::Align2::LEFT_CENTER,
+                    format!("C{}", i + 1),
+                    egui::FontId::proportional(10.0),
+                    cyan,
+                );
+            }
+        }
+        hollow_core::transform::TransformMode::MeshGrid => {
+            let mesh = &session.mesh_grid;
+            let rows = mesh.rows;
+            let cols = mesh.cols;
+
+            // Draw horizontal mesh lines
+            for r in 0..rows {
+                for c in 0..(cols - 1) {
+                    let p0 = state.canvas_to_screen(mesh.get_vertex(r, c), win_w, win_h);
+                    let p1 = state.canvas_to_screen(mesh.get_vertex(r, c + 1), win_w, win_h);
+                    painter.line_segment([egui::pos2(p0.x, p0.y), egui::pos2(p1.x, p1.y)], Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(100, 180, 255, 160)));
+                }
+            }
+
+            // Draw vertical mesh lines
+            for c in 0..cols {
+                for r in 0..(rows - 1) {
+                    let p0 = state.canvas_to_screen(mesh.get_vertex(r, c), win_w, win_h);
+                    let p1 = state.canvas_to_screen(mesh.get_vertex(r + 1, c), win_w, win_h);
+                    painter.line_segment([egui::pos2(p0.x, p0.y), egui::pos2(p1.x, p1.y)], Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(100, 180, 255, 160)));
+                }
+            }
+
+            // Draw vertex pin dots
+            for r in 0..rows {
+                for c in 0..cols {
+                    let v_can = mesh.get_vertex(r, c);
+                    let v_sp = state.canvas_to_screen(v_can, win_w, win_h);
+                    let pos = egui::pos2(v_sp.x, v_sp.y);
+                    let is_corner = (r == 0 || r == rows - 1) && (c == 0 || c == cols - 1);
+                    let radius = if is_corner { 5.0 } else { 4.0 };
+                    let fill = if is_corner { cyan } else { accent_c32 };
+                    painter.circle_filled(pos, radius, shadow);
+                    painter.circle_filled(pos, radius - 1.0, fill);
+                    painter.circle_stroke(pos, radius, Stroke::new(1.0_f32, white));
+                }
+            }
+        }
+        hollow_core::transform::TransformMode::ThinPlateSpline => {
+            for (i, (&src_can, &tgt_can)) in session.tps_source_pins.iter().zip(session.tps_target_pins.iter()).enumerate() {
+                let src_sp = state.canvas_to_screen(src_can, win_w, win_h);
+                let tgt_sp = state.canvas_to_screen(tgt_can, win_w, win_h);
+                let p_src = egui::pos2(src_sp.x, src_sp.y);
+                let p_tgt = egui::pos2(tgt_sp.x, tgt_sp.y);
+
+                if p_src.distance(p_tgt) > 1.0 {
+                    painter.line_segment([p_src, p_tgt], Stroke::new(1.5_f32, Color32::from_rgb(255, 200, 50)));
+                    painter.circle_stroke(p_src, 3.0, Stroke::new(1.0_f32, Color32::from_rgb(180, 180, 180)));
+                }
+
+                painter.circle_filled(p_tgt, 6.0, Color32::from_rgb(20, 25, 45));
+                painter.circle_stroke(p_tgt, 6.0, Stroke::new(2.0_f32, Color32::from_rgb(255, 180, 40)));
+                painter.circle_filled(p_tgt, 3.0, white);
+                painter.text(
+                    p_tgt + egui::vec2(8.0, -8.0),
+                    egui::Align2::LEFT_CENTER,
+                    format!("P{}", i + 1),
+                    egui::FontId::proportional(9.0),
+                    Color32::from_rgb(255, 210, 80),
+                );
+            }
+        }
     }
 }

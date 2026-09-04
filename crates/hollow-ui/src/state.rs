@@ -6,10 +6,15 @@ use hollow_core::document::Document;
 use hollow_core::history::HistoryStack;
 use hollow_core::selection::{SelectionMask, StrokePosition};
 use hollow_core::symmetry::SymmetryConfig;
-use hollow_core::transform::{AffineTransform2D, render_transformed_patch};
+use hollow_core::transform::{
+    render_mesh_warped_patch, render_quad_transformed_patch, render_tps_warped_patch,
+    render_transformed_patch, AffineTransform2D, InterpolationMode, MeshWarpGrid,
+    PerspectiveQuadTransform, ThinPlateSpline2D, TransformMode,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransformHandle {
+    // Affine Box Handles
     TopLeft,
     TopCenter,
     TopRight,
@@ -21,39 +26,64 @@ pub enum TransformHandle {
     RotateStem,
     Pivot,
     BodyTranslate,
+
+    // Perspective Quad Handles
+    QuadCorner(usize), // 0: TopLeft, 1: TopRight, 2: BottomRight, 3: BottomLeft
+
+    // Mesh Grid Handles
+    MeshVertex(usize), // Vertex index in mesh_grid.vertices
+
+    // Thin Plate Spline Landmark Handles
+    TpsPin(usize), // Pin index in tps_target_pins
 }
 
 #[derive(Debug, Clone)]
 pub struct TransformSession {
     pub is_active: bool,
+    pub mode: TransformMode,
     pub original_layer_pixels: Vec<u8>,
     pub extracted_patch: Vec<u8>,
     pub patch_w: u32,
     pub patch_h: u32,
     pub patch_origin: Vec2,
     pub transform: AffineTransform2D,
-    pub is_bilinear: bool,
+    pub quad: PerspectiveQuadTransform,
+    pub mesh_grid: MeshWarpGrid,
+    pub tps: ThinPlateSpline2D,
+    pub tps_source_pins: Vec<Vec2>,
+    pub tps_target_pins: Vec<Vec2>,
+    pub interpolation: InterpolationMode,
     pub active_handle: Option<TransformHandle>,
     pub drag_start_canvas_pos: Vec2,
     pub initial_transform: AffineTransform2D,
     pub lock_aspect: bool,
+    pub grid_rows: usize,
+    pub grid_cols: usize,
 }
 
 impl Default for TransformSession {
     fn default() -> Self {
         Self {
             is_active: false,
+            mode: TransformMode::Affine,
             original_layer_pixels: Vec::new(),
             extracted_patch: Vec::new(),
             patch_w: 0,
             patch_h: 0,
             patch_origin: Vec2::ZERO,
             transform: AffineTransform2D::default(),
-            is_bilinear: true,
+            quad: PerspectiveQuadTransform::default(),
+            mesh_grid: MeshWarpGrid::new(4, 4, Vec2::ZERO, 100.0, 100.0),
+            tps: ThinPlateSpline2D::default(),
+            tps_source_pins: Vec::new(),
+            tps_target_pins: Vec::new(),
+            interpolation: InterpolationMode::Bicubic,
             active_handle: None,
             drag_start_canvas_pos: Vec2::ZERO,
             initial_transform: AffineTransform2D::default(),
             lock_aspect: false,
+            grid_rows: 4,
+            grid_cols: 4,
         }
     }
 }
@@ -772,19 +802,49 @@ impl AppState {
             let mut transform = AffineTransform2D::new(center);
             transform.pivot = center;
 
+            let quad_src = [
+                patch_origin,
+                patch_origin + Vec2::new(patch_w as f32, 0.0),
+                patch_origin + Vec2::new(patch_w as f32, patch_h as f32),
+                patch_origin + Vec2::new(0.0, patch_h as f32),
+            ];
+            let quad = PerspectiveQuadTransform::new(quad_src, quad_src);
+
+            let rows = 4;
+            let cols = 4;
+            let mesh_grid = MeshWarpGrid::new(rows, cols, patch_origin, patch_w as f32, patch_h as f32);
+
+            let tps_source_pins = vec![
+                patch_origin,
+                patch_origin + Vec2::new(patch_w as f32, 0.0),
+                patch_origin + Vec2::new(patch_w as f32, patch_h as f32),
+                patch_origin + Vec2::new(0.0, patch_h as f32),
+                center,
+            ];
+            let tps_target_pins = tps_source_pins.clone();
+            let tps = ThinPlateSpline2D::solve(&tps_target_pins, &tps_source_pins);
+
             self.transform_session = TransformSession {
                 is_active: true,
+                mode: TransformMode::Affine,
                 original_layer_pixels: layer.pixels.clone(),
                 extracted_patch: patch,
                 patch_w,
                 patch_h,
                 patch_origin,
                 transform,
-                is_bilinear: true,
+                quad,
+                mesh_grid,
+                tps,
+                tps_source_pins,
+                tps_target_pins,
+                interpolation: InterpolationMode::Bicubic,
                 active_handle: None,
                 drag_start_canvas_pos: Vec2::ZERO,
                 initial_transform: transform,
                 lock_aspect: false,
+                grid_rows: rows,
+                grid_cols: cols,
             };
 
             // Clear extracted pixels from active layer so transformed patch replaces them cleanly during preview
@@ -806,7 +866,7 @@ impl AppState {
             }
 
             self.update_transform_preview();
-            self.set_status("Free Transform: Drag handles to Scale/Rotate/Translate | Enter to Apply, Esc to Cancel");
+            self.set_status("Free Transform & Warp: Drag handles / mesh pins | Enter to Apply, Esc to Cancel");
         }
     }
 
@@ -823,8 +883,12 @@ impl AppState {
         let pw = session.patch_w;
         let ph = session.patch_h;
         let origin = session.patch_origin;
+        let mode = session.mode;
         let transform = session.transform;
-        let bilinear = session.is_bilinear;
+        let quad = session.quad;
+        let mesh_grid = &session.mesh_grid;
+        let tps = &session.tps;
+        let interp = session.interpolation;
         let sel_opt = self.selection.as_ref();
 
         if let Some(layer) = self.document.active_layer_mut() {
@@ -847,18 +911,141 @@ impl AppState {
                 }
             }
 
-            render_transformed_patch(
-                patch,
-                pw,
-                ph,
-                origin,
-                &transform,
-                bilinear,
-                &mut layer.pixels,
-                doc_w,
-                doc_h,
-            );
+            match mode {
+                TransformMode::Affine => {
+                    render_transformed_patch(
+                        patch,
+                        pw,
+                        ph,
+                        origin,
+                        &transform,
+                        interp,
+                        &mut layer.pixels,
+                        doc_w,
+                        doc_h,
+                    );
+                }
+                TransformMode::PerspectiveQuad => {
+                    render_quad_transformed_patch(
+                        patch,
+                        pw,
+                        ph,
+                        &quad,
+                        interp,
+                        &mut layer.pixels,
+                        doc_w,
+                        doc_h,
+                    );
+                }
+                TransformMode::MeshGrid => {
+                    render_mesh_warped_patch(
+                        patch,
+                        pw,
+                        ph,
+                        mesh_grid,
+                        interp,
+                        &mut layer.pixels,
+                        doc_w,
+                        doc_h,
+                    );
+                }
+                TransformMode::ThinPlateSpline => {
+                    render_tps_warped_patch(
+                        patch,
+                        pw,
+                        ph,
+                        origin,
+                        tps,
+                        interp,
+                        &mut layer.pixels,
+                        doc_w,
+                        doc_h,
+                    );
+                }
+            }
         }
+    }
+
+    /// Sets transform deformation mode and synchronizes coordinates
+    pub fn set_transform_mode(&mut self, mode: TransformMode) {
+        if !self.transform_session.is_active {
+            return;
+        }
+        self.transform_session.mode = mode;
+        self.transform_session.active_handle = None;
+        self.update_transform_preview();
+        let mode_label = match mode {
+            TransformMode::Affine => "Affine Free Transform (Box)",
+            TransformMode::PerspectiveQuad => "Perspective Quad Distortion",
+            TransformMode::MeshGrid => "Bicubic Mesh Grid Warp",
+            TransformMode::ThinPlateSpline => "Thin Plate Spline (TPS) Landmark Warping",
+        };
+        self.set_status(format!("Active Transform Mode: {}", mode_label));
+    }
+
+    /// Resizes Mesh Grid density (e.g. 3x3, 4x4, 5x5, 8x8)
+    pub fn set_transform_grid_density(&mut self, rows: usize, cols: usize) {
+        if !self.transform_session.is_active {
+            return;
+        }
+        self.transform_session.grid_rows = rows;
+        self.transform_session.grid_cols = cols;
+        self.transform_session.mesh_grid.resize_density(rows, cols);
+        self.update_transform_preview();
+        self.set_status(format!("Set Mesh Grid Density to {}×{}", cols, rows));
+    }
+
+    /// Resets current mode's deformation back to original unwarped state
+    pub fn reset_transform_deformation(&mut self) {
+        if !self.transform_session.is_active {
+            return;
+        }
+        let origin = self.transform_session.patch_origin;
+        let pw = self.transform_session.patch_w as f32;
+        let ph = self.transform_session.patch_h as f32;
+        let center = origin + Vec2::new(pw * 0.5, ph * 0.5);
+
+        match self.transform_session.mode {
+            TransformMode::Affine => {
+                self.transform_session.transform = AffineTransform2D::new(center);
+            }
+            TransformMode::PerspectiveQuad => {
+                let quad_src = [
+                    origin,
+                    origin + Vec2::new(pw, 0.0),
+                    origin + Vec2::new(pw, ph),
+                    origin + Vec2::new(0.0, ph),
+                ];
+                self.transform_session.quad = PerspectiveQuadTransform::new(quad_src, quad_src);
+            }
+            TransformMode::MeshGrid => {
+                self.transform_session.mesh_grid.reset_grid();
+            }
+            TransformMode::ThinPlateSpline => {
+                self.transform_session.tps_target_pins = self.transform_session.tps_source_pins.clone();
+                self.transform_session.tps = ThinPlateSpline2D::solve(
+                    &self.transform_session.tps_target_pins,
+                    &self.transform_session.tps_source_pins,
+                );
+            }
+        }
+        self.update_transform_preview();
+        self.set_status("Reset active transform deformation");
+    }
+
+    /// Adds a new TPS landmark pin at canvas position
+    pub fn add_tps_pin(&mut self, canvas_pos: Vec2) {
+        if !self.transform_session.is_active {
+            return;
+        }
+        self.transform_session.tps_source_pins.push(canvas_pos);
+        self.transform_session.tps_target_pins.push(canvas_pos);
+        self.transform_session.tps = ThinPlateSpline2D::solve(
+            &self.transform_session.tps_target_pins,
+            &self.transform_session.tps_source_pins,
+        );
+        self.update_transform_preview();
+        self.set_status(format!("Added TPS pin ({:.0}, {:.0})", canvas_pos.x, canvas_pos.y));
     }
 
     /// Commits the transformation to layer and registers in history
@@ -871,14 +1058,20 @@ impl AppState {
             let before = self.transform_session.original_layer_pixels.clone();
             let after = layer.pixels.clone();
             if before != after {
+                let mode_name = match self.transform_session.mode {
+                    TransformMode::Affine => "Free Transform",
+                    TransformMode::PerspectiveQuad => "Perspective Quad Warp",
+                    TransformMode::MeshGrid => "Mesh Grid Warp",
+                    TransformMode::ThinPlateSpline => "TPS Landmark Warp",
+                };
                 let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
                     layer_id: layer.id,
-                    description: "Free Transform",
+                    description: mode_name,
                     before_pixels: before,
                     after_pixels: after,
                 });
                 self.history.push(cmd);
-                self.set_status("Committed Free Transform");
+                self.set_status(format!("Committed {}", mode_name));
             }
         }
         self.transform_session.is_active = false;

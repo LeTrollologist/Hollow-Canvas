@@ -391,7 +391,7 @@ mod tests {
             patch_h,
             origin,
             &tf,
-            true,
+            crate::transform::InterpolationMode::Bilinear,
             &mut dst,
             doc_w,
             doc_h,
