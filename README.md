@@ -8,8 +8,9 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE.md)
-[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://github.com/LeTrollologist/Hollow-Canvas)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-brightgreen.svg)](https://github.com/LeTrollologist/Hollow-Canvas)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 
 </div>
 
@@ -20,14 +21,21 @@
 **Hollow Canvas** is a lightweight, studio-grade digital illustration and raster graphics workbench engineered from the ground up in Rust. Designed for artists, concept designers, and technical illustrators who demand absolute precision, low latency, and deterministic offline reliability.
 
 ### Key Highlights
-
+ 
+- 🌍 **Universal Cross-Platform Architecture (Linux / Windows / macOS Agnostic)**:
+  - **Pure Rust Native App**: Replaced Win32-specific GDI C-FFI message loops with pure Rust `eframe` 0.28 (winit, glow, x11, wayland) and `rfd` 0.14 native file dialogs.
+  - **Zero C++ Dependencies**: 100% memory-safe Rust with instant compilation and zero OS-specific C runtime bottlenecks.
+  - **High-DPI & Multi-Monitor Support**: Native subpixel display scaling and window management.
+- 🎨 **Live Interactive Viewport with Real-Time Direct Drawing**:
+  - **Direct Viewport Interaction**: Drawing, brushing, and erasing occur directly inside the `egui::CentralPanel` viewport with low-latency GPU texture streaming (`recomposite_canvas`).
+  - **Dynamic Viewport Rulers & Overlays**: Real-time pixel rulers with tracking cursor ticks, configurable canvas grid, and symmetry guide axes.
+  - **Perspective Snapping Engine (<kbd>Ctrl+Shift+P</kbd>)**: 1, 2, and 3-point vanishing point rays and constraint projection.
 - ⛶ **Free Transform & Mesh Warp (<kbd>Ctrl+T</kbd>)**: Studio-grade non-destructive pixel deformation supporting 4 operational modes:
   - **Affine 2D**: Scale, rotate, skew, translate, flip, custom pivot with interactive bounding box and rotation stalk.
   - **Perspective Quad**: 4-corner homography warping with analytical direct linear transformation (DLT) matrix inversion for true 3D planar alignment.
   - **Bicubic Mesh Grid**: Configurable $N \times M$ control grids (3x3, 4x4, 5x5, 6x6, 8x8) with draggable vertex pins and inverse bilinear quad mapping.
   - **Thin Plate Splines (TPS)**: Multi-pin landmark warping driven by radial basis function kernels with Gauss-Jordan partial pivoting solvers for organic elasticity.
   - **Subpixel Sampling Filters**: Real-time Bicubic (16-sample Catmull-Rom), Bilinear, and Nearest-neighbor interpolation.
-- 📐 **Visual Perspective Rulers (1, 2, and 3-Point)**: Horizon line elevation & tilt, multi-colored radial vanishing point rays (Azure Blue, Turquoise Green, Violet Pink), and a real-time **Constraint Snapping Engine (<kbd>Ctrl+Shift+P</kbd>)** that projects brush strokes onto perspective vectors.
 - ✨ **Non-Destructive Adjustment Layers**: Real-time, zero-allocation filter passes during composite steps (`Brightness/Contrast`, `HSL`, `Color Balance`, `Invert`, `Posterize`, `Threshold`, `Sepia`) that dynamically affect layers underneath without altering base pixel data.
 - 🎨 **Floating Mixing Scratchpad (<kbd>F4</kbd>)**: Persistent off-canvas color mixing dock for scribbling, smudging pigments, and eyedropper sampling without modifying the main document or history.
 - ⚡ **Subpixel-Antialiased High-Frequency Engine**: Guaranteed physical sub-pixel antialiasing transition bands across all hardness levels, with true Catmull-Rom spline tangent curvature and S-Level Global Stroke Stabilization (S-0 through S-7 Lazy Rope).
@@ -55,8 +63,8 @@ Hollow Canvas/
 │   ├── hollow-core/  # Core domain models, perspective geometry, affine/quad/mesh/TPS deformation, adjustment filters, layers, and rasterizers
 │   ├── hollow-render/# Software renderer, perspective guides, texture caching, grid/ruler overlays, and UI primitives
 │   ├── hollow-io/    # Binary HCV v4 project serialization, PNG export, and file parsing
-│   ├── hollow-ui/    # Modern egui-based dock panels, tools shelf, transform studio, perspective dock, adjustment modals, and palettes
-│   └── hollow-app/   # Native Win32 desktop application orchestrator and message loop
+│   ├── hollow-ui/    # Modern egui-based dock panels, studio viewport, tools shelf, transform studio, perspective dock, and palettes
+│   └── hollow-app/   # Universal cross-platform desktop application orchestrator via eframe
 ```
 
 ---

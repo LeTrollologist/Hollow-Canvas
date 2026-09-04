@@ -305,6 +305,12 @@ pub struct AppState {
     pub scratchpad_mode: u8, // 0: Paint, 1: Smudge / Water Mix, 2: Eyedropper, 3: Eraser
     pub scratchpad_bg_mode: u8, // 0: Dark Studio, 1: Pure White, 2: Transparent
     pub scratchpad_last_pos: Option<Vec2>,
+
+    // ── Canvas Viewport & Composited Texture ──
+    pub canvas_texture: Option<egui::TextureHandle>,
+    pub canvas_composite_buffer: Vec<u8>,
+    pub canvas_dirty: bool,
+    pub viewport_rect: egui::Rect,
 }
 
 impl AppState {
@@ -462,7 +468,39 @@ impl AppState {
             scratchpad_mode: 0,
             scratchpad_bg_mode: 0,
             scratchpad_last_pos: None,
+
+            canvas_texture: None,
+            canvas_composite_buffer: vec![0u8; (width * height * 4) as usize],
+            canvas_dirty: true,
+            viewport_rect: egui::Rect::ZERO,
         }
+    }
+
+    /// Recomposites the document layers into the egui GPU canvas texture
+    pub fn recomposite_canvas(&mut self, ctx: &egui::Context) {
+        let w = self.document.width as usize;
+        let h = self.document.height as usize;
+        let needed_bytes = w * h * 4;
+        if self.canvas_composite_buffer.len() != needed_bytes {
+            self.canvas_composite_buffer.resize(needed_bytes, 0);
+        }
+        self.document.composite_layers_into(&mut self.canvas_composite_buffer, true);
+
+        let color_image = egui::ColorImage::from_rgba_unmultiplied([w, h], &self.canvas_composite_buffer);
+        if let Some(tex) = &mut self.canvas_texture {
+            if tex.size() == [w, h] {
+                tex.set(color_image, egui::TextureOptions::NEAREST);
+            } else {
+                self.canvas_texture = Some(ctx.load_texture("canvas_composite", color_image, egui::TextureOptions::NEAREST));
+            }
+        } else {
+            self.canvas_texture = Some(ctx.load_texture("canvas_composite", color_image, egui::TextureOptions::NEAREST));
+        }
+        self.canvas_dirty = false;
+    }
+
+    pub fn mark_canvas_dirty(&mut self) {
+        self.canvas_dirty = true;
     }
 
     // ── Animation Timeline Management ──
@@ -1135,6 +1173,30 @@ impl AppState {
             }
         }
     }
+
+    pub fn clear_selection_active_layer(&mut self) {
+        if let Some(mask) = &self.selection {
+            let doc_w = self.document.width;
+            let doc_h = self.document.height;
+            let color = [0, 0, 0, 0];
+            if let Some(layer) = self.document.active_layer_mut() {
+                let before = layer.pixels.clone();
+                mask.fill_selection(&mut layer.pixels, doc_w, doc_h, color);
+                let after = layer.pixels.clone();
+                if before != after {
+                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                        layer_id: layer.id,
+                        description: "Clear Selection",
+                        before_pixels: before,
+                        after_pixels: after,
+                    });
+                    self.history.push(cmd);
+                    self.set_status("Cleared selected pixels");
+                }
+            }
+        }
+    }
+
 
     pub fn stroke_selection_active_layer(&mut self, width: u32, position: u8) {
         if let Some(mask) = &self.selection {

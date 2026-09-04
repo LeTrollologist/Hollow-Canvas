@@ -1,4 +1,5 @@
-TAG ?= v0.17.0
+TAG ?= v1.0.0-alpha.1
+
 
 .PHONY: release check build verify dry-run clean
 

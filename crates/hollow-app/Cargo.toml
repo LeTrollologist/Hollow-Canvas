@@ -1,8 +1,8 @@
 [package]
 name = "hollow-app"
-version = "0.17.0"
+version = "1.0.0-alpha.1"
 edition = "2021"
-description = "Pure native Windows graphics studio application executable"
+description = "Universal cross-platform digital painting and graphics studio application"
 
 [[bin]]
 name = "hollow-app"
@@ -10,11 +10,13 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
-hollow-core = { path = "../hollow-core", version = "0.17.0" }
-hollow-io = { path = "../hollow-io", version = "0.17.0" }
-hollow-ui = { path = "../hollow-ui", version = "0.17.0" }
-hollow-render = { path = "../hollow-render", version = "0.17.0" }
+hollow-core = { path = "../hollow-core", version = "1.0.0-alpha.1" }
+hollow-io = { path = "../hollow-io", version = "1.0.0-alpha.1" }
+hollow-ui = { path = "../hollow-ui", version = "1.0.0-alpha.1" }
+hollow-render = { path = "../hollow-render", version = "1.0.0-alpha.1" }
+eframe = { workspace = true }
 egui = { workspace = true }
+rfd = { workspace = true }
 glam = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }

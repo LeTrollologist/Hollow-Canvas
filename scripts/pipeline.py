@@ -37,8 +37,9 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT_DIR / "dist"
 
 CANONICAL_ASSET_REGEX = re.compile(
-    r"^(hollow-canvas-v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?-(windows)-(x86_64)\.(zip|vpack)|hollow-publisher\.pub)$"
+    r"^(hollow-canvas-v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?-(windows|linux|macos)-(x86_64|aarch64)\.(zip|vpack|tar\.gz)|hollow-publisher\.pub)$"
 )
+
 
 
 def log(stage: str, msg: str):
@@ -415,36 +416,33 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
         else "🟢 Verified Clean / Independent Permalinks Available"
     )
 
-    release_body = f"""## 🌟 Hollow Canvas {version} · The "Deformation" Update
-
+    release_body = f"""## 🌟 Hollow Canvas {version} · The "Universal" Update
+ 
 A modern, high-performance, local-first digital illustration, concept art, and graphics studio built with 100% pure native Rust.
 
 ### ✨ What's New in {version}
 
-* **⛶ Free Transform & Mesh Warp Engine (<kbd>Ctrl+T</kbd>)**:
-  - **4 Comprehensive Deformation Modes**:
-    - **⛶ Affine 2D**: Scale (5%–400%), Rotate (-180° to +180°), Skew, Translate, Flip Horizontal/Vertical, and draggable pivot point.
-    - **☖ Perspective Quad**: 4-corner homography deformation with analytical Direct Linear Transformation (DLT) matrix inversion for true 3D planar alignment.
-    - **▦ Bicubic Mesh Grid**: Configurable $N \times M$ control grids (3×3, 4×4, 5×5, 6×6, 8×8) with draggable vertex pins and inverse bilinear quad mapping.
-    - **✦ Thin Plate Splines (TPS)**: Multi-pin landmark warping driven by radial basis function kernels $U(r) = r^2 \\ln(r + 10^{-6})$ with Gauss-Jordan partial pivoting solvers for organic elasticity.
-  - **Subpixel Sampling Filters**: Real-time Bicubic (16-sample Catmull-Rom), Bilinear, and Nearest-neighbor interpolation.
-  - **Floating Transform & Warp Studio HUD**: Dedicated floating inspector with mode switcher, grid density presets, aspect-ratio lock, and reset controls.
-  - **Interactive On-Canvas Gizmos**: Bounding boxes, rotation stalks, glowing corner rings, mesh grid wireframes, and TPS landmark displacement vectors.
+* **🌍 Universal Cross-Platform Architecture (Linux / Windows / macOS Agnostic)**:
+  - **Native Engine Shift**: Replaced OS-specific Win32 GDI C-FFI message loops with pure Rust `eframe` 0.28 (winit, glow, x11, wayland) and `rfd` 0.14 native file dialogs.
+  - **Zero C++ Dependencies**: 100% memory-safe Rust with instant compilation across all major operating systems.
+  - **High-DPI & Multi-Monitor Support**: Subpixel precision rendering and automatic display scaling.
 
-* **⚡ Fast-Drawing Mouse-Up Stutter & Lag Fix**:
-  - Completely eliminated the $O(N)$ 33MB full-canvas equality check (`before_stroke_pixels != layer.pixels`) and redundant 33MB heap clones on mouse release.
-  - Replaced with zero-allocation dirty stroke tracking (`stroke_dirty`) and zero-copy snapshot swapping (`std::mem::take`), ensuring instantaneous 60 FPS mouse-up response even during intense high-speed sketching.
+* **🎨 Live Interactive Viewport with Real-Time Direct Drawing**:
+  - **Integrated Drawing Surface**: Canvas drawing and tool interactions run seamlessly within `egui::CentralPanel` with zero-latency texture streaming (`recomposite_canvas`).
+  - **Smooth S-Level Stroke Smoothing**: Multi-sample windowed stabilizer (S-0 to S-7) for silky-smooth inking and line art.
+  - **Dynamic Viewport Rulers & Overlays**: Real-time pixel rulers with tracking cursor ticks, configurable canvas grid, and symmetry guide axes.
+  - **Perspective Snapping System**: Multi-point vanishing point rays and constraint engine (<kbd>Ctrl+Shift+P</kbd>).
+  - **On-Canvas Transform & Mesh Deformation Gizmos**: Interactive bounding boxes, rotation stems, quad perspective pins, bicubic mesh grids, and TPS landmark control vectors.
 
-* **📐 Visual Perspective Rulers (1, 2, and 3-Point)**:
-  - Multi-point vanishing guides, horizon elevation/tilt, radial rays, and dynamic stroke constraint snapping (<kbd>Ctrl+Shift+P</kbd>).
+* **💎 Obsidian Glass Studio UI Overhaul**:
+  - **Polished Professional Studio Theme**: Deep Obsidian Glass styling with custom color accents, vector tool rack, floating docks, and status monitors.
+  - **Dockable Studio Panels**: Reorganized Layers/Groups, Color Wheel, Brush Dynamics, Navigator Viewport, History Timeline, and Scratchpad.
 
-* **✨ Non-Destructive Adjustment Layers & Floating Mixing Scratchpad**:
-  - Zero-allocation composite filter passes (Brightness/Contrast, HSL, Color Balance, Invert, Posterize, Threshold, Sepia).
-  - Off-canvas color mixing dock (<kbd>F4</kbd>) with pigment smudging and eyedropper sampling.
+* **⚡ Ultra-Low Latency & High-Speed Sketching Engine**:
+  - Instantaneous mouse-up response with zero-allocation dirty-region tracking and zero-copy history snapshotting.
 
-* **🔐 VPack 2.0.0 Integrated Ed25519 Digital Signing & Chain of Trust**:
-  - Releases signed with official Ed25519 publisher key (`3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f`).
-  - Automated signature and CRC-32 integrity validation via `vpack test`.
+* **🔐 VPack 2.0.0 Integrated Ed25519 Digital Signing & Cryptographic Trust**:
+  - Official publisher key verification (`3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f`) and CRC-32 integrity validation via `vpack test`.
 
 ### 🛡️ Security & VirusTotal Verification
 | Security Check | Result | Verification Link |

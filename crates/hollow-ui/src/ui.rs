@@ -96,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v0.17.0").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v1.0.0-alpha.1").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -1803,6 +1803,210 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 }
             });
     }
+
+    // ── 5. CENTRAL CANVAS VIEWPORT ──
+    egui::CentralPanel::default()
+        .frame(egui::Frame::none().fill(Color32::from_rgb(14, 18, 28)))
+        .show(ctx, |ui| {
+            let available_rect = ui.available_rect_before_wrap();
+            state.viewport_rect = available_rect;
+
+            // Ensure document composite texture is up to date
+            if state.canvas_texture.is_none() || state.canvas_dirty {
+                state.recomposite_canvas(ctx);
+            }
+
+            // Allocate full viewport size for interaction
+            let (rect, response) = ui.allocate_exact_size(available_rect.size(), egui::Sense::click_and_drag());
+            let painter = ui.painter().with_clip_rect(rect);
+
+            // Compute canvas screen coordinates
+            let center = rect.center() + egui::vec2(state.pan.x, state.pan.y);
+            let doc_w = state.document.width as f32;
+            let doc_h = state.document.height as f32;
+            let can_w = doc_w * state.zoom;
+            let can_h = doc_h * state.zoom;
+            let canvas_rect = egui::Rect::from_center_size(center, egui::vec2(can_w, can_h));
+
+            // ── A. Background & Outer Shadow ──
+            painter.rect_filled(rect, 0.0, Color32::from_rgb(10, 13, 22));
+
+            // Canvas Drop Shadow
+            let shadow_rect = canvas_rect.expand(4.0);
+            painter.rect_filled(shadow_rect, 4.0, Color32::from_rgba_unmultiplied(0, 0, 0, 120));
+
+            // Canvas Base Paper / Background
+            if state.document.is_transparent {
+                painter.rect_filled(canvas_rect, 0.0, Color32::from_rgb(26, 30, 44));
+            } else {
+                let bg = state.document.background_color().to_rgba8();
+                painter.rect_filled(canvas_rect, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
+            }
+
+            // ── B. Canvas Composite Image ──
+            if let Some(tex) = &state.canvas_texture {
+                let uv = if state.flip_view_horizontal {
+                    egui::Rect::from_min_max(egui::pos2(1.0, 0.0), egui::pos2(0.0, 1.0))
+                } else {
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0))
+                };
+                painter.image(tex.id(), canvas_rect, uv, Color32::WHITE);
+            }
+
+            // Canvas Crisp Border
+            painter.rect_stroke(canvas_rect, 0.0, egui::Stroke::new(1.0_f32, Color32::from_rgb(55, 75, 115)));
+
+            // ── C. Canvas Grid Overlay ──
+            if state.show_grid && state.grid_size > 0 {
+                let g_step = state.grid_size as f32 * state.zoom;
+                if g_step >= 6.0 {
+                    let g_alpha = (state.grid_opacity * 255.0).clamp(10.0, 255.0) as u8;
+                    let g_color = Color32::from_rgba_unmultiplied(140, 180, 240, g_alpha);
+                    let stroke = egui::Stroke::new(1.0_f32, g_color);
+                    let mut gx = canvas_rect.min.x;
+                    while gx <= canvas_rect.max.x + 0.5 {
+                        painter.line_segment([egui::pos2(gx, canvas_rect.min.y), egui::pos2(gx, canvas_rect.max.y)], stroke);
+                        gx += g_step;
+                    }
+                    let mut gy = canvas_rect.min.y;
+                    while gy <= canvas_rect.max.y + 0.5 {
+                        painter.line_segment([egui::pos2(canvas_rect.min.x, gy), egui::pos2(canvas_rect.max.x, gy)], stroke);
+                        gy += g_step;
+                    }
+                }
+            }
+
+            // ── D. Symmetry Guide Overlay ──
+            if state.symmetry.mode != SymmetryMode::None || state.symmetry.mandala_segments > 1 {
+                let center_screen = canvas_rect.min + egui::vec2(doc_w * 0.5 * state.zoom, doc_h * 0.5 * state.zoom);
+                let sym_stroke = egui::Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(255, 160, 40, 180));
+                match state.symmetry.mode {
+                    SymmetryMode::Vertical => {
+                        painter.line_segment([egui::pos2(center_screen.x, canvas_rect.min.y), egui::pos2(center_screen.x, canvas_rect.max.y)], sym_stroke);
+                    }
+                    SymmetryMode::Horizontal => {
+                        painter.line_segment([egui::pos2(canvas_rect.min.x, center_screen.y), egui::pos2(canvas_rect.max.x, center_screen.y)], sym_stroke);
+                    }
+                    SymmetryMode::Quad => {
+                        painter.line_segment([egui::pos2(center_screen.x, canvas_rect.min.y), egui::pos2(center_screen.x, canvas_rect.max.y)], sym_stroke);
+                        painter.line_segment([egui::pos2(canvas_rect.min.x, center_screen.y), egui::pos2(canvas_rect.max.x, center_screen.y)], sym_stroke);
+                    }
+                    _ => {}
+                }
+                if state.symmetry.mandala_segments > 1 {
+                    let rays = state.symmetry.mandala_segments;
+                    for r in 0..rays {
+                        let angle = (r as f32 * 2.0 * std::f32::consts::PI) / rays as f32;
+                        let dir = egui::vec2(angle.cos(), angle.sin()) * (can_w.max(can_h) * 1.5);
+                        painter.line_segment([center_screen, center_screen + dir], sym_stroke);
+                    }
+                }
+            }
+
+            // ── E. Perspective Guide Overlay ──
+            if state.perspective.p_type != hollow_core::perspective::PerspectiveType::None && state.perspective.show_guides {
+                let p_stroke = egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(80, 220, 255, 140));
+                let vp_to_screen = |vp: glam::Vec2| -> egui::Pos2 {
+                    canvas_rect.min + egui::vec2(vp.x * state.zoom, vp.y * state.zoom)
+                };
+                for vp in state.perspective.get_active_vps() {
+                    let vp_s = vp_to_screen(vp);
+                    painter.circle_filled(vp_s, 4.0, Color32::from_rgb(0, 240, 255));
+                    painter.circle_stroke(vp_s, 6.0, egui::Stroke::new(1.2_f32, Color32::WHITE));
+                    let rays = state.perspective.generate_rays_for_vp(vp, doc_w, doc_h, state.perspective.guide_density);
+                    for (start, end) in rays {
+                        let s_pt = vp_to_screen(start);
+                        let e_pt = vp_to_screen(end);
+                        painter.line_segment([s_pt, e_pt], p_stroke);
+                    }
+                }
+            }
+
+            // ── F. Pixel Rulers ──
+            if state.show_rulers {
+                let ruler_bg = Color32::from_rgb(14, 18, 30);
+                let ruler_line_c = Color32::from_rgb(60, 75, 110);
+                let ruler_text_c = Color32::from_rgb(140, 155, 185);
+                let ruler_thickness = 18.0;
+
+                let top_ruler_rect = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), ruler_thickness));
+                painter.rect_filled(top_ruler_rect, 0.0, ruler_bg);
+                painter.line_segment([top_ruler_rect.left_bottom(), top_ruler_rect.right_bottom()], egui::Stroke::new(1.0_f32, ruler_line_c));
+
+                let left_ruler_rect = egui::Rect::from_min_size(rect.min, egui::vec2(ruler_thickness, rect.height()));
+                painter.rect_filled(left_ruler_rect, 0.0, ruler_bg);
+                painter.line_segment([left_ruler_rect.right_top(), left_ruler_rect.right_bottom()], egui::Stroke::new(1.0_f32, ruler_line_c));
+
+                let corner_rect = egui::Rect::from_min_size(rect.min, egui::vec2(ruler_thickness, ruler_thickness));
+                painter.rect_filled(corner_rect, 0.0, Color32::from_rgb(10, 14, 24));
+
+                let step_can = if state.zoom > 4.0 { 10.0 } else if state.zoom > 1.5 { 50.0 } else if state.zoom > 0.5 { 100.0 } else if state.zoom > 0.2 { 250.0 } else { 500.0 };
+                let step_screen = step_can * state.zoom;
+
+                let first_tick_can = ((rect.min.x - canvas_rect.min.x) / step_screen).floor() * step_can;
+                let mut curr_can_x = first_tick_can;
+                while curr_can_x * state.zoom + canvas_rect.min.x <= rect.max.x {
+                    let sx = canvas_rect.min.x + curr_can_x * state.zoom;
+                    if sx >= rect.min.x + ruler_thickness {
+                        painter.line_segment([egui::pos2(sx, top_ruler_rect.max.y - 6.0), egui::pos2(sx, top_ruler_rect.max.y)], egui::Stroke::new(1.0_f32, ruler_line_c));
+                        if (curr_can_x as i32) % (step_can as i32 * 2) == 0 {
+                            painter.text(
+                                egui::pos2(sx + 2.0, top_ruler_rect.min.y + 2.0),
+                                egui::Align2::LEFT_TOP,
+                                format!("{}", curr_can_x as i32),
+                                egui::FontId::monospace(9.0),
+                                ruler_text_c,
+                            );
+                        }
+                    }
+                    curr_can_x += step_can;
+                }
+
+                let first_tick_can_y = ((rect.min.y - canvas_rect.min.y) / step_screen).floor() * step_can;
+                let mut curr_can_y = first_tick_can_y;
+                while curr_can_y * state.zoom + canvas_rect.min.y <= rect.max.y {
+                    let sy = canvas_rect.min.y + curr_can_y * state.zoom;
+                    if sy >= rect.min.y + ruler_thickness {
+                        painter.line_segment([egui::pos2(left_ruler_rect.max.x - 6.0, sy), egui::pos2(left_ruler_rect.max.x, sy)], egui::Stroke::new(1.0_f32, ruler_line_c));
+                        if (curr_can_y as i32) % (step_can as i32 * 2) == 0 {
+                            painter.text(
+                                egui::pos2(left_ruler_rect.min.x + 2.0, sy + 2.0),
+                                egui::Align2::LEFT_TOP,
+                                format!("{}", curr_can_y as i32),
+                                egui::FontId::monospace(9.0),
+                                ruler_text_c,
+                            );
+                        }
+                    }
+                    curr_can_y += step_can;
+                }
+
+                let cur_s = canvas_rect.min + egui::vec2(state.cursor_canvas_pos.x * state.zoom, state.cursor_canvas_pos.y * state.zoom);
+                if cur_s.x >= rect.min.x + ruler_thickness && cur_s.x <= rect.max.x {
+                    painter.line_segment([egui::pos2(cur_s.x, top_ruler_rect.min.y), egui::pos2(cur_s.x, top_ruler_rect.max.y)], egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)));
+                }
+                if cur_s.y >= rect.min.y + ruler_thickness && cur_s.y <= rect.max.y {
+                    painter.line_segment([egui::pos2(left_ruler_rect.min.x, cur_s.y), egui::pos2(left_ruler_rect.max.x, cur_s.y)], egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)));
+                }
+            }
+
+            // ── G. Cursor Tracker & Brush Circle Outline ──
+            let hover_pos = response.hover_pos().or_else(|| ctx.pointer_latest_pos());
+            if let Some(sp) = hover_pos {
+                if rect.contains(sp) {
+                    let offset = sp - canvas_rect.min;
+                    let canvas_x = offset.x / state.zoom;
+                    let canvas_y = offset.y / state.zoom;
+                    state.cursor_canvas_pos = glam::Vec2::new(canvas_x, canvas_y);
+
+                    if !state.transform_session.is_active {
+                        let radius = (state.brush.size * state.zoom * 0.5).max(2.0);
+                        painter.circle_stroke(sp, radius, egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 180)));
+                        painter.circle_stroke(sp, radius + 1.0, egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(0, 0, 0, 140)));
+                    }
+                }
+            }
+        });
 
     // ── 7.5 FLOATING COLOR MIXING SCRATCHPAD DOCK ──
     if state.show_scratchpad {
