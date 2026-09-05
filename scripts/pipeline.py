@@ -413,7 +413,7 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
     vt_status_text = (
         f"🟢 {vt_data['stats'].get('malicious', 0)} detections ({vt_data['stats'].get('undetected', 0)} engines clean)"
         if vt_data.get("scanned")
-        else "🟢 Verified Clean / Independent Permalinks Available"
+        else "⚪ Not Scanned via API (No VIRUSTOTAL_API_KEY configured — Manual lookup link available)"
     )
 
     release_body = f"""## 🌟 Hollow Canvas {version} · Studio Release
