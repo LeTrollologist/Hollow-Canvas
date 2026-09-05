@@ -14,3 +14,4 @@ keys/*.priv
 scratch/
 exports/
 *.mp4
+.env

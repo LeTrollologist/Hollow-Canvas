@@ -331,6 +331,25 @@ def stage_virustotal(tag_dir: Path, zip_path: Path, sha256_hash: str) -> dict:
     log("virustotal", "Running VirusTotal scan & integrity verification...")
     import json
     api_key = os.environ.get("VIRUSTOTAL_API_KEY") or os.environ.get("VT_API_KEY")
+    if not api_key:
+        # Check potential .env files
+        for env_path in [
+            ROOT_DIR / ".env",
+            ROOT_DIR.parent / "vpack-archiver" / ".env",
+            Path.home() / ".env",
+        ]:
+            if env_path.exists():
+                try:
+                    for line in env_path.read_text(encoding="utf-8").splitlines():
+                        if line.startswith("VIRUSTOTAL_API_KEY=") or line.startswith("VT_API_KEY="):
+                            api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            if api_key:
+                                print(f"  Loaded VirusTotal API key from {env_path}")
+                                break
+                    if api_key:
+                        break
+                except Exception:
+                    pass
     audit_dir = tag_dir / "audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
     vt_summary_file = audit_dir / "virustotal-summary.txt"
