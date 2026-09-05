@@ -152,6 +152,9 @@ extern "system" {
         lpbmi: *const BITMAPINFO,
         fuColorUse: u32,
     ) -> i32;
+    fn DragAcceptFiles(hWnd: HWND, fAccept: i32);
+    fn DragQueryFileW(hDrop: *mut std::ffi::c_void, iFile: u32, lpszFile: *mut u16, cch: u32) -> u32;
+    fn DragFinish(hDrop: *mut std::ffi::c_void);
 }
 
 static mut GLOBAL_APP_PTR: *mut HollowCanvasDesktopApp = std::ptr::null_mut();
@@ -694,23 +697,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                                     &app.state.symmetry,
                                     sel,
                                 );
-                            } else if n == 3 {
+                            } else if n >= 3 {
                                 StrokeRasterizer::paint_spline(
                                     &mut app.state.document,
-                                    app.stroke_points[0],
-                                    app.stroke_points[1],
-                                    app.stroke_points[2],
-                                    app.stroke_points[2],
-                                    &app.state.brush,
-                                    &app.state.symmetry,
-                                    sel,
-                                );
-                            } else if n >= 4 {
-                                StrokeRasterizer::paint_spline(
-                                    &mut app.state.document,
-                                    app.stroke_points[n - 4],
                                     app.stroke_points[n - 3],
                                     app.stroke_points[n - 2],
+                                    app.stroke_points[n - 1],
                                     app.stroke_points[n - 1],
                                     &app.state.brush,
                                     &app.state.symmetry,
@@ -727,16 +719,18 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
         }
         WM_LBUTTONDOWN => {
             app.is_pointer_down = true;
+
+            let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
+            let raw_y = ((lparam as u32 >> 16) & 0xFFFF) as i16 as f32;
+            let screen_pos = Vec2::new(raw_x, raw_y);
+            app.mouse_pos = egui::pos2(raw_x, raw_y);
+
             app.events.push(egui::Event::PointerButton {
                 pos: app.mouse_pos,
                 button: egui::PointerButton::Primary,
                 pressed: true,
                 modifiers: Default::default(),
             });
-
-            let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
-            let raw_y = ((lparam as u32 >> 16) & 0xFFFF) as i16 as f32;
-            let screen_pos = Vec2::new(raw_x, raw_y);
 
             if app.is_space_down {
                 app.last_pan_screen_pos = Some(screen_pos);
@@ -849,6 +843,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.active_snapshot_taken = true;
                 }
                 app.state.drag_start_canvas_pos = Some(canvas_pos);
+            } else if tool == ToolType::Text {
+                app.state.text_placement_pos = Some(canvas_pos);
+                app.is_drawing_on_canvas = false;
+                app.state.set_status(format!("Text insertion point set to ({:.0}, {:.0})", canvas_pos.x, canvas_pos.y));
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+                return 0;
             } else if tool == ToolType::Eyedropper {
                 let flat = app.state.document.composite_layers(false);
                 let cx = canvas_pos.x as i32;
@@ -939,6 +939,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.is_drawing_on_canvas = false;
             app.last_canvas_pos = None;
             app.last_pan_screen_pos = None;
+
+            let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
+            let raw_y = ((lparam as u32 >> 16) & 0xFFFF) as i16 as f32;
+            app.mouse_pos = egui::pos2(raw_x, raw_y);
+
             app.events.push(egui::Event::PointerButton {
                 pos: app.mouse_pos,
                 button: egui::PointerButton::Primary,
@@ -1128,6 +1133,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             0
         }
         WM_RBUTTONDOWN => {
+            let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
+            let raw_y = ((lparam as u32 >> 16) & 0xFFFF) as i16 as f32;
+            app.mouse_pos = egui::pos2(raw_x, raw_y);
+
             app.events.push(egui::Event::PointerButton {
                 pos: app.mouse_pos,
                 button: egui::PointerButton::Secondary,
@@ -1138,6 +1147,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             0
         }
         WM_RBUTTONUP => {
+            let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
+            let raw_y = ((lparam as u32 >> 16) & 0xFFFF) as i16 as f32;
+            app.mouse_pos = egui::pos2(raw_x, raw_y);
+
             app.events.push(egui::Event::PointerButton {
                 pos: app.mouse_pos,
                 button: egui::PointerButton::Secondary,
@@ -1501,6 +1514,21 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     );
                 }
 
+                // 3.5 Render toggleable rulers with live cursor track
+                if app.state.show_rulers {
+                    app.renderer.render_rulers(
+                        &mut app.buffer,
+                        app.win_w,
+                        app.win_h,
+                        &app.state.document,
+                        app.state.pan,
+                        app.state.zoom,
+                        center_offset,
+                        viewport_clip,
+                        app.state.cursor_canvas_pos,
+                    );
+                }
+
                 // 4. Render live shape / tool drag preview overlays
                 let accent_color = 0xFF5CE0D8; // Bright cyan overlay
                 if let Some(start) = app.state.drag_start_canvas_pos {
@@ -1569,20 +1597,19 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     );
                 }
 
-                // 5. Render Dynamic Rulers if enabled
-                if app.state.show_rulers {
-                    app.renderer.render_rulers(
-                        &mut app.buffer,
-                        app.win_w,
-                        app.win_h,
-                        &app.state.document,
-                        app.state.pan,
-                        app.state.zoom,
-                        center_offset,
-                        viewport_clip,
-                        app.state.cursor_canvas_pos,
-                    );
+                // 4.7 Render Text Tool placement marker if active
+                if app.state.brush.tool == ToolType::Text {
+                    if let Some(tpos) = app.state.text_placement_pos {
+                        let sp = app.state.canvas_to_screen(tpos, app.win_w as f32, app.win_h as f32);
+                        let p_min = sp - Vec2::new(6.0, 6.0);
+                        let p_max = sp + Vec2::new(6.0, 6.0);
+                        app.renderer.draw_screen_rect(&mut app.buffer, app.win_w, app.win_h, p_min, p_max, accent_color, false, viewport_clip);
+                        app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, sp - Vec2::new(12.0, 0.0), sp + Vec2::new(12.0, 0.0), accent_color, false, viewport_clip);
+                        app.renderer.draw_screen_line(&mut app.buffer, app.win_w, app.win_h, sp - Vec2::new(0.0, 12.0), sp + Vec2::new(0.0, 12.0), accent_color, false, viewport_clip);
+                    }
                 }
+
+
 
                 // 6. Render egui UI primitives on top
                 app.renderer.update_textures(&full_output.textures_delta);
@@ -1699,6 +1726,42 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
             0
         }
+        0x0233 /* WM_DROPFILES */ => {
+            let hdrop = wparam as *mut std::ffi::c_void;
+            let mut buf = vec![0u16; 1024];
+            let len = DragQueryFileW(hdrop, 0, buf.as_mut_ptr(), 1024);
+            if len > 0 {
+                let path_str = String::from_utf16_lossy(&buf[..len as usize]);
+                let path = PathBuf::from(&path_str);
+                if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("hcv")).unwrap_or(false) {
+                    match load_project_file(&path) {
+                        Ok(doc) => {
+                            app.state.document = doc;
+                            app.state.history.clear();
+                            app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
+                            app.state.set_status(format!("Loaded project: {}", path.display()));
+                        }
+                        Err(e) => app.state.set_status(format!("Failed to load project: {}", e)),
+                    }
+                } else if let Ok(img) = image::open(&path) {
+                    let rgba = img.to_rgba8();
+                    let (w, h) = rgba.dimensions();
+                    let mut doc = hollow_core::document::Document::new(w, h);
+                    doc.is_transparent = true;
+                    if let Some(layer) = doc.active_layer_mut() {
+                        layer.name = path.file_name().and_then(|n| n.to_str()).unwrap_or("Layer 1").to_string();
+                        layer.pixels = rgba.into_raw();
+                    }
+                    app.state.document = doc;
+                    app.state.history.clear();
+                    app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
+                    app.state.set_status(format!("Opened image: {} ({} × {} px)", path.display(), w, h));
+                }
+            }
+            DragFinish(hdrop);
+            InvalidateRect(hwnd, std::ptr::null(), 0);
+            0
+        }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
@@ -1710,9 +1773,21 @@ fn to_wide(s: &str) -> Vec<u16> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
-    // CLI Subcommands
+    // CLI Subcommands & Flags
     if args.len() > 1 {
-        if args[1] == "export" {
+        if args[1] == "--register-shell" {
+            match hollow_ui::register_shell_associations() {
+                Ok(msg) => println!("{}", msg),
+                Err(err) => eprintln!("Error: {}", err),
+            }
+            return Ok(());
+        } else if args[1] == "--unregister-shell" {
+            match hollow_ui::unregister_shell_associations() {
+                Ok(msg) => println!("{}", msg),
+                Err(err) => eprintln!("Error: {}", err),
+            }
+            return Ok(());
+        } else if args[1] == "export" {
             if args.len() < 4 {
                 println!("Usage: hollow-app export <INPUT> -o <OUTPUT> [--format png|jpg|webp]");
                 return Ok(());
@@ -1772,6 +1847,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Hollow Canvas · Native Windows Graphics Application");
             println!();
             println!("Usage: hollow-app [FILE]");
+            println!("       hollow-app --register-shell     (Register Windows Explorer context menu)");
+            println!("       hollow-app --unregister-shell   (Unregister Windows Explorer context menu)");
             println!("       hollow-app export <INPUT> -o <OUTPUT> [--format png|jpg|webp]");
             println!("       hollow-app inspect <INPUT>");
             return Ok(());
@@ -1784,15 +1861,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_state = if args.len() > 1 && !args[1].starts_with('-') {
         let initial_file = PathBuf::from(&args[1]);
-        match load_project_file(&initial_file) {
-            Ok(doc) => {
-                let mut s = AppState::from_document(doc);
-                s.set_status(format!("Loaded {}", initial_file.display()));
-                s
+        if initial_file.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("hcv")).unwrap_or(false) {
+            match load_project_file(&initial_file) {
+                Ok(doc) => {
+                    let mut s = AppState::from_document(doc);
+                    s.set_status(format!("Loaded project: {}", initial_file.display()));
+                    s
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to load specified project file: {}", e);
+                    AppState::default()
+                }
             }
-            Err(e) => {
-                eprintln!("Warning: Failed to load specified project file: {}", e);
-                AppState::default()
+        } else {
+            // Try loading as standard image file
+            match image::open(&initial_file) {
+                Ok(img) => {
+                    let rgba = img.to_rgba8();
+                    let (w, h) = rgba.dimensions();
+                    let mut doc = hollow_core::document::Document::new(w, h);
+                    doc.is_transparent = true;
+                    if let Some(layer) = doc.active_layer_mut() {
+                        layer.name = initial_file.file_name().and_then(|n| n.to_str()).unwrap_or("Layer 1").to_string();
+                        layer.pixels = rgba.into_raw();
+                    }
+                    let mut s = AppState::from_document(doc);
+                    s.set_status(format!("Opened image: {} ({} × {} px)", initial_file.display(), w, h));
+                    s
+                }
+                Err(img_err) => {
+                    // Fallback try project load if extension wasn't .hcv
+                    match load_project_file(&initial_file) {
+                        Ok(doc) => {
+                            let mut s = AppState::from_document(doc);
+                            s.set_status(format!("Loaded {}", initial_file.display()));
+                            s
+                        }
+                        Err(_) => {
+                            eprintln!("Warning: Failed to open image: {}", img_err);
+                            AppState::default()
+                        }
+                    }
+                }
             }
         }
     } else {
@@ -1878,6 +1988,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Failed to create Win32 window.");
             return Ok(());
         }
+
+        DragAcceptFiles(hwnd, 1);
 
         // Load and set custom Application & Taskbar Icon
         const APP_ICON_BYTES: &[u8] = include_bytes!("../../../assets/icon.png");

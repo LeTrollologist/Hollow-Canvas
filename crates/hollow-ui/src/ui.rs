@@ -96,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v1.0.0-alpha.1").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v1.0.2-alpha").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -109,7 +109,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 state.show_new_canvas_dialog = true;
                                 ui.close_menu();
                             }
-                            if ui.button("📂 Open Project... (Ctrl+O)").clicked() {
+                            if ui.button("📂 Open Project / Image... (Ctrl+O)").clicked() {
                                 state.pending_file_action = Some(PendingFileAction::OpenProject);
                                 ui.close_menu();
                             }
@@ -124,6 +124,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             }
                             if ui.button("🎬 Export Animation...").clicked() {
                                 state.show_export_animation_dialog = true;
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            if ui.button("🪟 Windows Context Menu Integration...").clicked() {
+                                state.show_shell_status_modal = Some("prompt".to_string());
                                 ui.close_menu();
                             }
                         });
@@ -389,11 +394,13 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     // Right-aligned ultra-compact quick action icon bar (Never Overflows)
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("ℹ").on_hover_text("About Hollow Canvas").clicked() {
+                        ui.spacing_mut().item_spacing = egui::vec2(3.0, 0.0);
+
+                        if ui.button("ℹ").on_hover_text("About Hollow Canvas (v1.0.2-alpha)").clicked() {
                             state.show_about_dialog = true;
                         }
 
-                        if ui.button("?").on_hover_text("Shortcuts & Help (?)").clicked() {
+                        if ui.button("?").on_hover_text("Keyboard Shortcuts & Help (?)").clicked() {
                             state.show_help = !state.show_help;
                         }
 
@@ -401,67 +408,52 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             state.show_ui_panels = !state.show_ui_panels;
                         }
 
-                        let persp_label = if state.show_perspective_dock { "📐 [ON]" } else { "📐 Persp" };
-                        if ui.selectable_label(state.show_perspective_dock, persp_label).on_hover_text("Visual Perspective Rulers & Vanishing Point Studio (F5)").clicked() {
+                        if ui.selectable_label(state.show_perspective_dock, "📐").on_hover_text("Visual Perspective Studio & Horizon Guides (F5)").clicked() {
                             state.show_perspective_dock = !state.show_perspective_dock;
                         }
 
-                        let snap_label = if state.perspective.snap_enabled { "⇲ [SNAP]" } else { "⇲ Snap" };
-                        if ui.selectable_label(state.perspective.snap_enabled, snap_label).on_hover_text("Constraint Snapping to Perspective Vectors (Ctrl+Shift+P)").clicked() {
+                        if ui.selectable_label(state.perspective.snap_enabled, "⇲").on_hover_text("Constraint Snapping to Perspective Vectors (Ctrl+Shift+P)").clicked() {
                             state.perspective.snap_enabled = !state.perspective.snap_enabled;
                             state.set_status(if state.perspective.snap_enabled { "Perspective Snapping: ON" } else { "Perspective Snapping: OFF" });
                         }
 
-                        let scratch_label = if state.show_scratchpad { "🎨 [ON]" } else { "🎨 Palette" };
-                        if ui.selectable_label(state.show_scratchpad, scratch_label).on_hover_text("Floating Color Mixing Scratchpad (F4)").clicked() {
+                        if ui.selectable_label(state.show_scratchpad, "🎨").on_hover_text("Floating Color Mixing Scratchpad (F4)").clicked() {
                             state.show_scratchpad = !state.show_scratchpad;
                         }
 
-                        let ref_label = if state.tracing_enabled {
-                            "📐 Trace [ON]"
-                        } else if state.show_ref_window {
-                            "🖼 Ref [ON]"
-                        } else {
-                            "🖼 Ref"
-                        };
-                        if ui.selectable_label(state.show_ref_window || state.tracing_enabled, ref_label).on_hover_text("Reference & On-Canvas Tracing Paper Studio").clicked() {
+                        if ui.selectable_label(state.show_ref_window || state.tracing_enabled, "🖼").on_hover_text("Reference & On-Canvas Tracing Paper Studio").clicked() {
                             state.show_ref_window = !state.show_ref_window;
                         }
 
-                        let ruler_label = if state.show_rulers { "📏 [ON]" } else { "📏 Rulers" };
-                        if ui.selectable_label(state.show_rulers, ruler_label).on_hover_text("Toggle Viewport Rulers (Ctrl+R)").clicked() {
+                        if ui.selectable_label(state.show_rulers, "📏").on_hover_text("Toggle Viewport Pixel Rulers (Ctrl+R)").clicked() {
                             state.show_rulers = !state.show_rulers;
                         }
 
-                        let grid_label = if state.show_grid { "⊞ [ON]" } else { "⊞ Grid" };
-                        if ui.selectable_label(state.show_grid, grid_label).on_hover_text("Toggle Canvas Grid (Ctrl+')").clicked() {
+                        if ui.selectable_label(state.show_grid, "⊞").on_hover_text("Toggle Canvas Grid (Ctrl+')").clicked() {
                             state.show_grid = !state.show_grid;
                         }
 
                         ui.separator();
-                        ui.add_space(3.0);
 
                         // S-Level Stabilizer quick chip
-                        let s_lvl_txt = format!("🎯 S-{}", state.brush.stabilization_level);
-                        let s_btn = egui::Button::new(RichText::new(s_lvl_txt).size(10.0).strong().color(accent_c32))
+                        let s_lvl_txt = format!("S-{}", state.brush.stabilization_level);
+                        let s_btn = egui::Button::new(RichText::new(s_lvl_txt).size(9.5).strong().color(accent_c32))
                             .fill(if state.brush.stabilization_level > 0 { accent_dim_c32 } else { Color32::from_rgb(18, 24, 40) })
                             .stroke(egui::Stroke::new(1.0_f32, if state.brush.stabilization_level > 0 { accent_c32 } else { Color32::from_rgb(45, 55, 80) }));
-                        if ui.add(s_btn).on_hover_text(format!("{}: Click to cycle (S-0..S-7)", state.brush.stabilization_label())).clicked() {
+                        if ui.add(s_btn).on_hover_text(format!("{}: Click to cycle stabilizer (S-0..S-7)", state.brush.stabilization_label())).clicked() {
                             state.brush.stabilization_level = (state.brush.stabilization_level + 1) % 8;
                             state.set_status(format!("Stabilizer: {}", state.brush.stabilization_label()));
                         }
 
-                        ui.add_space(4.0);
-
-                        // Centered Active Tool Badge in remaining space
+                        // Active Tool Badge in remaining space
                         let tool_label = format!("{} · {}px", state.brush.tool.label(), state.brush.size as u32);
                         egui::Frame::none()
                             .fill(accent_dim_c32)
                             .stroke(egui::Stroke::new(1.0_f32, accent_c32))
                             .rounding(4.0)
-                            .inner_margin(egui::vec2(8.0, 2.5))
+                            .inner_margin(egui::vec2(6.0, 2.0))
                             .show(ui, |ui| {
-                                ui.label(RichText::new(tool_label).size(10.0).strong().color(accent_c32));
+                                ui.label(RichText::new(tool_label).size(9.5).strong().color(accent_c32));
                             });
                     });
                 });
@@ -643,18 +635,19 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         (ToolType::Chalk, "Chalk"),
                         (ToolType::Spray, "Spray"),
                         (ToolType::Smudge, "Smudge"),
-                        (ToolType::Gradient, "Gradient"),
-                        (ToolType::Wand, "Wand"),
-                        (ToolType::SelectionBrush, "Sel Brush"),
-                        (ToolType::SelectionEraser, "Sel Erase"),
+                        (ToolType::Text, "Text"),
                         (ToolType::Eraser, "Eraser"),
                         (ToolType::Fill, "Fill"),
+                        (ToolType::Gradient, "Gradient"),
                         (ToolType::Line, "Line"),
                         (ToolType::Rect, "Rect"),
                         (ToolType::Ellipse, "Oval"),
                         (ToolType::Polygon, "Poly"),
+                        (ToolType::Wand, "Wand"),
                         (ToolType::Marquee, "Select"),
                         (ToolType::Lasso, "Lasso"),
+                        (ToolType::SelectionBrush, "Sel Brush"),
+                        (ToolType::SelectionEraser, "Sel Erase"),
                         (ToolType::Move, "Move"),
                         (ToolType::Transform, "Trans"),
                         (ToolType::Crop, "Crop"),
@@ -697,7 +690,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             let btn = egui::Button::new(RichText::new(label).size(10.0))
                                 .fill(if is_active { accent_c32.linear_multiply(0.35) } else { Color32::from_rgb(18, 24, 40) })
                                 .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else { Color32::from_rgb(45, 55, 80) }))
-                                .min_size(Vec2::new(98.0, 22.0));
+                                .min_size(Vec2::new(94.0, 22.0));
                             if ui.add(btn).on_hover_text(&p.description).clicked() {
                                 state.select_preset(i);
                             }
@@ -714,6 +707,46 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.label(RichText::new("TOOL PROPERTIES").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
 
                     match state.brush.tool {
+                        ToolType::Text => {
+                            ui.label(RichText::new("TEXT CONTENT:").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                            ui.add(egui::TextEdit::multiline(&mut state.text.content).desired_width(190.0).desired_rows(3));
+
+                            ui.add_space(3.0);
+                            ui.label(RichText::new("FONT FAMILY:").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                            ui.label(RichText::new(&state.text.font_name).size(10.0).strong().color(accent_c32));
+
+                            if ui.button("📂 Load Custom Font (.ttf / .otf)...").on_hover_text("Browse computer for any custom TrueType or OpenType font file").clicked() {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .add_filter("Font Files (*.ttf, *.otf)", &["ttf", "otf"])
+                                    .pick_file()
+                                {
+                                    state.load_custom_font(&path.to_string_lossy());
+                                }
+                            }
+
+                            ui.add_space(3.0);
+                            ui.add(egui::Slider::new(&mut state.text.font_size, 6.0..=160.0).text("Font Size"));
+                            ui.add(egui::Slider::new(&mut state.text.line_spacing, 0.5..=2.5).text("Line Spacing"));
+                            ui.add(egui::Slider::new(&mut state.text.letter_spacing, -4.0..=24.0).text("Letter Spacing"));
+
+                            ui.horizontal(|ui| {
+                                ui.label("Align:");
+                                for &align in hollow_core::brush::TextAlign::ALL {
+                                    if ui.selectable_label(state.text.align == align, format!("{} {}", align.icon(), align.label())).clicked() {
+                                        state.text.align = align;
+                                    }
+                                }
+                            });
+
+                            ui.add_space(4.0);
+                            let place_btn = egui::Button::new(RichText::new("✍ Place on Canvas").size(10.5).strong().color(Color32::from_rgb(15, 20, 35)))
+                                .fill(accent_c32)
+                                .min_size(Vec2::new(190.0, 24.0));
+                            if ui.add(place_btn).on_hover_text("Stamp text directly into the active layer at the current insertion point").clicked() {
+                                state.place_text_on_canvas();
+                            }
+                            ui.label(RichText::new("💡 Click canvas to set position.").size(8.5).color(Color32::from_rgb(120, 135, 165)));
+                        }
                         ToolType::Gradient => {
                             ui.horizontal(|ui| {
                                 ui.label("Type:");
@@ -1383,8 +1416,25 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     });
 
                                     if is_active {
+                                        if !is_adj && !is_group {
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("Blend:").size(9.5).color(Color32::from_rgb(130, 142, 172)));
+                                                egui::ComboBox::from_id_source(format!("blend_mode_{}", layer_id))
+                                                    .selected_text(state.document.layers[i].blend_mode.label())
+                                                    .show_ui(ui, |ui| {
+                                                        for &mode in hollow_core::blend::BlendMode::ALL {
+                                                            if ui.selectable_value(&mut state.document.layers[i].blend_mode, mode, mode.label()).clicked() {
+                                                                ctx.request_repaint();
+                                                            }
+                                                        }
+                                                    });
+                                            });
+                                        }
+
                                         ui.horizontal(|ui| {
-                                            ui.add(egui::Slider::new(&mut state.document.layers[i].opacity, 0.0..=1.0).text("Opacity"));
+                                            if ui.add(egui::Slider::new(&mut state.document.layers[i].opacity, 0.0..=1.0).text("Opacity")).changed() {
+                                                ctx.request_repaint();
+                                            }
                                         });
 
                                         if is_adj {
@@ -1469,34 +1519,34 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.label(RichText::new("CANVAS OPERATIONS").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
 
                     ui.horizontal(|ui| {
-                        if ui.button("Resize / Scale...").clicked() {
+                        if ui.add_sized([102.0, 20.0], egui::Button::new("Resize / Scale...")).clicked() {
                             state.show_resize_canvas_dialog = true;
                             state.resize_canvas_w = state.document.width;
                             state.resize_canvas_h = state.document.height;
                         }
-                        if ui.button("⛶ Fit").clicked() {
+                        if ui.add_sized([52.0, 20.0], egui::Button::new("⛶ Fit")).clicked() {
                             let sr = ctx.screen_rect();
                             state.reset_view_centered(sr.width(), sr.height());
                         }
-                        if ui.button("100%").clicked() {
+                        if ui.add_sized([52.0, 20.0], egui::Button::new("100%")).clicked() {
                             state.reset_view();
                         }
                     });
 
                     ui.horizontal(|ui| {
-                        if ui.button("Flip H").clicked() {
+                        if ui.add_sized([50.0, 20.0], egui::Button::new("Flip H")).clicked() {
                             state.document.flip(true);
                             state.set_status("Flipped horizontally");
                         }
-                        if ui.button("Flip V").clicked() {
+                        if ui.add_sized([50.0, 20.0], egui::Button::new("Flip V")).clicked() {
                             state.document.flip(false);
                             state.set_status("Flipped vertically");
                         }
-                        if ui.button("⟳ 90°").clicked() {
+                        if ui.add_sized([50.0, 20.0], egui::Button::new("⟳ 90°")).clicked() {
                             state.document.rotate_90(true);
                             state.set_status("Rotated 90° CW");
                         }
-                        if ui.button("180°").clicked() {
+                        if ui.add_sized([50.0, 20.0], egui::Button::new("180°")).clicked() {
                             state.document.rotate_180();
                             state.set_status("Rotated 180°");
                         }
@@ -1504,10 +1554,14 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut state.document.is_transparent, "Transparent Canvas");
+                        if ui.checkbox(&mut state.document.is_transparent, "Transparent Canvas").changed() {
+                            ctx.request_repaint();
+                        }
                     });
                     if !state.document.is_transparent {
-                        ui.add(egui::Slider::new(&mut state.document.background_value, 0..=255).text("BG Lum"));
+                        if ui.add(egui::Slider::new(&mut state.document.background_value, 0..=255).text("BG Lum")).changed() {
+                            ctx.request_repaint();
+                        }
                     }
                 });
             });
@@ -1803,210 +1857,6 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 }
             });
     }
-
-    // ── 5. CENTRAL CANVAS VIEWPORT ──
-    egui::CentralPanel::default()
-        .frame(egui::Frame::none().fill(Color32::from_rgb(14, 18, 28)))
-        .show(ctx, |ui| {
-            let available_rect = ui.available_rect_before_wrap();
-            state.viewport_rect = available_rect;
-
-            // Ensure document composite texture is up to date
-            if state.canvas_texture.is_none() || state.canvas_dirty {
-                state.recomposite_canvas(ctx);
-            }
-
-            // Allocate full viewport size for interaction
-            let (rect, response) = ui.allocate_exact_size(available_rect.size(), egui::Sense::click_and_drag());
-            let painter = ui.painter().with_clip_rect(rect);
-
-            // Compute canvas screen coordinates
-            let center = rect.center() + egui::vec2(state.pan.x, state.pan.y);
-            let doc_w = state.document.width as f32;
-            let doc_h = state.document.height as f32;
-            let can_w = doc_w * state.zoom;
-            let can_h = doc_h * state.zoom;
-            let canvas_rect = egui::Rect::from_center_size(center, egui::vec2(can_w, can_h));
-
-            // ── A. Background & Outer Shadow ──
-            painter.rect_filled(rect, 0.0, Color32::from_rgb(10, 13, 22));
-
-            // Canvas Drop Shadow
-            let shadow_rect = canvas_rect.expand(4.0);
-            painter.rect_filled(shadow_rect, 4.0, Color32::from_rgba_unmultiplied(0, 0, 0, 120));
-
-            // Canvas Base Paper / Background
-            if state.document.is_transparent {
-                painter.rect_filled(canvas_rect, 0.0, Color32::from_rgb(26, 30, 44));
-            } else {
-                let bg = state.document.background_color().to_rgba8();
-                painter.rect_filled(canvas_rect, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
-            }
-
-            // ── B. Canvas Composite Image ──
-            if let Some(tex) = &state.canvas_texture {
-                let uv = if state.flip_view_horizontal {
-                    egui::Rect::from_min_max(egui::pos2(1.0, 0.0), egui::pos2(0.0, 1.0))
-                } else {
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0))
-                };
-                painter.image(tex.id(), canvas_rect, uv, Color32::WHITE);
-            }
-
-            // Canvas Crisp Border
-            painter.rect_stroke(canvas_rect, 0.0, egui::Stroke::new(1.0_f32, Color32::from_rgb(55, 75, 115)));
-
-            // ── C. Canvas Grid Overlay ──
-            if state.show_grid && state.grid_size > 0 {
-                let g_step = state.grid_size as f32 * state.zoom;
-                if g_step >= 6.0 {
-                    let g_alpha = (state.grid_opacity * 255.0).clamp(10.0, 255.0) as u8;
-                    let g_color = Color32::from_rgba_unmultiplied(140, 180, 240, g_alpha);
-                    let stroke = egui::Stroke::new(1.0_f32, g_color);
-                    let mut gx = canvas_rect.min.x;
-                    while gx <= canvas_rect.max.x + 0.5 {
-                        painter.line_segment([egui::pos2(gx, canvas_rect.min.y), egui::pos2(gx, canvas_rect.max.y)], stroke);
-                        gx += g_step;
-                    }
-                    let mut gy = canvas_rect.min.y;
-                    while gy <= canvas_rect.max.y + 0.5 {
-                        painter.line_segment([egui::pos2(canvas_rect.min.x, gy), egui::pos2(canvas_rect.max.x, gy)], stroke);
-                        gy += g_step;
-                    }
-                }
-            }
-
-            // ── D. Symmetry Guide Overlay ──
-            if state.symmetry.mode != SymmetryMode::None || state.symmetry.mandala_segments > 1 {
-                let center_screen = canvas_rect.min + egui::vec2(doc_w * 0.5 * state.zoom, doc_h * 0.5 * state.zoom);
-                let sym_stroke = egui::Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(255, 160, 40, 180));
-                match state.symmetry.mode {
-                    SymmetryMode::Vertical => {
-                        painter.line_segment([egui::pos2(center_screen.x, canvas_rect.min.y), egui::pos2(center_screen.x, canvas_rect.max.y)], sym_stroke);
-                    }
-                    SymmetryMode::Horizontal => {
-                        painter.line_segment([egui::pos2(canvas_rect.min.x, center_screen.y), egui::pos2(canvas_rect.max.x, center_screen.y)], sym_stroke);
-                    }
-                    SymmetryMode::Quad => {
-                        painter.line_segment([egui::pos2(center_screen.x, canvas_rect.min.y), egui::pos2(center_screen.x, canvas_rect.max.y)], sym_stroke);
-                        painter.line_segment([egui::pos2(canvas_rect.min.x, center_screen.y), egui::pos2(canvas_rect.max.x, center_screen.y)], sym_stroke);
-                    }
-                    _ => {}
-                }
-                if state.symmetry.mandala_segments > 1 {
-                    let rays = state.symmetry.mandala_segments;
-                    for r in 0..rays {
-                        let angle = (r as f32 * 2.0 * std::f32::consts::PI) / rays as f32;
-                        let dir = egui::vec2(angle.cos(), angle.sin()) * (can_w.max(can_h) * 1.5);
-                        painter.line_segment([center_screen, center_screen + dir], sym_stroke);
-                    }
-                }
-            }
-
-            // ── E. Perspective Guide Overlay ──
-            if state.perspective.p_type != hollow_core::perspective::PerspectiveType::None && state.perspective.show_guides {
-                let p_stroke = egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(80, 220, 255, 140));
-                let vp_to_screen = |vp: glam::Vec2| -> egui::Pos2 {
-                    canvas_rect.min + egui::vec2(vp.x * state.zoom, vp.y * state.zoom)
-                };
-                for vp in state.perspective.get_active_vps() {
-                    let vp_s = vp_to_screen(vp);
-                    painter.circle_filled(vp_s, 4.0, Color32::from_rgb(0, 240, 255));
-                    painter.circle_stroke(vp_s, 6.0, egui::Stroke::new(1.2_f32, Color32::WHITE));
-                    let rays = state.perspective.generate_rays_for_vp(vp, doc_w, doc_h, state.perspective.guide_density);
-                    for (start, end) in rays {
-                        let s_pt = vp_to_screen(start);
-                        let e_pt = vp_to_screen(end);
-                        painter.line_segment([s_pt, e_pt], p_stroke);
-                    }
-                }
-            }
-
-            // ── F. Pixel Rulers ──
-            if state.show_rulers {
-                let ruler_bg = Color32::from_rgb(14, 18, 30);
-                let ruler_line_c = Color32::from_rgb(60, 75, 110);
-                let ruler_text_c = Color32::from_rgb(140, 155, 185);
-                let ruler_thickness = 18.0;
-
-                let top_ruler_rect = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), ruler_thickness));
-                painter.rect_filled(top_ruler_rect, 0.0, ruler_bg);
-                painter.line_segment([top_ruler_rect.left_bottom(), top_ruler_rect.right_bottom()], egui::Stroke::new(1.0_f32, ruler_line_c));
-
-                let left_ruler_rect = egui::Rect::from_min_size(rect.min, egui::vec2(ruler_thickness, rect.height()));
-                painter.rect_filled(left_ruler_rect, 0.0, ruler_bg);
-                painter.line_segment([left_ruler_rect.right_top(), left_ruler_rect.right_bottom()], egui::Stroke::new(1.0_f32, ruler_line_c));
-
-                let corner_rect = egui::Rect::from_min_size(rect.min, egui::vec2(ruler_thickness, ruler_thickness));
-                painter.rect_filled(corner_rect, 0.0, Color32::from_rgb(10, 14, 24));
-
-                let step_can = if state.zoom > 4.0 { 10.0 } else if state.zoom > 1.5 { 50.0 } else if state.zoom > 0.5 { 100.0 } else if state.zoom > 0.2 { 250.0 } else { 500.0 };
-                let step_screen = step_can * state.zoom;
-
-                let first_tick_can = ((rect.min.x - canvas_rect.min.x) / step_screen).floor() * step_can;
-                let mut curr_can_x = first_tick_can;
-                while curr_can_x * state.zoom + canvas_rect.min.x <= rect.max.x {
-                    let sx = canvas_rect.min.x + curr_can_x * state.zoom;
-                    if sx >= rect.min.x + ruler_thickness {
-                        painter.line_segment([egui::pos2(sx, top_ruler_rect.max.y - 6.0), egui::pos2(sx, top_ruler_rect.max.y)], egui::Stroke::new(1.0_f32, ruler_line_c));
-                        if (curr_can_x as i32) % (step_can as i32 * 2) == 0 {
-                            painter.text(
-                                egui::pos2(sx + 2.0, top_ruler_rect.min.y + 2.0),
-                                egui::Align2::LEFT_TOP,
-                                format!("{}", curr_can_x as i32),
-                                egui::FontId::monospace(9.0),
-                                ruler_text_c,
-                            );
-                        }
-                    }
-                    curr_can_x += step_can;
-                }
-
-                let first_tick_can_y = ((rect.min.y - canvas_rect.min.y) / step_screen).floor() * step_can;
-                let mut curr_can_y = first_tick_can_y;
-                while curr_can_y * state.zoom + canvas_rect.min.y <= rect.max.y {
-                    let sy = canvas_rect.min.y + curr_can_y * state.zoom;
-                    if sy >= rect.min.y + ruler_thickness {
-                        painter.line_segment([egui::pos2(left_ruler_rect.max.x - 6.0, sy), egui::pos2(left_ruler_rect.max.x, sy)], egui::Stroke::new(1.0_f32, ruler_line_c));
-                        if (curr_can_y as i32) % (step_can as i32 * 2) == 0 {
-                            painter.text(
-                                egui::pos2(left_ruler_rect.min.x + 2.0, sy + 2.0),
-                                egui::Align2::LEFT_TOP,
-                                format!("{}", curr_can_y as i32),
-                                egui::FontId::monospace(9.0),
-                                ruler_text_c,
-                            );
-                        }
-                    }
-                    curr_can_y += step_can;
-                }
-
-                let cur_s = canvas_rect.min + egui::vec2(state.cursor_canvas_pos.x * state.zoom, state.cursor_canvas_pos.y * state.zoom);
-                if cur_s.x >= rect.min.x + ruler_thickness && cur_s.x <= rect.max.x {
-                    painter.line_segment([egui::pos2(cur_s.x, top_ruler_rect.min.y), egui::pos2(cur_s.x, top_ruler_rect.max.y)], egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)));
-                }
-                if cur_s.y >= rect.min.y + ruler_thickness && cur_s.y <= rect.max.y {
-                    painter.line_segment([egui::pos2(left_ruler_rect.min.x, cur_s.y), egui::pos2(left_ruler_rect.max.x, cur_s.y)], egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)));
-                }
-            }
-
-            // ── G. Cursor Tracker & Brush Circle Outline ──
-            let hover_pos = response.hover_pos().or_else(|| ctx.pointer_latest_pos());
-            if let Some(sp) = hover_pos {
-                if rect.contains(sp) {
-                    let offset = sp - canvas_rect.min;
-                    let canvas_x = offset.x / state.zoom;
-                    let canvas_y = offset.y / state.zoom;
-                    state.cursor_canvas_pos = glam::Vec2::new(canvas_x, canvas_y);
-
-                    if !state.transform_session.is_active {
-                        let radius = (state.brush.size * state.zoom * 0.5).max(2.0);
-                        painter.circle_stroke(sp, radius, egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 180)));
-                        painter.circle_stroke(sp, radius + 1.0, egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(0, 0, 0, 140)));
-                    }
-                }
-            }
-        });
 
     // ── 7.5 FLOATING COLOR MIXING SCRATCHPAD DOCK ──
     if state.show_scratchpad {
@@ -3355,7 +3205,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
                     ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 0.17.0 · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("Version 1.0.2-alpha · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
                 });
 
                 ui.add_space(8.0);
@@ -3363,7 +3213,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.add_space(6.0);
 
                 ui.label(RichText::new("Features & Guarantees:").size(10.0).strong().color(Color32::from_rgb(205, 215, 240)));
-                ui.label(RichText::new("• ⛶ Free Transform & Mesh Warp: Affine, Perspective Quad, Bicubic Mesh Grid & Thin Plate Splines (TPS)\n• 📐 Visual Perspective Rulers: 1, 2, and 3-Point Vanishing Guides with Dynamic Stroke Constraint Snapping\n• ✨ Real-Time Non-Destructive Adjustment Layers (Brightness/Contrast, HSL, Color Balance, Invert, Posterize, Threshold, Sepia)\n• 🎨 Floating Mixing Scratchpad: Off-canvas color mixing, pigment smudging, and eyedropper dock\n• 🎯 Subpixel-Antialiased Stroke Engine with True Tangent Catmull-Rom Curvature\n• ⚡ S-Level Stroke Stabilization (S-0 .. S-7 Lazy Rope & Tremor Filtering)\n• 📁 Collapsible Nested Layer Groups & Clipping Masks\n• 🪄 Magic Wand, Gradients, Shapes, Multi-Axis Symmetry\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Signed VPack 2.0.0 & Zip portable distribution (Ed25519 Chain of Trust)").size(10.0).color(Color32::from_rgb(155, 165, 195)));
+                ui.label(RichText::new("• 🔤 Custom Typography & Text Engine: TrueType (.ttf) & OpenType (.otf) subpixel rasterizer with custom tracking & alignment\n• 🪟 Windows File Explorer Integration: Instant context menu launch for PNG, JPG, GIF, WebP, BMP, HCV\n• ⛶ Free Transform & Mesh Warp: Affine, Perspective Quad, Bicubic Mesh Grid & Thin Plate Splines (TPS)\n• 📐 Visual Perspective Rulers: 1, 2, and 3-Point Vanishing Guides with Dynamic Stroke Constraint Snapping\n• ✨ Real-Time Non-Destructive Adjustment Layers (Brightness/Contrast, HSL, Color Balance, Invert, Posterize, Threshold, Sepia)\n• 🎨 Floating Mixing Scratchpad: Off-canvas color mixing, pigment smudging, and eyedropper dock\n• 🎯 Subpixel-Antialiased Stroke Engine with True Tangent Catmull-Rom Curvature\n• ⚡ S-Level Stroke Stabilization (S-0 .. S-7 Lazy Rope & Tremor Filtering)\n• 📁 Collapsible Nested Layer Groups & Clipping Masks\n• 🪄 Magic Wand, Gradients, Shapes, Multi-Axis Symmetry\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Signed VPack 2.0.1 & Zip portable distribution (Ed25519 Chain of Trust)").size(10.0).color(Color32::from_rgb(155, 165, 195)));
 
                 ui.add_space(8.0);
                 ui.separator();
@@ -3398,6 +3248,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         ("Tab", "Toggle Full Canvas / Zen Mode"),
                         ("B", "Brush Tool"),
                         ("P", "Pencil Tool"),
+                        ("T", "Text Tool (Typography)"),
                         ("W", "Magic Wand Selection"),
                         ("G", "Gradient / Fill Tool"),
                         ("E", "Eraser Tool"),
@@ -3412,17 +3263,16 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         ("Space + Drag", "Pan Canvas Viewport"),
                         ("Mouse Wheel", "Zoom Canvas In / Out"),
                         ("Ctrl + N", "Create New Canvas"),
-                        ("Ctrl + S", "Save Project (.hcv)"),
-                        ("Ctrl + O", "Open Project (.hcv)"),
-                        ("Ctrl + E", "Export PNG Image"),
-                        ("Ctrl + T", "Free Transform & Mesh Warp Layer / Selection"),
-                        ("Ctrl + A", "Select All"),
-                        ("Ctrl + I", "Invert Layer Colors"),
-                        ("Ctrl + Z", "Undo Action"),
-                        ("Ctrl + Y / Ctrl+Shift+Z", "Redo Action"),
-                        ("Ctrl + D", "Deselect"),
+                        ("Ctrl + S", "Save Project File (.hcv)"),
+                        ("Ctrl + O", "Open Project or Image"),
+                        ("Ctrl + E", "Export Flat PNG Image"),
+                        ("Ctrl + T", "Free Transform / Warp"),
+                        ("Ctrl + Z", "Undo History Step"),
+                        ("Ctrl + Y", "Redo History Step"),
+                        ("Ctrl + A", "Select Entire Canvas"),
+                        ("Ctrl + D", "Deselect Active Mask"),
+                        ("Ctrl + Shift + I", "Invert Active Selection Mask"),
                         ("Shift + F5", "Fill Selection with Primary Color"),
-                        ("T", "Toggle On-Canvas Tracing Paper"),
                         ("Ctrl + '", "Toggle Viewport Grid"),
                         ("Ctrl + R", "Toggle Viewport Rulers"),
                     ];
@@ -3438,6 +3288,64 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 if ui.button("Close").clicked() {
                     state.show_help = false;
                 }
+            });
+    }
+
+    // ── 13. WINDOWS EXPLORER CONTEXT MENU MODAL ──
+    if let Some(status_str) = &state.show_shell_status_modal.clone() {
+        egui::Window::new("🪟 Windows Explorer Context Menu Integration")
+            .fixed_size(Vec2::new(450.0, 270.0))
+            .collapsible(false)
+            .resizable(false)
+            .default_pos(ctx.screen_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .show(ctx, |ui| {
+                ui.label(RichText::new("Add 'Open with Hollow Canvas' to File Explorer").size(12.0).strong().color(Color32::from_rgb(235, 242, 255)));
+                ui.add_space(4.0);
+                ui.label(RichText::new("Allows opening any image (.png, .jpg, .jpeg, .gif, .webp, .bmp, .ico, .tga, .tiff) or project (.hcv) directly from Windows Explorer.").size(10.0).color(Color32::from_rgb(160, 175, 205)));
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                let is_reg = crate::shell::is_shell_registered();
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Current Status:").size(10.5).strong().color(Color32::from_rgb(180, 190, 215)));
+                    if is_reg {
+                        ui.label(RichText::new("● Registered in Explorer").size(10.5).strong().color(Color32::from_rgb(80, 220, 140)));
+                    } else {
+                        ui.label(RichText::new("○ Not Registered").size(10.5).color(Color32::from_rgb(220, 140, 80)));
+                    }
+                });
+
+                if status_str != "prompt" {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(status_str).size(9.5).color(accent_c32));
+                }
+
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.add_sized([200.0, 26.0], egui::Button::new(RichText::new("✅ Register Context Menu").strong().color(Color32::from_rgb(15, 20, 35))).fill(accent_c32)).clicked() {
+                        match crate::shell::register_shell_associations() {
+                            Ok(msg) => state.show_shell_status_modal = Some(msg),
+                            Err(err) => state.show_shell_status_modal = Some(format!("Error: {}", err)),
+                        }
+                    }
+
+                    if ui.add_sized([200.0, 26.0], egui::Button::new(RichText::new("❌ Remove / Unregister"))).clicked() {
+                        match crate::shell::unregister_shell_associations() {
+                            Ok(msg) => state.show_shell_status_modal = Some(msg),
+                            Err(err) => state.show_shell_status_modal = Some(format!("Error: {}", err)),
+                        }
+                    }
+                });
+
+                ui.add_space(10.0);
+                ui.vertical_centered(|ui| {
+                    if ui.button("Close").clicked() {
+                        state.show_shell_status_modal = None;
+                    }
+                });
             });
     }
 }

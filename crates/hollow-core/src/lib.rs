@@ -14,7 +14,7 @@ pub mod transform;
 
 pub use animation::{AnimationFrame, AnimationTimeline};
 pub use blend::BlendMode;
-pub use brush::{BrushPoint, BrushPreset, BrushSettings, EraserMode, GradientType, ShapeFillMode, ToolType};
+pub use brush::{BrushPoint, BrushPreset, BrushSettings, EraserMode, GradientType, ShapeFillMode, TextAlign, TextSettings, ToolType};
 pub use color::{Color, ThemeMode, DEFAULT_PALETTE};
 pub use document::Document;
 pub use history::{Command, HistoryStack, LayerPixelsSnapshotCommand};

@@ -1,6 +1,6 @@
 [package]
 name = "hollow-core"
-version = "1.0.0-alpha.1"
+version = "1.0.2-alpha"
 edition = "2021"
 description = "Core graphics domain model, layers, rasterizer, blend modes, and history engine for Hollow Canvas"
 
@@ -10,3 +10,4 @@ image = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+ab_glyph = { workspace = true }

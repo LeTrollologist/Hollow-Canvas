@@ -658,8 +658,8 @@ mod tests {
     #[test]
     fn test_stroke_stabilization_s_levels() {
         let mut brush = crate::brush::BrushSettings::default();
-        assert_eq!(brush.stabilization_level, 2);
-        assert_eq!(brush.stabilization_label(), "S-2 (Studio Default)");
+        assert_eq!(brush.stabilization_level, 0);
+        assert_eq!(brush.stabilization_label(), "S-0 (Off / Raw)");
 
         // Test all S-levels 0..=7
         let mut prev_weight = -1.0;
@@ -845,5 +845,34 @@ mod tests {
 
         // 4. Verify original layer pixels were NOT modified (Non-Destructive!)
         assert_eq!(doc.layers[0].get_pixel(5, 5).unwrap(), [128, 128, 128, 255]);
+    }
+
+    #[test]
+    fn test_text_rasterization_and_measurement() {
+        let mut doc = Document::new(200, 100);
+        let font = StrokeRasterizer::load_font(None, None);
+        if let Some(font) = font {
+            let (w, h) = StrokeRasterizer::measure_text("Test", &font, 24.0, 1.2, 0.0);
+            assert!(w > 0.0);
+            assert!(h > 0.0);
+
+            let bounds = StrokeRasterizer::rasterize_text(
+                &mut doc,
+                Vec2::new(10.0, 10.0),
+                "H",
+                Some(&font),
+                32.0,
+                Color::WHITE,
+                1.0,
+                1.2,
+                0.0,
+                crate::brush::TextAlign::Left,
+                None,
+            );
+            assert!(bounds.is_some());
+            let (min_x, min_y, max_x, max_y) = bounds.unwrap();
+            assert!(max_x >= min_x);
+            assert!(max_y >= min_y);
+        }
     }
 }

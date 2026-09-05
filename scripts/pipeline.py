@@ -416,33 +416,29 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
         else "🟢 Verified Clean / Independent Permalinks Available"
     )
 
-    release_body = f"""## 🌟 Hollow Canvas {version} · The "Universal" Update
+    release_body = f"""## 🌟 Hollow Canvas {version} · Studio Release
  
 A modern, high-performance, local-first digital illustration, concept art, and graphics studio built with 100% pure native Rust.
 
 ### ✨ What's New in {version}
 
-* **🌍 Universal Cross-Platform Architecture (Linux / Windows / macOS Agnostic)**:
-  - **Native Engine Shift**: Replaced OS-specific Win32 GDI C-FFI message loops with pure Rust `eframe` 0.28 (winit, glow, x11, wayland) and `rfd` 0.14 native file dialogs.
-  - **Zero C++ Dependencies**: 100% memory-safe Rust with instant compilation across all major operating systems.
-  - **High-DPI & Multi-Monitor Support**: Subpixel precision rendering and automatic display scaling.
+* **🔤 Custom Typography & Text Engine**:
+  - **Full Custom Font Support**: Load any system font or browse for external TrueType (`.ttf`) and OpenType (`.otf`) font files directly via file picker.
+  - **Rich Typographic Controls**: Real-time Font Size, Line Spacing, Letter Spacing (tracking), and Multi-line Text Alignment (Left, Center, Right).
+  - **Live Canvas Placement & Antialiasing**: Interactive on-canvas placement target with subpixel antialiased rasterization and layer undo snapshots.
 
-* **🎨 Live Interactive Viewport with Real-Time Direct Drawing**:
-  - **Integrated Drawing Surface**: Canvas drawing and tool interactions run seamlessly within `egui::CentralPanel` with zero-latency texture streaming (`recomposite_canvas`).
-  - **Smooth S-Level Stroke Smoothing**: Multi-sample windowed stabilizer (S-0 to S-7) for silky-smooth inking and line art.
-  - **Dynamic Viewport Rulers & Overlays**: Real-time pixel rulers with tracking cursor ticks, configurable canvas grid, and symmetry guide axes.
-  - **Perspective Snapping System**: Multi-point vanishing point rays and constraint engine (<kbd>Ctrl+Shift+P</kbd>).
-  - **On-Canvas Transform & Mesh Deformation Gizmos**: Interactive bounding boxes, rotation stems, quad perspective pins, bicubic mesh grids, and TPS landmark control vectors.
+* **🪟 Windows File Explorer Context Menu Integration & Drag-and-Drop**:
+  - **Shell Integration**: Register "Open with Hollow Canvas" in Windows Explorer context menu for all supported image formats (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.ico`, `.tga`, `.tiff`, `.hcv`).
+  - **One-Click Setup**: Register and unregister seamlessly via UI menu (*File -> Windows Context Menu Integration...*) or CLI flags (`--register-shell`, `--unregister-shell`).
+  - **Native Drag-and-Drop (`WM_DROPFILES`)**: Drag and drop any image or `.hcv` project file directly into the application window to open instantly.
 
-* **💎 Obsidian Glass Studio UI Overhaul**:
-  - **Polished Professional Studio Theme**: Deep Obsidian Glass styling with custom color accents, vector tool rack, floating docks, and status monitors.
-  - **Dockable Studio Panels**: Reorganized Layers/Groups, Color Wheel, Brush Dynamics, Navigator Viewport, History Timeline, and Scratchpad.
+* **📐 UI Layout & Dock Run-off Polish**:
+  - **Zero Horizontal Run-off**: Reorganized top menu bar with compact responsive action badges and tooltips.
+  - **Dock Padding & Sizing Hygiene**: Re-architected active layer controls, blend mode dropdowns, preset shelves, and canvas action buttons to strictly prevent panel overflow.
 
-* **⚡ Ultra-Low Latency & High-Speed Sketching Engine**:
-  - Instantaneous mouse-up response with zero-allocation dirty-region tracking and zero-copy history snapshotting.
-
-* **🔐 VPack 2.0.0 Integrated Ed25519 Digital Signing & Cryptographic Trust**:
-  - Official publisher key verification (`3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f`) and CRC-32 integrity validation via `vpack test`.
+* **📦 VPack 2.0.1 Upgraded Cryptographic Trust & Verification**:
+  - **Ed25519 Publisher Signature**: Verified with official publisher public key (`3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f`).
+  - **High-Ratio Deflate Compression & CRC-32 Validation**: Validated via `vpack test`.
 
 ### 🛡️ Security & VirusTotal Verification
 | Security Check | Result | Verification Link |

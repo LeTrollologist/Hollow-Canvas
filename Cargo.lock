@@ -792,7 +792,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hollow-app"
-version = "1.0.0-alpha.1"
+version = "1.0.2-alpha"
 dependencies = [
  "egui",
  "env_logger",
@@ -807,8 +807,9 @@ dependencies = [
 
 [[package]]
 name = "hollow-core"
-version = "1.0.0-alpha.1"
+version = "1.0.2-alpha"
 dependencies = [
+ "ab_glyph",
  "glam",
  "image",
  "rayon",
@@ -818,7 +819,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-io"
-version = "1.0.0-alpha.1"
+version = "1.0.2-alpha"
 dependencies = [
  "flate2",
  "hollow-core",
@@ -828,7 +829,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-render"
-version = "1.0.0-alpha.1"
+version = "1.0.2-alpha"
 dependencies = [
  "egui",
  "glam",
@@ -840,8 +841,9 @@ dependencies = [
 
 [[package]]
 name = "hollow-ui"
-version = "1.0.0-alpha.1"
+version = "1.0.2-alpha"
 dependencies = [
+ "ab_glyph",
  "egui",
  "glam",
  "hollow-core",

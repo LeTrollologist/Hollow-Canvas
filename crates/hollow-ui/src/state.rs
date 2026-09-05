@@ -306,6 +306,13 @@ pub struct AppState {
     pub scratchpad_bg_mode: u8, // 0: Dark Studio, 1: Pure White, 2: Transparent
     pub scratchpad_last_pos: Option<Vec2>,
 
+    // ── Text Tool & Custom Fonts ──
+    pub text: hollow_core::brush::TextSettings,
+    pub text_font: Option<ab_glyph::FontArc>,
+    pub text_placement_pos: Option<Vec2>,
+    pub text_live_preview: bool,
+    pub show_shell_status_modal: Option<String>,
+
     // ── Canvas Viewport & Composited Texture ──
     pub canvas_texture: Option<egui::TextureHandle>,
     pub canvas_composite_buffer: Vec<u8>,
@@ -469,11 +476,76 @@ impl AppState {
             scratchpad_bg_mode: 0,
             scratchpad_last_pos: None,
 
+            text: hollow_core::brush::TextSettings::default(),
+            text_font: hollow_core::rasterizer::StrokeRasterizer::load_font(None, None),
+            text_placement_pos: Some(Vec2::new(50.0, 50.0)),
+            text_live_preview: true,
+            show_shell_status_modal: None,
+
             canvas_texture: None,
             canvas_composite_buffer: vec![0u8; (width * height * 4) as usize],
             canvas_dirty: true,
             viewport_rect: egui::Rect::ZERO,
         }
+    }
+
+    pub fn load_custom_font(&mut self, path: &str) -> bool {
+        if let Some(font) = hollow_core::rasterizer::StrokeRasterizer::load_font(None, Some(path)) {
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string());
+            self.text.font_name = filename;
+            self.text.font_path = Some(path.to_string());
+            self.text_font = Some(font);
+            self.set_status(format!("Loaded custom font: {}", self.text.font_name));
+            true
+        } else {
+            self.set_status("Failed to load font: invalid TTF/OTF file");
+            false
+        }
+    }
+
+    pub fn place_text_on_canvas(&mut self) -> bool {
+        let pos = self.text_placement_pos.unwrap_or_else(|| {
+            Vec2::new(
+                (self.document.width as f32 * 0.1).max(20.0),
+                (self.document.height as f32 * 0.1).max(20.0),
+            )
+        });
+
+        if let Some(layer) = self.document.active_layer() {
+            let before = layer.pixels.clone();
+            let bounds = hollow_core::rasterizer::StrokeRasterizer::rasterize_text(
+                &mut self.document,
+                pos,
+                &self.text.content,
+                self.text_font.as_ref(),
+                self.text.font_size,
+                self.brush.primary_color,
+                self.brush.opacity,
+                self.text.line_spacing,
+                self.text.letter_spacing,
+                self.text.align,
+                self.selection.as_ref(),
+            );
+
+            if bounds.is_some() {
+                if let Some(after_layer) = self.document.active_layer() {
+                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                        layer_id: after_layer.id,
+                        description: "Add Text",
+                        before_pixels: before,
+                        after_pixels: after_layer.pixels.clone(),
+                    });
+                    self.history.push(cmd);
+                    self.mark_canvas_dirty();
+                    self.set_status("Placed text on active layer");
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Recomposites the document layers into the egui GPU canvas texture

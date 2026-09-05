@@ -173,6 +173,60 @@ impl GradientType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl TextAlign {
+    pub const ALL: &'static [Self] = &[Self::Left, Self::Center, Self::Right];
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Left => "Left",
+            Self::Center => "Center",
+            Self::Right => "Right",
+        }
+    }
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Self::Left => "⇤",
+            Self::Center => "⇥⇤",
+            Self::Right => "⇥",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextSettings {
+    pub content: String,
+    pub font_name: String,
+    pub font_path: Option<String>,
+    #[serde(skip)]
+    pub font_bytes: Option<Vec<u8>>,
+    pub font_size: f32,
+    pub line_spacing: f32,
+    pub letter_spacing: f32,
+    pub align: TextAlign,
+}
+
+impl Default for TextSettings {
+    fn default() -> Self {
+        Self {
+            content: "Hollow Canvas".to_string(),
+            font_name: "Default Sans (Segoe UI / Arial)".to_string(),
+            font_path: None,
+            font_bytes: None,
+            font_size: 36.0,
+            line_spacing: 1.2,
+            letter_spacing: 0.0,
+            align: TextAlign::Left,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BrushPoint {
     pub position: Vec2,
@@ -251,7 +305,7 @@ impl Default for BrushSettings {
             calligraphy_weight: 0.0,
             wet_edge_strength: 0.0,
             wet_edge_fringe_width: 0.2,
-            stabilization_level: 2,
+            stabilization_level: 0,
         }
     }
 }

@@ -182,6 +182,8 @@ impl SoftwareRenderer {
         doc.composite_layers_into(&mut self.composite_buffer, false);
         let flat_pixels = &self.composite_buffer;
         let inv_zoom = 1.0 / zoom;
+        let is_exact_1to1 = (zoom - 1.0).abs() < 0.001 && center_x.fract().abs() < 0.01 && center_y.fract().abs() < 0.01;
+        let use_bilinear = !is_exact_1to1 && zoom < 2.5;
 
         for screen_y in min_y..max_y {
             let doc_yf = (screen_y as f32 - center_y) * inv_zoom + doc_h * 0.5;
@@ -203,14 +205,16 @@ impl SoftwareRenderer {
                 }
 
                 let src_idx = src_row_offset + (doc_xi as usize) * 4;
-                if src_idx + 3 >= flat_pixels.len() {
-                    continue;
-                }
 
-                let lr = flat_pixels[src_idx];
-                let lg = flat_pixels[src_idx + 1];
-                let lb = flat_pixels[src_idx + 2];
-                let la = flat_pixels[src_idx + 3];
+                let (lr, lg, lb, la) = if use_bilinear {
+                    let px = hollow_core::rasterizer::sample_bilinear_rgba(flat_pixels, doc.width, doc.height, doc_xf - 0.5, doc_yf - 0.5);
+                    (px[0], px[1], px[2], px[3])
+                } else {
+                    if src_idx + 3 >= flat_pixels.len() {
+                        continue;
+                    }
+                    (flat_pixels[src_idx], flat_pixels[src_idx + 1], flat_pixels[src_idx + 2], flat_pixels[src_idx + 3])
+                };
 
                 let pixel_idx = row_offset + screen_x;
                 if pixel_idx >= buffer.len() {

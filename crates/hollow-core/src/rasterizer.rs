@@ -1,9 +1,10 @@
 use crate::blend::BlendMode;
-use crate::brush::{BrushPoint, BrushSettings, EraserMode, GradientType, ShapeFillMode, ToolType};
+use crate::brush::{BrushPoint, BrushSettings, EraserMode, GradientType, ShapeFillMode, TextAlign, ToolType};
 use crate::color::Color;
 use crate::document::Document;
 use crate::selection::SelectionMask;
 use crate::symmetry::SymmetryConfig;
+use ab_glyph::{point, Font, FontArc, PxScale, ScaleFont};
 use glam::Vec2;
 
 #[inline]
@@ -619,52 +620,55 @@ impl StrokeRasterizer {
 
         let active_mask = selection.filter(|s| s.has_selection());
         let mode = brush.shape_fill_mode;
-        let stroke_w = (brush.size * 0.5).max(1.0);
+        let stroke_w = brush.size.max(1.0);
+        let half_w = stroke_w * 0.5;
         let sym_centers = symmetry.transform_points(center, doc_w as f32, doc_h as f32);
 
+        let rx_sq = rx * rx;
+        let ry_sq = ry * ry;
+
         for sc in sym_centers {
-            let min_x = ((sc.x - rx - stroke_w).floor().max(0.0) as u32).min(doc_w);
-            let max_x = ((sc.x + rx + stroke_w).ceil().max(0.0) as u32).min(doc_w);
-            let min_y = ((sc.y - ry - stroke_w).floor().max(0.0) as u32).min(doc_h);
-            let max_y = ((sc.y + ry + stroke_w).ceil().max(0.0) as u32).min(doc_h);
+            let pad = stroke_w + 2.0;
+            let min_x = ((sc.x - rx - pad).floor().max(0.0) as u32).min(doc_w);
+            let max_x = ((sc.x + rx + pad).ceil().max(0.0) as u32).min(doc_w);
+            let min_y = ((sc.y - ry - pad).floor().max(0.0) as u32).min(doc_h);
+            let max_y = ((sc.y + ry + pad).ceil().max(0.0) as u32).min(doc_h);
 
             for y in min_y..max_y {
-                let dy = (y as f32 + 0.5 - sc.y) / ry;
-                let dy_sq = dy * dy;
+                let py = (y as f32 + 0.5) - sc.y;
+                let py_term = (py * py) / ry_sq;
+                let gy = 2.0 * py / ry_sq;
 
                 for x in min_x..max_x {
-                    let dx = (x as f32 + 0.5 - sc.x) / rx;
-                    let norm_dist = (dx * dx + dy_sq).sqrt();
+                    let px = (x as f32 + 0.5) - sc.x;
+                    let px_term = (px * px) / rx_sq;
+                    let gx = 2.0 * px / rx_sq;
+
+                    let d_norm = px_term + py_term;
+                    let grad_len = (gx * gx + gy * gy).sqrt().max(1e-6);
+                    let dist_to_boundary = (d_norm - 1.0) / grad_len;
 
                     let (should_paint, color, alpha) = match mode {
                         ShapeFillMode::Fill => {
-                            if norm_dist <= 1.0 {
-                                let aa = ((1.0 - norm_dist) * rx.min(ry)).clamp(0.0, 1.0);
-                                (true, brush.secondary_color, aa * brush.opacity)
-                            } else {
-                                (false, brush.secondary_color, 0.0)
-                            }
+                            let aa = (0.5 - dist_to_boundary).clamp(0.0, 1.0);
+                            (aa > 0.001, brush.secondary_color, aa * brush.opacity)
                         }
                         ShapeFillMode::Stroke => {
-                            let dist_pixels = (norm_dist - 1.0).abs() * rx.min(ry);
-                            if dist_pixels <= stroke_w * 0.5 {
-                                let aa = (1.0 - (dist_pixels / (stroke_w * 0.5))).clamp(0.0, 1.0);
-                                (true, brush.primary_color, aa * brush.opacity)
-                            } else {
-                                (false, brush.primary_color, 0.0)
-                            }
+                            let d_stroke = dist_to_boundary.abs() - half_w;
+                            let aa = (0.5 - d_stroke).clamp(0.0, 1.0);
+                            (aa > 0.001, brush.primary_color, aa * brush.opacity)
                         }
                         ShapeFillMode::Both => {
-                            if norm_dist <= 1.0 {
-                                (true, brush.secondary_color, brush.opacity)
+                            let fill_aa = (0.5 - dist_to_boundary).clamp(0.0, 1.0);
+                            let d_stroke = dist_to_boundary.abs() - half_w;
+                            let stroke_aa = (0.5 - d_stroke).clamp(0.0, 1.0);
+
+                            if stroke_aa > 0.001 {
+                                (true, brush.primary_color, stroke_aa * brush.opacity)
+                            } else if fill_aa > 0.001 {
+                                (true, brush.secondary_color, fill_aa * brush.opacity)
                             } else {
-                                let dist_pixels = (norm_dist - 1.0).abs() * rx.min(ry);
-                                if dist_pixels <= stroke_w * 0.5 {
-                                    let aa = (1.0 - (dist_pixels / (stroke_w * 0.5))).clamp(0.0, 1.0);
-                                    (true, brush.primary_color, aa * brush.opacity)
-                                } else {
-                                    (false, brush.primary_color, 0.0)
-                                }
+                                (false, brush.primary_color, 0.0)
                             }
                         }
                     };
@@ -976,6 +980,220 @@ impl StrokeRasterizer {
                     queue.push((x, y + 1));
                 }
             }
+        }
+    }
+
+    /// Attempt to load a font from optional custom font bytes, file path, or common system font paths.
+    pub fn load_font(custom_bytes: Option<&[u8]>, custom_path: Option<&str>) -> Option<FontArc> {
+        if let Some(bytes) = custom_bytes {
+            if let Ok(font) = FontArc::try_from_vec(bytes.to_vec()) {
+                return Some(font);
+            }
+        }
+        if let Some(path_str) = custom_path {
+            if let Ok(data) = std::fs::read(path_str) {
+                if let Ok(font) = FontArc::try_from_vec(data) {
+                    return Some(font);
+                }
+            }
+        }
+
+        // Standard OS font search paths
+        let system_paths = [
+            // Windows
+            r"C:\Windows\Fonts\segoeui.ttf",
+            r"C:\Windows\Fonts\arial.ttf",
+            r"C:\Windows\Fonts\calibri.ttf",
+            r"C:\Windows\Fonts\consola.ttf",
+            r"C:\Windows\Fonts\tahoma.ttf",
+            // Linux
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+            // macOS
+            "/System/Library/Fonts/SFNS.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/Library/Fonts/Arial.ttf",
+        ];
+
+        for path in &system_paths {
+            if let Ok(data) = std::fs::read(path) {
+                if let Ok(font) = FontArc::try_from_vec(data) {
+                    return Some(font);
+                }
+            }
+        }
+        None
+    }
+
+    /// Measure text bounding box (width, height) without rendering.
+    pub fn measure_text(
+        text: &str,
+        font: &FontArc,
+        font_size: f32,
+        line_spacing_mult: f32,
+        letter_spacing: f32,
+    ) -> (f32, f32) {
+        let scale = PxScale::from(font_size.max(4.0));
+        let scaled_font = font.as_scaled(scale);
+        let line_height = (scaled_font.ascent() - scaled_font.descent() + scaled_font.line_gap()) * line_spacing_mult.max(0.5);
+
+        let lines: Vec<&str> = text.split('\n').collect();
+        let mut max_width: f32 = 0.0;
+
+        for line in &lines {
+            let mut line_w: f32 = 0.0;
+            for c in line.chars() {
+                let glyph = scaled_font.scaled_glyph(c);
+                line_w += scaled_font.h_advance(glyph.id) + letter_spacing;
+            }
+            if line_w > max_width {
+                max_width = line_w;
+            }
+        }
+        let total_h = (lines.len() as f32 * line_height).max(font_size);
+        (max_width, total_h)
+    }
+
+    /// Rasterize formatted text directly onto the active layer.
+    /// Returns bounding box (min_x, min_y, max_x, max_y) in canvas coordinates if anything was rendered.
+    pub fn rasterize_text(
+        doc: &mut Document,
+        pos: Vec2,
+        text: &str,
+        font: Option<&FontArc>,
+        font_size: f32,
+        color: Color,
+        opacity: f32,
+        line_spacing_mult: f32,
+        letter_spacing: f32,
+        align: TextAlign,
+        selection: Option<&SelectionMask>,
+    ) -> Option<(f32, f32, f32, f32)> {
+        if text.is_empty() {
+            return None;
+        }
+
+        let (doc_w, doc_h, active_id) = (doc.width, doc.height, doc.active_layer_id);
+        let layer = match doc.get_layer_mut(active_id) {
+            Some(l) if !l.locked => l,
+            _ => return None,
+        };
+
+        let loaded_font_storage;
+        let font_ref = match font {
+            Some(f) => f,
+            None => {
+                loaded_font_storage = Self::load_font(None, None);
+                match &loaded_font_storage {
+                    Some(f) => f,
+                    None => return None,
+                }
+            }
+        };
+
+        let scale = PxScale::from(font_size.max(4.0));
+        let scaled_font = font_ref.as_scaled(scale);
+        let ascent = scaled_font.ascent();
+        let descent = scaled_font.descent();
+        let line_gap = scaled_font.line_gap();
+        let line_height = (ascent - descent + line_gap) * line_spacing_mult.max(0.5);
+
+        let lines: Vec<&str> = text.split('\n').collect();
+        let active_mask = selection.filter(|s| s.has_selection());
+        let src_col = color.to_rgba8();
+        let alpha_locked = layer.alpha_locked;
+        let blend_mode = layer.blend_mode;
+
+        let mut overall_min_x = f32::MAX;
+        let mut overall_min_y = f32::MAX;
+        let mut overall_max_x = f32::MIN;
+        let mut overall_max_y = f32::MIN;
+        let mut drawn_any = false;
+
+        for (line_idx, line) in lines.iter().enumerate() {
+            let mut line_w: f32 = 0.0;
+            for c in line.chars() {
+                let glyph = scaled_font.scaled_glyph(c);
+                line_w += scaled_font.h_advance(glyph.id) + letter_spacing;
+            }
+
+            let start_x = match align {
+                TextAlign::Left => pos.x,
+                TextAlign::Center => pos.x - line_w * 0.5,
+                TextAlign::Right => pos.x - line_w,
+            };
+
+            let baseline_y = pos.y + ascent + (line_idx as f32 * line_height);
+            let mut current_x = start_x;
+
+            for c in line.chars() {
+                let mut glyph = scaled_font.scaled_glyph(c);
+                glyph.position = point(current_x, baseline_y);
+                let glyph_id = glyph.id;
+
+                if let Some(outlined) = font_ref.outline_glyph(glyph) {
+                    let bounds = outlined.px_bounds();
+                    outlined.draw(|gx, gy, coverage| {
+                        if coverage <= 0.005 {
+                            return;
+                        }
+                        let cx = bounds.min.x as i32 + gx as i32;
+                        let cy = bounds.min.y as i32 + gy as i32;
+
+                        if cx >= 0 && cx < doc_w as i32 && cy >= 0 && cy < doc_h as i32 {
+                            let ux = cx as u32;
+                            let uy = cy as u32;
+
+                            let mut mask_factor = 1.0_f32;
+                            if let Some(mask) = active_mask {
+                                let mv = mask.get_value(ux, uy);
+                                if mv < 8 {
+                                    return;
+                                }
+                                mask_factor = mv as f32 / 255.0;
+                            }
+
+                            let idx = ((uy * doc_w + ux) * 4) as usize;
+                            let dst = [
+                                layer.pixels[idx],
+                                layer.pixels[idx + 1],
+                                layer.pixels[idx + 2],
+                                layer.pixels[idx + 3],
+                            ];
+
+                            if alpha_locked && dst[3] == 0 {
+                                return;
+                            }
+
+                            let effective_alpha = coverage * opacity * color.a * mask_factor;
+                            if effective_alpha <= 0.001 {
+                                return;
+                            }
+
+                            let mut blended = blend_mode.composite_pixel(dst, src_col, effective_alpha);
+                            if alpha_locked {
+                                blended[3] = dst[3];
+                            }
+                            layer.pixels[idx..idx + 4].copy_from_slice(&blended);
+
+                            drawn_any = true;
+                            if (cx as f32) < overall_min_x { overall_min_x = cx as f32; }
+                            if (cx as f32) > overall_max_x { overall_max_x = cx as f32; }
+                            if (cy as f32) < overall_min_y { overall_min_y = cy as f32; }
+                            if (cy as f32) > overall_max_y { overall_max_y = cy as f32; }
+                        }
+                    });
+                }
+                current_x += scaled_font.h_advance(glyph_id) + letter_spacing;
+            }
+        }
+
+        if drawn_any {
+            Some((overall_min_x, overall_min_y, overall_max_x, overall_max_y))
+        } else {
+            None
         }
     }
 }

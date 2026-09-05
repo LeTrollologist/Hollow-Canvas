@@ -545,6 +545,42 @@ impl Document {
                 continue;
             }
 
+            // ── Fast path for Normal blend mode with 0 offset and no clipping ──
+            if layer.blend_mode == BlendMode::Normal && layer.offset_x == 0 && layer.offset_y == 0 && prev_layer.is_none() && layer.pixels.len() >= total_bytes {
+                let alpha_mul = (eff_opacity.clamp(0.0, 1.0) * 255.0).round() as u32;
+                for (dst, src) in out[..total_bytes].chunks_exact_mut(4).zip(layer.pixels[..total_bytes].chunks_exact(4)) {
+                    let sa = (src[3] as u32 * alpha_mul) / 255;
+                    if sa == 0 {
+                        continue;
+                    }
+                    let da = dst[3] as u32;
+                    if da == 0 {
+                        dst[0] = src[0];
+                        dst[1] = src[1];
+                        dst[2] = src[2];
+                        dst[3] = sa as u8;
+                    } else if sa == 255 {
+                        dst[0] = src[0];
+                        dst[1] = src[1];
+                        dst[2] = src[2];
+                        dst[3] = 255;
+                    } else {
+                        let inv_sa = 255 - sa;
+                        let out_a = sa + (da * inv_sa + 127) / 255;
+                        if out_a > 0 {
+                            let r = (src[0] as u32 * sa * 255 + dst[0] as u32 * da * inv_sa) / (out_a * 255);
+                            let g = (src[1] as u32 * sa * 255 + dst[1] as u32 * da * inv_sa) / (out_a * 255);
+                            let b = (src[2] as u32 * sa * 255 + dst[2] as u32 * da * inv_sa) / (out_a * 255);
+                            dst[0] = r.min(255) as u8;
+                            dst[1] = g.min(255) as u8;
+                            dst[2] = b.min(255) as u8;
+                            dst[3] = out_a.min(255) as u8;
+                        }
+                    }
+                }
+                continue;
+            }
+
             for y in 0..self.height {
                 for x in 0..self.width {
                     let dst_idx = ((y * self.width + x) * 4) as usize;
