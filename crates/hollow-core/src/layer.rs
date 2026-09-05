@@ -9,6 +9,41 @@ pub enum LayerKind {
     Raster,
     Group,
     Adjustment,
+    Text,
+}
+
+/// Configuration for a non-destructive, editable Text Layer (similar to GIMP's text layer)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextLayerConfig {
+    pub content: String,
+    pub font_family: String,
+    pub font_size: f32,
+    pub color: [u8; 4],
+    pub align: crate::brush::TextAlign,
+    pub line_spacing: f32,
+    pub letter_spacing: f32,
+    pub box_w: f32, // 0.0 for auto-fit / unbounded, or >0.0 for bounded paragraph box
+    pub box_h: f32,
+    pub pos_x: f32, // Position on canvas (origin)
+    pub pos_y: f32,
+}
+
+impl Default for TextLayerConfig {
+    fn default() -> Self {
+        Self {
+            content: "Text Layer".to_string(),
+            font_family: "System Default".to_string(),
+            font_size: 32.0,
+            color: [255, 255, 255, 255],
+            align: crate::brush::TextAlign::Left,
+            line_spacing: 1.15,
+            letter_spacing: 0.0,
+            box_w: 0.0,
+            box_h: 0.0,
+            pos_x: 40.0,
+            pos_y: 40.0,
+        }
+    }
 }
 
 /// Dynamic non-destructive adjustment algorithm configuration
@@ -139,6 +174,8 @@ pub struct Layer {
     #[serde(default)]
     pub adjustment: Option<AdjustmentConfig>,
     #[serde(default)]
+    pub text: Option<TextLayerConfig>,
+    #[serde(default)]
     pub parent_id: Option<LayerId>,
     #[serde(default = "default_expanded")]
     pub is_expanded: bool,
@@ -174,6 +211,7 @@ impl Layer {
             name: name.into(),
             kind: LayerKind::Raster,
             adjustment: None,
+            text: None,
             parent_id: None,
             is_expanded: true,
             pass_through: false,
@@ -198,6 +236,7 @@ impl Layer {
             name: name.into(),
             kind: LayerKind::Group,
             adjustment: None,
+            text: None,
             parent_id: None,
             is_expanded: true,
             pass_through: true,
@@ -222,6 +261,7 @@ impl Layer {
             name: name.into(),
             kind: LayerKind::Adjustment,
             adjustment: Some(AdjustmentConfig { adjustment_type: adj_type }),
+            text: None,
             parent_id: None,
             is_expanded: true,
             pass_through: false,
@@ -240,6 +280,32 @@ impl Layer {
         }
     }
 
+    pub fn new_text(id: LayerId, name: impl Into<String>, width: u32, height: u32, text_config: TextLayerConfig) -> Self {
+        let size = (width as usize) * (height as usize) * 4;
+        Self {
+            id,
+            name: name.into(),
+            kind: LayerKind::Text,
+            adjustment: None,
+            text: Some(text_config),
+            parent_id: None,
+            is_expanded: true,
+            pass_through: false,
+            width,
+            height,
+            visible: true,
+            locked: false,
+            alpha_locked: false,
+            clipping_mask: false,
+            is_reference: false,
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            offset_x: 0,
+            offset_y: 0,
+            pixels: vec![0; size],
+        }
+    }
+
     #[inline]
     pub fn is_group(&self) -> bool {
         self.kind == LayerKind::Group
@@ -255,6 +321,19 @@ impl Layer {
         self.kind == LayerKind::Raster
     }
 
+    #[inline]
+    pub fn is_text(&self) -> bool {
+        self.kind == LayerKind::Text
+    }
+
+    /// Converts a Text layer into a standard Raster pixel layer, discarding editable text metadata
+    pub fn rasterize_text(&mut self) {
+        if self.is_text() {
+            self.kind = LayerKind::Raster;
+            self.text = None;
+        }
+    }
+
     pub fn from_pixels(
         id: LayerId,
         name: impl Into<String>,
@@ -267,6 +346,7 @@ impl Layer {
             name: name.into(),
             kind: LayerKind::Raster,
             adjustment: None,
+            text: None,
             parent_id: None,
             is_expanded: true,
             pass_through: false,
@@ -287,7 +367,7 @@ impl Layer {
 
     #[inline]
     pub fn pixel_index(&self, x: u32, y: u32) -> Option<usize> {
-        if self.is_raster() && x < self.width && y < self.height {
+        if (self.is_raster() || self.is_text()) && x < self.width && y < self.height {
             let idx = ((y as usize) * (self.width as usize) + (x as usize)) * 4;
             if idx + 3 < self.pixels.len() {
                 Some(idx)
@@ -351,6 +431,7 @@ impl Layer {
             name: format!("{} Copy", self.name),
             kind: self.kind,
             adjustment: self.adjustment.clone(),
+            text: self.text.clone(),
             parent_id: self.parent_id,
             is_expanded: self.is_expanded,
             pass_through: self.pass_through,

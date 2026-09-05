@@ -106,4 +106,50 @@ mod tests {
             panic!("Adjustment config missing");
         }
     }
+
+    #[test]
+    fn test_binary_hcv_text_layer_roundtrip() {
+        use hollow_core::layer::TextLayerConfig;
+
+        let mut doc = Document::new(48, 48);
+        let config = TextLayerConfig {
+            content: "Typography Test".to_string(),
+            font_family: "Roboto".to_string(),
+            font_size: 16.0,
+            color: [100, 200, 255, 255],
+            align: hollow_core::brush::TextAlign::Right,
+            line_spacing: 1.25,
+            letter_spacing: 1.5,
+            box_w: 40.0,
+            box_h: 20.0,
+            pos_x: 4.0,
+            pos_y: 6.0,
+        };
+
+        let txt_id = doc.add_text_layer(Some("Title Text".to_string()), config.clone(), None);
+
+        let mut buffer = Cursor::new(Vec::new());
+        save_project_to_writer(&doc, &mut buffer).expect("Failed to save project");
+
+        buffer.set_position(0);
+        let loaded_doc = load_project_from_reader(&mut buffer).expect("Failed to load project");
+
+        assert_eq!(loaded_doc.layers.len(), 2);
+        let loaded_txt = loaded_doc.get_layer(txt_id).expect("Text layer not found");
+        assert!(loaded_txt.is_text());
+        assert_eq!(loaded_txt.name, "Title Text");
+
+        let loaded_cfg = loaded_txt.text.as_ref().expect("Text config missing");
+        assert_eq!(loaded_cfg.content, "Typography Test");
+        assert_eq!(loaded_cfg.font_family, "Roboto");
+        assert_eq!(loaded_cfg.font_size, 16.0);
+        assert_eq!(loaded_cfg.color, [100, 200, 255, 255]);
+        assert_eq!(loaded_cfg.align, hollow_core::brush::TextAlign::Right);
+        assert_eq!(loaded_cfg.line_spacing, 1.25);
+        assert_eq!(loaded_cfg.letter_spacing, 1.5);
+        assert_eq!(loaded_cfg.box_w, 40.0);
+        assert_eq!(loaded_cfg.box_h, 20.0);
+        assert_eq!(loaded_cfg.pos_x, 4.0);
+        assert_eq!(loaded_cfg.pos_y, 6.0);
+    }
 }

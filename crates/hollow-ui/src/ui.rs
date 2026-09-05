@@ -96,7 +96,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v1.0.2-alpha").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("v1.0.3-alpha").size(9.0).color(Color32::from_rgb(115, 130, 165)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -708,8 +708,10 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     match state.brush.tool {
                         ToolType::Text => {
-                            ui.label(RichText::new("TEXT CONTENT:").size(9.0).color(Color32::from_rgb(130, 142, 172)));
-                            ui.add(egui::TextEdit::multiline(&mut state.text.content).desired_width(190.0).desired_rows(3));
+                            ui.label(RichText::new("LIVE TEXT CONTENT:").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                            if ui.add(egui::TextEdit::multiline(&mut state.text.content).desired_width(190.0).desired_rows(3)).changed() {
+                                state.sync_active_text_layer();
+                            }
 
                             ui.add_space(3.0);
                             ui.label(RichText::new("FONT FAMILY:").size(9.0).color(Color32::from_rgb(130, 142, 172)));
@@ -725,27 +727,48 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             }
 
                             ui.add_space(3.0);
-                            ui.add(egui::Slider::new(&mut state.text.font_size, 6.0..=160.0).text("Font Size"));
-                            ui.add(egui::Slider::new(&mut state.text.line_spacing, 0.5..=2.5).text("Line Spacing"));
-                            ui.add(egui::Slider::new(&mut state.text.letter_spacing, -4.0..=24.0).text("Letter Spacing"));
+                            if ui.add(egui::Slider::new(&mut state.text.font_size, 6.0..=160.0).text("Font Size")).changed() {
+                                state.sync_active_text_layer();
+                            }
+                            if ui.add(egui::Slider::new(&mut state.text.line_spacing, 0.5..=2.5).text("Line Spacing")).changed() {
+                                state.sync_active_text_layer();
+                            }
+                            if ui.add(egui::Slider::new(&mut state.text.letter_spacing, -4.0..=24.0).text("Letter Spacing")).changed() {
+                                state.sync_active_text_layer();
+                            }
 
                             ui.horizontal(|ui| {
                                 ui.label("Align:");
                                 for &align in hollow_core::brush::TextAlign::ALL {
                                     if ui.selectable_label(state.text.align == align, format!("{} {}", align.icon(), align.label())).clicked() {
                                         state.text.align = align;
+                                        state.sync_active_text_layer();
                                     }
                                 }
                             });
 
                             ui.add_space(4.0);
-                            let place_btn = egui::Button::new(RichText::new("✍ Place on Canvas").size(10.5).strong().color(Color32::from_rgb(15, 20, 35)))
-                                .fill(accent_c32)
-                                .min_size(Vec2::new(190.0, 24.0));
-                            if ui.add(place_btn).on_hover_text("Stamp text directly into the active layer at the current insertion point").clicked() {
-                                state.place_text_on_canvas();
-                            }
-                            ui.label(RichText::new("💡 Click canvas to set position.").size(8.5).color(Color32::from_rgb(120, 135, 165)));
+                            ui.horizontal(|ui| {
+                                let new_txt_btn = egui::Button::new(RichText::new("➕ New Text Layer").size(10.0).strong().color(Color32::from_rgb(15, 20, 35)))
+                                    .fill(accent_c32)
+                                    .min_size(Vec2::new(92.0, 24.0));
+                                if ui.add(new_txt_btn).on_hover_text("Create a new interactive Text Layer at the current position").clicked() {
+                                    let pos = state.text_placement_pos.unwrap_or(glam::Vec2::new(60.0, 60.0));
+                                    state.create_text_layer_at(pos, None);
+                                }
+
+                                if let Some(active_layer) = state.document.active_layer() {
+                                    if active_layer.is_text() {
+                                        let rast_btn = egui::Button::new(RichText::new("⎘ Rasterize").size(10.0))
+                                            .min_size(Vec2::new(92.0, 24.0));
+                                        if ui.add(rast_btn).on_hover_text("Convert this text layer to a standard bitmap pixel layer").clicked() {
+                                            state.rasterize_active_text_layer();
+                                        }
+                                    }
+                                }
+                            });
+
+                            ui.label(RichText::new("💡 Click & drag canvas to create or resize text box.").size(8.5).color(Color32::from_rgb(120, 135, 165)));
                         }
                         ToolType::Gradient => {
                             ui.horizontal(|ui| {
@@ -1297,6 +1320,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         let is_active = layer_id == active_id;
                         let is_group = state.document.layers[i].is_group();
                         let is_adj = state.document.layers[i].is_adjustment();
+                        let is_text = state.document.layers[i].is_text();
                         let is_ref = state.document.layers[i].is_reference;
                         let is_clip = state.document.layers[i].clipping_mask;
 
@@ -1330,15 +1354,17 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                             egui::Frame::none()
                                 .fill(if is_active {
-                                    if is_group { Color32::from_rgba_unmultiplied(ar, ag, ab, 55) } else if is_adj { Color32::from_rgba_unmultiplied(ar, ag, ab, 48) } else { Color32::from_rgba_unmultiplied(ar, ag, ab, 42) }
+                                    if is_group { Color32::from_rgba_unmultiplied(ar, ag, ab, 55) } else if is_adj { Color32::from_rgba_unmultiplied(ar, ag, ab, 48) } else if is_text { Color32::from_rgba_unmultiplied(ar, ag, ab, 52) } else { Color32::from_rgba_unmultiplied(ar, ag, ab, 42) }
                                 } else if is_group {
                                     Color32::from_rgba_unmultiplied(24, 32, 58, 210)
                                 } else if is_adj {
                                     Color32::from_rgba_unmultiplied(28, 22, 52, 190)
+                                } else if is_text {
+                                    Color32::from_rgba_unmultiplied(20, 36, 56, 185)
                                 } else {
                                     Color32::from_rgba_unmultiplied(18, 25, 46, 180)
                                 })
-                                .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else if is_group { Color32::from_rgb(48, 64, 100) } else if is_adj { Color32::from_rgb(70, 52, 110) } else { Color32::from_rgb(36, 48, 78) }))
+                                .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else if is_group { Color32::from_rgb(48, 64, 100) } else if is_adj { Color32::from_rgb(70, 52, 110) } else if is_text { Color32::from_rgb(32, 70, 95) } else { Color32::from_rgb(36, 48, 78) }))
                                 .rounding(4.0)
                                 .inner_margin(egui::vec2(5.0, 4.0))
                                 .show(ui, |ui| {
@@ -1373,6 +1399,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                                 ui.label(RichText::new(adj.adjustment_type.badge()).size(9.0).strong().color(accent_c32));
                                             }
                                         }
+                                        if is_text {
+                                            ui.label(RichText::new("🔤").size(10.5).color(accent_c32));
+                                        }
 
                                         // Editable Layer/Group Name
                                         let name_edit = egui::TextEdit::singleline(&mut state.document.layers[i].name)
@@ -1380,6 +1409,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                         let response = ui.add(name_edit);
                                         if response.clicked() || response.gained_focus() {
                                             state.document.active_layer_id = layer_id;
+                                            if is_text {
+                                                state.select_text_layer(layer_id);
+                                            }
                                         }
 
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1400,6 +1432,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                                 }
                                                 if ui.button("⎘").on_hover_text("Duplicate Layer").clicked() {
                                                     state.document.duplicate_active_layer();
+                                                }
+                                                if is_text {
+                                                    if ui.button("✏").on_hover_text("Edit Text in Viewport").clicked() {
+                                                        state.brush.tool = ToolType::Text;
+                                                        state.select_text_layer(layer_id);
+                                                    }
                                                 }
                                                 if is_adj {
                                                     if ui.button("⚙").on_hover_text("Configure Adjustment Filter Parameters").clicked() {
@@ -1470,6 +1508,16 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                                         });
                                                 });
                                             }
+                                        } else if is_text {
+                                            ui.horizontal(|ui| {
+                                                if ui.button(RichText::new("✏ Edit Text").strong().color(accent_c32)).clicked() {
+                                                    state.brush.tool = ToolType::Text;
+                                                    state.select_text_layer(layer_id);
+                                                }
+                                                if ui.button("⎘ Rasterize Layer").on_hover_text("Convert editable text into a standard bitmap pixel layer").clicked() {
+                                                    state.rasterize_active_text_layer();
+                                                }
+                                            });
                                         } else if !is_group {
                                             ui.horizontal(|ui| {
                                                 ui.checkbox(&mut state.document.layers[i].alpha_locked, "🔒α Lock");
@@ -2690,6 +2738,189 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 [egui::pos2(p_last.x, p_last.y), egui::pos2(p_first.x, p_first.y)],
                 egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(0, 240, 255, 120)),
             );
+        }
+    }
+
+    // ── 9.5.5 GIMP-STYLE INTERACTIVE ON-CANVAS TEXT BOX & FLOATING HUD TOOLBAR ──
+    let active_text_config = if let Some(active_id) = state.active_text_layer_id {
+        state.document.get_layer(active_id).and_then(|l| l.text.clone())
+    } else if let Some(active_layer) = state.document.active_layer() {
+        if active_layer.is_text() {
+            active_layer.text.clone()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(config) = active_text_config {
+        if state.brush.tool == ToolType::Text || state.active_text_layer_id.is_some() {
+            let win_size = ctx.screen_rect().size();
+            let win_w = win_size.x;
+            let win_h = win_size.y;
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("text_canvas_overlay_layer")));
+
+            // Compute canvas bounds of the text box
+            let font = state.text_font.as_ref();
+            let (measured_w, measured_h) = if let Some(f) = font {
+                let lines = hollow_core::rasterizer::StrokeRasterizer::wrap_text_lines(
+                    &config.content,
+                    f,
+                    config.font_size,
+                    config.letter_spacing,
+                    config.box_w,
+                );
+                hollow_core::rasterizer::StrokeRasterizer::measure_text_lines(
+                    &lines,
+                    f,
+                    config.font_size,
+                    config.line_spacing,
+                    config.letter_spacing,
+                )
+            } else {
+                (120.0, config.font_size)
+            };
+
+            let text_box_w = if config.box_w > 0.0 { config.box_w } else { measured_w.max(60.0) };
+            let text_box_h = if config.box_h > 0.0 { config.box_h } else { measured_h.max(config.font_size) };
+
+            let top_left = glam::Vec2::new(config.pos_x, config.pos_y);
+            let bottom_right = top_left + glam::Vec2::new(text_box_w, text_box_h);
+
+            let s_min = state.canvas_to_screen(top_left, win_w, win_h);
+            let s_max = state.canvas_to_screen(bottom_right, win_w, win_h);
+            let screen_rect = egui::Rect::from_min_max(egui::pos2(s_min.x, s_min.y), egui::pos2(s_max.x, s_max.y));
+
+            // Draw crisp bounding outline with handles
+            painter.rect_stroke(
+                screen_rect,
+                2.0,
+                egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)),
+            );
+
+            // Draw 4 corner handles
+            let handle_size = 7.0_f32;
+            let corners = [
+                screen_rect.min,
+                egui::pos2(screen_rect.max.x, screen_rect.min.y),
+                screen_rect.max,
+                egui::pos2(screen_rect.min.x, screen_rect.max.y),
+            ];
+
+            for &corner in &corners {
+                let handle_rect = egui::Rect::from_center_size(corner, egui::vec2(handle_size, handle_size));
+                painter.rect_filled(handle_rect, 1.5, Color32::from_rgb(255, 255, 255));
+                painter.rect_stroke(handle_rect, 1.5, egui::Stroke::new(1.0_f32, Color32::from_rgb(0, 240, 255)));
+            }
+
+            // Interactive On-Canvas Editable Text Box Frame
+            let on_canvas_w = (screen_rect.width() - 4.0).max(60.0);
+            let on_canvas_h = (screen_rect.height() - 4.0).max(22.0);
+
+            egui::Area::new("on_canvas_text_edit_area".into())
+                .fixed_pos(screen_rect.min + egui::vec2(2.0, 2.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(Color32::from_rgba_unmultiplied(8, 12, 24, 160))
+                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(0, 240, 255, 100)))
+                        .rounding(3.0)
+                        .inner_margin(3.0)
+                        .show(ui, |ui| {
+                            ui.set_min_width(on_canvas_w);
+                            ui.set_min_height(on_canvas_h);
+                            let text_edit = egui::TextEdit::multiline(&mut state.text.content)
+                                .desired_width(on_canvas_w)
+                                .desired_rows(1)
+                                .hint_text("Type text here...");
+                            if ui.add(text_edit).changed() {
+                                state.sync_active_text_layer();
+                            }
+                        });
+                });
+
+            // Floating GIMP-Style On-Canvas Formatting HUD Toolbar
+            if state.show_ui_panels {
+                let hud_w = 520.0_f32;
+                let hud_x = (screen_rect.min.x + (screen_rect.width() - hud_w) * 0.5).clamp(230.0, (win_w - hud_w - 250.0).max(230.0));
+                let hud_y = (screen_rect.min.y - 48.0).clamp(42.0, win_h - 90.0);
+
+                egui::Area::new("text_floating_hud_area".into())
+                    .fixed_pos(egui::pos2(hud_x, hud_y))
+                    .order(egui::Order::Foreground)
+                    .show(ctx, |ui| {
+                        egui::Frame::none()
+                            .fill(Color32::from_rgba_unmultiplied(10, 14, 28, 248))
+                            .stroke(egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)))
+                            .rounding(7.0)
+                            .inner_margin(6.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("🔤 TEXT").size(10.5).strong().color(Color32::from_rgb(0, 240, 255)));
+                                    ui.separator();
+
+                                    // Inline Text Editor
+                                    let mut hud_content = state.text.content.clone();
+                                    if ui.add(egui::TextEdit::singleline(&mut hud_content).hint_text("Edit text...").desired_width(110.0)).changed() {
+                                        state.text.content = hud_content;
+                                        state.sync_active_text_layer();
+                                    }
+
+                                    ui.separator();
+
+                                    // Font size
+                                    let mut fs = state.text.font_size;
+                                    if ui.add(egui::DragValue::new(&mut fs).speed(0.5).range(6.0..=240.0).prefix("Size: ")).changed() {
+                                        state.text.font_size = fs;
+                                        state.sync_active_text_layer();
+                                    }
+
+                                    ui.separator();
+
+                                    // Color swatch
+                                    let rgba = state.brush.primary_color.to_rgba8();
+                                    let mut c32 = Color32::from_rgba_premultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+                                    if ui.color_edit_button_srgba(&mut c32).changed() {
+                                        state.brush.primary_color = Color::from_rgba8(c32.r(), c32.g(), c32.b(), c32.a());
+                                        state.sync_active_text_layer();
+                                    }
+
+                                    ui.separator();
+
+                                    // Alignment
+                                    for &align in hollow_core::brush::TextAlign::ALL {
+                                        if ui.selectable_label(state.text.align == align, align.icon()).on_hover_text(align.label()).clicked() {
+                                            state.text.align = align;
+                                            state.sync_active_text_layer();
+                                        }
+                                    }
+
+                                    ui.separator();
+
+                                    // Custom font button
+                                    if ui.button("📂 Font").on_hover_text(format!("Current: {}\nClick to load custom TTF/OTF", state.text.font_name)).clicked() {
+                                        if let Some(path) = rfd::FileDialog::new()
+                                            .add_filter("Font Files (*.ttf, *.otf)", &["ttf", "otf"])
+                                            .pick_file()
+                                        {
+                                            state.load_custom_font(&path.to_string_lossy());
+                                        }
+                                    }
+
+                                    ui.separator();
+
+                                    if ui.button(RichText::new("⎘ Rasterize").size(10.0)).on_hover_text("Convert into standard bitmap layer").clicked() {
+                                        state.rasterize_active_text_layer();
+                                    }
+
+                                    if ui.button(RichText::new("✓ Done").strong().color(Color32::from_rgb(80, 240, 140))).clicked() {
+                                        state.active_text_layer_id = None;
+                                    }
+                                });
+                            });
+                    });
+            }
         }
     }
 

@@ -14,6 +14,7 @@ use thiserror::Error;
 const HCV_MAGIC_V2: &[u8; 4] = b"HCV\x02";
 const HCV_MAGIC_V3: &[u8; 4] = b"HCV\x03";
 const HCV_MAGIC_V4: &[u8; 4] = b"HCV\x04";
+const HCV_MAGIC_V5: &[u8; 4] = b"HCV\x05";
 
 #[derive(Error, Debug)]
 pub enum ProjectError {
@@ -28,7 +29,7 @@ pub enum ProjectError {
 }
 
 pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result<(), ProjectError> {
-    writer.write_all(HCV_MAGIC_V4)?;
+    writer.write_all(HCV_MAGIC_V5)?;
     writer.write_all(&doc.width.to_le_bytes())?;
     writer.write_all(&doc.height.to_le_bytes())?;
     writer.write_all(&doc.active_layer_id.to_le_bytes())?;
@@ -53,13 +54,41 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
         writer.write_all(&name_len.to_le_bytes())?;
         writer.write_all(name_bytes)?;
 
-        // Kind (0 = Raster, 1 = Group, 2 = Adjustment)
+        // Kind (0 = Raster, 1 = Group, 2 = Adjustment, 3 = Text)
         let kind_byte = match layer.kind {
             hollow_core::layer::LayerKind::Raster => 0u8,
             hollow_core::layer::LayerKind::Group => 1u8,
             hollow_core::layer::LayerKind::Adjustment => 2u8,
+            hollow_core::layer::LayerKind::Text => 3u8,
         };
         writer.write_all(&[kind_byte])?;
+
+        // If text layer, serialize text configuration
+        if let Some(txt) = &layer.text {
+            let content_bytes = txt.content.as_bytes();
+            writer.write_all(&(content_bytes.len() as u32).to_le_bytes())?;
+            writer.write_all(content_bytes)?;
+
+            let font_bytes = txt.font_family.as_bytes();
+            writer.write_all(&(font_bytes.len() as u16).to_le_bytes())?;
+            writer.write_all(font_bytes)?;
+
+            writer.write_all(&txt.font_size.to_le_bytes())?;
+            writer.write_all(&txt.color)?;
+
+            let align_byte = match txt.align {
+                hollow_core::brush::TextAlign::Left => 0u8,
+                hollow_core::brush::TextAlign::Center => 1u8,
+                hollow_core::brush::TextAlign::Right => 2u8,
+            };
+            writer.write_all(&[align_byte])?;
+            writer.write_all(&txt.line_spacing.to_le_bytes())?;
+            writer.write_all(&txt.letter_spacing.to_le_bytes())?;
+            writer.write_all(&txt.box_w.to_le_bytes())?;
+            writer.write_all(&txt.box_h.to_le_bytes())?;
+            writer.write_all(&txt.pos_x.to_le_bytes())?;
+            writer.write_all(&txt.pos_y.to_le_bytes())?;
+        }
 
         // If adjustment, serialize adjustment parameters
         if let Some(adj) = &layer.adjustment {
@@ -173,10 +202,11 @@ pub fn save_project_file(doc: &Document, path: impl AsRef<Path>) -> Result<(), P
 pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, ProjectError> {
     let mut magic = [0u8; 4];
     reader.read_exact(&mut magic)?;
+    let is_v5 = &magic == HCV_MAGIC_V5;
     let is_v4 = &magic == HCV_MAGIC_V4;
     let is_v3 = &magic == HCV_MAGIC_V3;
     let is_v2 = &magic == HCV_MAGIC_V2;
-    if !is_v4 && !is_v3 && !is_v2 {
+    if !is_v5 && !is_v4 && !is_v3 && !is_v2 {
         return Err(ProjectError::InvalidMagic);
     }
 
@@ -228,8 +258,140 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         let name = String::from_utf8(name_vec).unwrap_or_else(|_| format!("Layer {}", id));
 
         let mut adjustment = None;
+        let mut text_config = None;
 
-        let (kind, parent_id, visible, locked, alpha_locked, clipping_mask, is_reference, is_expanded, pass_through) = if is_v4 {
+        let (kind, parent_id, visible, locked, alpha_locked, clipping_mask, is_reference, is_expanded, pass_through) = if is_v5 {
+            reader.read_exact(&mut buf1)?;
+            let kind = match buf1[0] {
+                1 => hollow_core::layer::LayerKind::Group,
+                2 => {
+                    reader.read_exact(&mut buf1)?;
+                    let adj_type = match buf1[0] {
+                        0 => {
+                            reader.read_exact(&mut buf4)?;
+                            let brightness = f32::from_le_bytes(buf4);
+                            reader.read_exact(&mut buf4)?;
+                            let contrast = f32::from_le_bytes(buf4);
+                            hollow_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast }
+                        }
+                        1 => {
+                            reader.read_exact(&mut buf4)?;
+                            let hue_shift = f32::from_le_bytes(buf4);
+                            reader.read_exact(&mut buf4)?;
+                            let saturation = f32::from_le_bytes(buf4);
+                            reader.read_exact(&mut buf4)?;
+                            let lightness = f32::from_le_bytes(buf4);
+                            hollow_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness }
+                        }
+                        2 => {
+                            reader.read_exact(&mut buf4)?;
+                            let cyan_red = f32::from_le_bytes(buf4);
+                            reader.read_exact(&mut buf4)?;
+                            let magenta_green = f32::from_le_bytes(buf4);
+                            reader.read_exact(&mut buf4)?;
+                            let yellow_blue = f32::from_le_bytes(buf4);
+                            hollow_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue }
+                        }
+                        3 => hollow_core::layer::AdjustmentType::Invert,
+                        4 => {
+                            reader.read_exact(&mut buf4)?;
+                            let levels = u32::from_le_bytes(buf4);
+                            hollow_core::layer::AdjustmentType::Posterize { levels }
+                        }
+                        5 => {
+                            reader.read_exact(&mut buf1)?;
+                            let cutoff = buf1[0];
+                            hollow_core::layer::AdjustmentType::Threshold { cutoff }
+                        }
+                        6 => {
+                            reader.read_exact(&mut buf4)?;
+                            let strength = f32::from_le_bytes(buf4);
+                            hollow_core::layer::AdjustmentType::Sepia { strength }
+                        }
+                        _ => hollow_core::layer::AdjustmentType::Invert,
+                    };
+                    adjustment = Some(hollow_core::layer::AdjustmentConfig { adjustment_type: adj_type });
+                    hollow_core::layer::LayerKind::Adjustment
+                }
+                3 => {
+                    reader.read_exact(&mut buf4)?;
+                    let content_len = u32::from_le_bytes(buf4) as usize;
+                    let mut content_vec = vec![0u8; content_len];
+                    reader.read_exact(&mut content_vec)?;
+                    let content = String::from_utf8(content_vec).unwrap_or_default();
+
+                    reader.read_exact(&mut buf2)?;
+                    let font_len = u16::from_le_bytes(buf2) as usize;
+                    let mut font_vec = vec![0u8; font_len];
+                    reader.read_exact(&mut font_vec)?;
+                    let font_family = String::from_utf8(font_vec).unwrap_or_default();
+
+                    reader.read_exact(&mut buf4)?;
+                    let font_size = f32::from_le_bytes(buf4);
+
+                    let mut col_buf = [0u8; 4];
+                    reader.read_exact(&mut col_buf)?;
+
+                    reader.read_exact(&mut buf1)?;
+                    let align = match buf1[0] {
+                        1 => hollow_core::brush::TextAlign::Center,
+                        2 => hollow_core::brush::TextAlign::Right,
+                        _ => hollow_core::brush::TextAlign::Left,
+                    };
+
+                    reader.read_exact(&mut buf4)?;
+                    let line_spacing = f32::from_le_bytes(buf4);
+
+                    reader.read_exact(&mut buf4)?;
+                    let letter_spacing = f32::from_le_bytes(buf4);
+
+                    reader.read_exact(&mut buf4)?;
+                    let box_w = f32::from_le_bytes(buf4);
+
+                    reader.read_exact(&mut buf4)?;
+                    let box_h = f32::from_le_bytes(buf4);
+
+                    reader.read_exact(&mut buf4)?;
+                    let pos_x = f32::from_le_bytes(buf4);
+
+                    reader.read_exact(&mut buf4)?;
+                    let pos_y = f32::from_le_bytes(buf4);
+
+                    text_config = Some(hollow_core::layer::TextLayerConfig {
+                        content,
+                        font_family,
+                        font_size,
+                        color: col_buf,
+                        align,
+                        line_spacing,
+                        letter_spacing,
+                        box_w,
+                        box_h,
+                        pos_x,
+                        pos_y,
+                    });
+
+                    hollow_core::layer::LayerKind::Text
+                }
+                _ => hollow_core::layer::LayerKind::Raster,
+            };
+
+            reader.read_exact(&mut buf8)?;
+            let raw_pid = u64::from_le_bytes(buf8);
+            let parent_id = if raw_pid > 0 { Some(raw_pid) } else { None };
+
+            reader.read_exact(&mut buf1)?;
+            let flags = buf1[0];
+            let visible = (flags & (1 << 0)) != 0;
+            let locked = (flags & (1 << 1)) != 0;
+            let alpha_locked = (flags & (1 << 2)) != 0;
+            let clipping_mask = (flags & (1 << 3)) != 0;
+            let is_reference = (flags & (1 << 4)) != 0;
+            let is_expanded = (flags & (1 << 5)) != 0;
+            let pass_through = (flags & (1 << 6)) != 0;
+
+            (kind, parent_id, visible, locked, alpha_locked, clipping_mask, is_reference, is_expanded, pass_through)
+        } else if is_v4 {
             reader.read_exact(&mut buf1)?;
             let kind = match buf1[0] {
                 1 => hollow_core::layer::LayerKind::Group,
@@ -394,6 +556,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
 
         layer.kind = kind;
         layer.adjustment = adjustment;
+        layer.text = text_config;
         layer.parent_id = parent_id;
         layer.visible = visible;
         layer.locked = locked;

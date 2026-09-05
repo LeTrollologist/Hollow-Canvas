@@ -2,6 +2,7 @@ use crate::blend::BlendMode;
 use crate::brush::{BrushPoint, BrushSettings, EraserMode, GradientType, ShapeFillMode, TextAlign, ToolType};
 use crate::color::Color;
 use crate::document::Document;
+use crate::layer::Layer;
 use crate::selection::SelectionMask;
 use crate::symmetry::SymmetryConfig;
 use ab_glyph::{point, Font, FontArc, PxScale, ScaleFont};
@@ -1054,6 +1055,249 @@ impl StrokeRasterizer {
         }
         let total_h = (lines.len() as f32 * line_height).max(font_size);
         (max_width, total_h)
+    }
+
+    /// Wraps text into lines that fit within `max_width`. If `max_width <= 0.0`, simply splits by newline `\n`.
+    pub fn wrap_text_lines(
+        text: &str,
+        font: &FontArc,
+        font_size: f32,
+        letter_spacing: f32,
+        max_width: f32,
+    ) -> Vec<String> {
+        if max_width <= 0.0 {
+            return text.split('\n').map(|s| s.to_string()).collect();
+        }
+
+        let scale = PxScale::from(font_size.max(4.0));
+        let scaled_font = font.as_scaled(scale);
+
+        let measure_word = |w: &str| -> f32 {
+            let mut width = 0.0_f32;
+            for c in w.chars() {
+                let glyph = scaled_font.scaled_glyph(c);
+                width += scaled_font.h_advance(glyph.id) + letter_spacing;
+            }
+            width
+        };
+
+        let mut out_lines = Vec::new();
+
+        for paragraph in text.split('\n') {
+            if paragraph.is_empty() {
+                out_lines.push(String::new());
+                continue;
+            }
+
+            let mut current_line = String::new();
+            let mut current_line_w = 0.0_f32;
+
+            for word in paragraph.split(' ') {
+                let word_w = measure_word(word);
+                let space_w = if current_line.is_empty() { 0.0 } else { measure_word(" ") };
+
+                if current_line.is_empty() {
+                    if word_w <= max_width {
+                        current_line.push_str(word);
+                        current_line_w = word_w;
+                    } else {
+                        // Word is longer than line width, wrap character-by-character
+                        let mut chunk = String::new();
+                        let mut chunk_w = 0.0_f32;
+                        for c in word.chars() {
+                            let cw = measure_word(&c.to_string());
+                            if !chunk.is_empty() && (chunk_w + cw) > max_width {
+                                out_lines.push(chunk);
+                                chunk = String::new();
+                                chunk_w = 0.0;
+                            }
+                            chunk.push(c);
+                            chunk_w += cw;
+                        }
+                        if !chunk.is_empty() {
+                            current_line = chunk;
+                            current_line_w = chunk_w;
+                        }
+                    }
+                } else if (current_line_w + space_w + word_w) <= max_width {
+                    current_line.push(' ');
+                    current_line.push_str(word);
+                    current_line_w += space_w + word_w;
+                } else {
+                    out_lines.push(current_line);
+                    current_line = String::new();
+                    current_line_w = 0.0;
+
+                    if word_w <= max_width {
+                        current_line.push_str(word);
+                        current_line_w = word_w;
+                    } else {
+                        let mut chunk = String::new();
+                        let mut chunk_w = 0.0_f32;
+                        for c in word.chars() {
+                            let cw = measure_word(&c.to_string());
+                            if !chunk.is_empty() && (chunk_w + cw) > max_width {
+                                out_lines.push(chunk);
+                                chunk = String::new();
+                                chunk_w = 0.0;
+                            }
+                            chunk.push(c);
+                            chunk_w += cw;
+                        }
+                        if !chunk.is_empty() {
+                            current_line = chunk;
+                            current_line_w = chunk_w;
+                        }
+                    }
+                }
+            }
+
+            if !current_line.is_empty() {
+                out_lines.push(current_line);
+            }
+        }
+
+        if out_lines.is_empty() {
+            out_lines.push(String::new());
+        }
+
+        out_lines
+    }
+
+    /// Measures the total width and height of pre-wrapped or calculated lines
+    pub fn measure_text_lines(
+        lines: &[String],
+        font: &FontArc,
+        font_size: f32,
+        line_spacing_mult: f32,
+        letter_spacing: f32,
+    ) -> (f32, f32) {
+        let scale = PxScale::from(font_size.max(4.0));
+        let scaled_font = font.as_scaled(scale);
+        let line_height = (scaled_font.ascent() - scaled_font.descent() + scaled_font.line_gap()) * line_spacing_mult.max(0.5);
+
+        let mut max_width: f32 = 0.0;
+        for line in lines {
+            let mut line_w: f32 = 0.0;
+            for c in line.chars() {
+                let glyph = scaled_font.scaled_glyph(c);
+                line_w += scaled_font.h_advance(glyph.id) + letter_spacing;
+            }
+            if line_w > max_width {
+                max_width = line_w;
+            }
+        }
+        let total_h = (lines.len() as f32 * line_height).max(font_size);
+        (max_width, total_h)
+    }
+
+    /// Rasterizes an entire `TextLayerConfig` dynamically into the given `Layer`'s pixel buffer.
+    pub fn rasterize_text_layer_config(
+        layer: &mut Layer,
+        config: &crate::layer::TextLayerConfig,
+        font_ref: &FontArc,
+    ) {
+        // Clear destination layer buffer to transparent
+        layer.pixels.fill(0);
+
+        if config.content.is_empty() || layer.width == 0 || layer.height == 0 {
+            return;
+        }
+
+        let lines = Self::wrap_text_lines(
+            &config.content,
+            font_ref,
+            config.font_size,
+            config.letter_spacing,
+            config.box_w,
+        );
+
+        let scale = PxScale::from(config.font_size.max(4.0));
+        let scaled_font = font_ref.as_scaled(scale);
+        let ascent = scaled_font.ascent();
+        let descent = scaled_font.descent();
+        let line_gap = scaled_font.line_gap();
+        let line_height = (ascent - descent + line_gap) * config.line_spacing.max(0.5);
+
+        let layer_w = layer.width;
+        let layer_h = layer.height;
+        let color = config.color;
+        let [cr, cg, cb, ca] = color;
+        let col_a = ca as f32 / 255.0;
+
+        for (line_idx, line) in lines.iter().enumerate() {
+            let mut line_w: f32 = 0.0;
+            for c in line.chars() {
+                let glyph = scaled_font.scaled_glyph(c);
+                line_w += scaled_font.h_advance(glyph.id) + config.letter_spacing;
+            }
+
+            let start_x = if config.box_w > 0.0 {
+                match config.align {
+                    TextAlign::Left => config.pos_x,
+                    TextAlign::Center => config.pos_x + (config.box_w - line_w) * 0.5,
+                    TextAlign::Right => config.pos_x + (config.box_w - line_w),
+                }
+            } else {
+                match config.align {
+                    TextAlign::Left => config.pos_x,
+                    TextAlign::Center => config.pos_x - line_w * 0.5,
+                    TextAlign::Right => config.pos_x - line_w,
+                }
+            };
+
+            let baseline_y = config.pos_y + ascent + (line_idx as f32 * line_height);
+            let mut current_x = start_x;
+
+            for c in line.chars() {
+                let mut glyph = scaled_font.scaled_glyph(c);
+                glyph.position = point(current_x, baseline_y);
+                let glyph_id = glyph.id;
+
+                if let Some(outlined) = font_ref.outline_glyph(glyph) {
+                    let bounds = outlined.px_bounds();
+                    outlined.draw(|gx, gy, coverage| {
+                        if coverage <= 0.005 {
+                            return;
+                        }
+                        let cx = bounds.min.x as i32 + gx as i32;
+                        let cy = bounds.min.y as i32 + gy as i32;
+
+                        if cx >= 0 && cx < layer_w as i32 && cy >= 0 && cy < layer_h as i32 {
+                            let idx = ((cy as usize * layer_w as usize) + cx as usize) * 4;
+                            let alpha = coverage * col_a;
+                            if alpha <= 0.001 {
+                                return;
+                            }
+
+                            // Source over blend on top of existing pixels in this text layer
+                            let dst_r = layer.pixels[idx] as f32 / 255.0;
+                            let dst_g = layer.pixels[idx + 1] as f32 / 255.0;
+                            let dst_b = layer.pixels[idx + 2] as f32 / 255.0;
+                            let dst_a = layer.pixels[idx + 3] as f32 / 255.0;
+
+                            let src_r = cr as f32 / 255.0;
+                            let src_g = cg as f32 / 255.0;
+                            let src_b = cb as f32 / 255.0;
+                            let src_a = alpha;
+
+                            let out_a = src_a + dst_a * (1.0 - src_a);
+                            if out_a > 0.0001 {
+                                let out_r = (src_r * src_a + dst_r * dst_a * (1.0 - src_a)) / out_a;
+                                let out_g = (src_g * src_a + dst_g * dst_a * (1.0 - src_a)) / out_a;
+                                let out_b = (src_b * src_a + dst_b * dst_a * (1.0 - src_a)) / out_a;
+
+                                layer.pixels[idx] = (out_r * 255.0).clamp(0.0, 255.0).round() as u8;
+                                layer.pixels[idx + 1] = (out_g * 255.0).clamp(0.0, 255.0).round() as u8;
+                                layer.pixels[idx + 2] = (out_b * 255.0).clamp(0.0, 255.0).round() as u8;
+                                layer.pixels[idx + 3] = (out_a * 255.0).clamp(0.0, 255.0).round() as u8;
+                            }
+                        }
+                    });
+                }
+                current_x += scaled_font.h_advance(glyph_id) + config.letter_spacing;
+            }
+        }
     }
 
     /// Rasterize formatted text directly onto the active layer.

@@ -90,6 +90,49 @@ impl Document {
         id
     }
 
+    pub fn add_text_layer(&mut self, name: Option<String>, config: crate::layer::TextLayerConfig, parent_id: Option<LayerId>) -> LayerId {
+        let id = self.next_layer_id;
+        self.next_layer_id += 1;
+        let layer_name = name.unwrap_or_else(|| {
+            if config.content.trim().is_empty() {
+                format!("Text {}", id)
+            } else {
+                config.content.chars().take(20).collect::<String>()
+            }
+        });
+        let mut layer = Layer::new_text(id, layer_name, self.width, self.height, config);
+        layer.parent_id = parent_id;
+        self.layers.push(layer);
+        self.active_layer_id = id;
+        id
+    }
+
+    pub fn update_text_layer_config(
+        &mut self,
+        layer_id: LayerId,
+        config: crate::layer::TextLayerConfig,
+        font_ref: &ab_glyph::FontArc,
+    ) -> bool {
+        if let Some(layer) = self.get_layer_mut(layer_id) {
+            if layer.is_text() {
+                layer.text = Some(config.clone());
+                crate::rasterizer::StrokeRasterizer::rasterize_text_layer_config(layer, &config, font_ref);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn rasterize_text_layer(&mut self, layer_id: LayerId) -> bool {
+        if let Some(layer) = self.get_layer_mut(layer_id) {
+            if layer.is_text() {
+                layer.rasterize_text();
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn group_children(&self, parent_id: LayerId) -> Vec<LayerId> {
         self.layers
             .iter()

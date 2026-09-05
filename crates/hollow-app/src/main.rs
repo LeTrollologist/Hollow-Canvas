@@ -155,6 +155,116 @@ extern "system" {
     fn DragAcceptFiles(hWnd: HWND, fAccept: i32);
     fn DragQueryFileW(hDrop: *mut std::ffi::c_void, iFile: u32, lpszFile: *mut u16, cch: u32) -> u32;
     fn DragFinish(hDrop: *mut std::ffi::c_void);
+    fn OpenClipboard(hWndNewOwner: HWND) -> i32;
+    fn CloseClipboard() -> i32;
+    fn GetClipboardData(uFormat: UINT) -> *mut std::ffi::c_void;
+    fn GlobalLock(hMem: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    fn GlobalUnlock(hMem: *mut std::ffi::c_void) -> i32;
+    fn SetClipboardData(uFormat: UINT, hMem: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    fn EmptyClipboard() -> i32;
+    fn GlobalAlloc(uFlags: UINT, dwBytes: usize) -> *mut std::ffi::c_void;
+}
+
+fn vk_to_egui_key(vk: usize) -> Option<egui::Key> {
+    match vk {
+        0x08 => Some(egui::Key::Backspace),
+        0x09 => Some(egui::Key::Tab),
+        0x0D => Some(egui::Key::Enter),
+        0x1B => Some(egui::Key::Escape),
+        0x20 => Some(egui::Key::Space),
+        0x21 => Some(egui::Key::PageUp),
+        0x22 => Some(egui::Key::PageDown),
+        0x23 => Some(egui::Key::End),
+        0x24 => Some(egui::Key::Home),
+        0x25 => Some(egui::Key::ArrowLeft),
+        0x26 => Some(egui::Key::ArrowUp),
+        0x27 => Some(egui::Key::ArrowRight),
+        0x28 => Some(egui::Key::ArrowDown),
+        0x2D => Some(egui::Key::Insert),
+        0x2E => Some(egui::Key::Delete),
+        0x30 => Some(egui::Key::Num0),
+        0x31 => Some(egui::Key::Num1),
+        0x32 => Some(egui::Key::Num2),
+        0x33 => Some(egui::Key::Num3),
+        0x34 => Some(egui::Key::Num4),
+        0x35 => Some(egui::Key::Num5),
+        0x36 => Some(egui::Key::Num6),
+        0x37 => Some(egui::Key::Num7),
+        0x38 => Some(egui::Key::Num8),
+        0x39 => Some(egui::Key::Num9),
+        0x41 => Some(egui::Key::A),
+        0x42 => Some(egui::Key::B),
+        0x43 => Some(egui::Key::C),
+        0x44 => Some(egui::Key::D),
+        0x45 => Some(egui::Key::E),
+        0x46 => Some(egui::Key::F),
+        0x47 => Some(egui::Key::G),
+        0x48 => Some(egui::Key::H),
+        0x49 => Some(egui::Key::I),
+        0x4A => Some(egui::Key::J),
+        0x4B => Some(egui::Key::K),
+        0x4C => Some(egui::Key::L),
+        0x4D => Some(egui::Key::M),
+        0x4E => Some(egui::Key::N),
+        0x4F => Some(egui::Key::O),
+        0x50 => Some(egui::Key::P),
+        0x51 => Some(egui::Key::Q),
+        0x52 => Some(egui::Key::R),
+        0x53 => Some(egui::Key::S),
+        0x54 => Some(egui::Key::T),
+        0x55 => Some(egui::Key::U),
+        0x56 => Some(egui::Key::V),
+        0x57 => Some(egui::Key::W),
+        0x58 => Some(egui::Key::X),
+        0x59 => Some(egui::Key::Y),
+        0x5A => Some(egui::Key::Z),
+        _ => None,
+    }
+}
+
+unsafe fn get_clipboard_text(hwnd: HWND) -> Option<String> {
+    if OpenClipboard(hwnd) == 0 {
+        return None;
+    }
+    let h_mem = GetClipboardData(13 /* CF_UNICODETEXT */);
+    if h_mem.is_null() {
+        CloseClipboard();
+        return None;
+    }
+    let ptr = GlobalLock(h_mem) as *const u16;
+    if ptr.is_null() {
+        CloseClipboard();
+        return None;
+    }
+    let mut len = 0;
+    while *ptr.add(len) != 0 {
+        len += 1;
+    }
+    let slice = std::slice::from_raw_parts(ptr, len);
+    let s = String::from_utf16_lossy(slice);
+    GlobalUnlock(h_mem);
+    CloseClipboard();
+    Some(s)
+}
+
+unsafe fn set_clipboard_text(hwnd: HWND, text: &str) -> bool {
+    let wide = to_wide(text);
+    let bytes = wide.len() * 2;
+    if OpenClipboard(hwnd) == 0 {
+        return false;
+    }
+    EmptyClipboard();
+    let h_mem = GlobalAlloc(0x0042 /* GMEM_MOVEABLE | GMEM_ZEROINIT */, bytes);
+    if !h_mem.is_null() {
+        let ptr = GlobalLock(h_mem) as *mut u16;
+        if !ptr.is_null() {
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
+            GlobalUnlock(h_mem);
+            SetClipboardData(13 /* CF_UNICODETEXT */, h_mem);
+        }
+    }
+    CloseClipboard();
+    true
 }
 
 static mut GLOBAL_APP_PTR: *mut HollowCanvasDesktopApp = std::ptr::null_mut();
@@ -314,29 +424,114 @@ fn hit_test_transform_handle(
     None
 }
 
+fn hit_test_text_handle(
+    state: &hollow_ui::state::AppState,
+    screen_pos: glam::Vec2,
+    win_w: f32,
+    win_h: f32,
+) -> Option<usize> {
+    let active_id = state.active_text_layer_id.or_else(|| {
+        state.document.active_layer().and_then(|l| if l.is_text() { Some(l.id) } else { None })
+    })?;
+    let layer = state.document.get_layer(active_id)?;
+    let config = layer.text.as_ref()?;
+
+    let (measured_w, measured_h) = if let Some(font) = &state.text_font {
+        let lines = hollow_core::rasterizer::StrokeRasterizer::wrap_text_lines(
+            &config.content,
+            font,
+            config.font_size,
+            config.letter_spacing,
+            config.box_w,
+        );
+        hollow_core::rasterizer::StrokeRasterizer::measure_text_lines(
+            &lines,
+            font,
+            config.font_size,
+            config.line_spacing,
+            config.letter_spacing,
+        )
+    } else {
+        (120.0, config.font_size)
+    };
+
+    let text_box_w = if config.box_w > 0.0 { config.box_w } else { measured_w.max(60.0) };
+    let text_box_h = if config.box_h > 0.0 { config.box_h } else { measured_h.max(config.font_size) };
+
+    let top_left = glam::Vec2::new(config.pos_x, config.pos_y);
+    let bottom_right = top_left + glam::Vec2::new(text_box_w, text_box_h);
+
+    let s_min = state.canvas_to_screen(top_left, win_w, win_h);
+    let s_max = state.canvas_to_screen(bottom_right, win_w, win_h);
+
+    let corners = [
+        s_min,                             // 0: TopLeft
+        glam::Vec2::new(s_max.x, s_min.y), // 1: TopRight
+        s_max,                             // 2: BottomRight
+        glam::Vec2::new(s_min.x, s_max.y), // 3: BottomLeft
+    ];
+
+    let hit_dist = 12.0_f32;
+    for (i, &corner) in corners.iter().enumerate() {
+        if screen_pos.distance(corner) <= hit_dist {
+            return Some(i);
+        }
+    }
+    None
+}
+
+fn hit_test_text_layer_at(
+    state: &hollow_ui::state::AppState,
+    canvas_pos: glam::Vec2,
+) -> Option<hollow_core::layer::LayerId> {
+    for layer in state.document.layers.iter().rev() {
+        if !layer.visible || !layer.is_text() {
+            continue;
+        }
+        if let Some(config) = &layer.text {
+            let (measured_w, measured_h) = if let Some(font) = &state.text_font {
+                let lines = hollow_core::rasterizer::StrokeRasterizer::wrap_text_lines(
+                    &config.content,
+                    font,
+                    config.font_size,
+                    config.letter_spacing,
+                    config.box_w,
+                );
+                hollow_core::rasterizer::StrokeRasterizer::measure_text_lines(
+                    &lines,
+                    font,
+                    config.font_size,
+                    config.line_spacing,
+                    config.letter_spacing,
+                )
+            } else {
+                (120.0, config.font_size)
+            };
+
+            let text_box_w = if config.box_w > 0.0 { config.box_w } else { measured_w.max(60.0) };
+            let text_box_h = if config.box_h > 0.0 { config.box_h } else { measured_h.max(config.font_size) };
+
+            let min_x = config.pos_x;
+            let min_y = config.pos_y;
+            let max_x = config.pos_x + text_box_w;
+            let max_y = config.pos_y + text_box_h;
+
+            if canvas_pos.x >= min_x && canvas_pos.x <= max_x && canvas_pos.y >= min_y && canvas_pos.y <= max_y {
+                return Some(layer.id);
+            }
+        }
+    }
+    None
+}
+
 impl HollowCanvasDesktopApp {
     pub fn is_over_ui(&self, pos: Vec2) -> bool {
         let w = self.win_w as f32;
         let h = self.win_h as f32;
 
-        // 1. Any active modal dialogs, filters, lightbox, perspective dock, or transform session
-        if self.state.show_ref_window
-            || self.state.show_scratchpad
-            || self.state.show_help
-            || self.state.show_about_dialog
-            || self.state.show_new_canvas_dialog
-            || self.state.show_resize_canvas_dialog
-            || self.state.show_export_animation_dialog
-            || self.state.show_save_preset_dialog
-            || self.state.show_perspective_dock
-            || self.state.active_adjustment_modal.is_some()
-            || self.state.active_filter_modal != hollow_ui::state::ActiveFilterModal::None
-            || self.state.show_gallery
-            || self.state.transform_session.is_active
-        {
-            if self.egui_ctx.is_pointer_over_area() || self.egui_ctx.wants_pointer_input() {
-                return true;
-            }
+        // 1. Any active egui widget/area requesting pointer input or hovered by pointer
+        if self.egui_ctx.is_pointer_over_area() || self.egui_ctx.wants_pointer_input() {
+            return true;
         }
 
         // 2. Main Studio Panels (strictly bounded to physical dock rectangles)
@@ -394,6 +589,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
     const WM_MOUSEWHEEL: UINT = 0x020A;
     const WM_KEYDOWN: UINT = 0x0100;
     const WM_KEYUP: UINT = 0x0101;
+    const WM_CHAR: UINT = 0x0102;
 
     let app = if !GLOBAL_APP_PTR.is_null() {
         &mut *GLOBAL_APP_PTR
@@ -588,6 +784,62 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     if should_add {
                         app.state.lasso_points.push(canvas_pos);
                     }
+                } else if tool == ToolType::Text {
+                    if let Some(drag_start) = app.state.text_drag_start {
+                        let delta = canvas_pos - drag_start;
+                        if app.state.text_box_dragging {
+                            if let Some((init_x, init_y, _, _)) = app.state.text_box_drag_initial_rect {
+                                if let Some(active_id) = app.state.active_text_layer_id {
+                                    if let Some(layer) = app.state.document.get_layer_mut(active_id) {
+                                        if let Some(cfg) = &mut layer.text {
+                                            cfg.pos_x = init_x + delta.x;
+                                            cfg.pos_y = init_y + delta.y;
+                                        }
+                                    }
+                                    app.state.sync_active_text_layer();
+                                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                                    return 0;
+                                }
+                            }
+                        } else if let Some(handle) = app.state.text_box_resizing_handle {
+                            if let Some((init_x, init_y, init_w, init_h)) = app.state.text_box_drag_initial_rect {
+                                if let Some(active_id) = app.state.active_text_layer_id {
+                                    if let Some(layer) = app.state.document.get_layer_mut(active_id) {
+                                        if let Some(cfg) = &mut layer.text {
+                                            match handle {
+                                                0 => {
+                                                    cfg.pos_x = init_x + delta.x;
+                                                    cfg.pos_y = init_y + delta.y;
+                                                    cfg.box_w = (init_w - delta.x).max(20.0);
+                                                    cfg.box_h = (init_h - delta.y).max(20.0);
+                                                }
+                                                1 => {
+                                                    cfg.pos_y = init_y + delta.y;
+                                                    cfg.box_w = (init_w + delta.x).max(20.0);
+                                                    cfg.box_h = (init_h - delta.y).max(20.0);
+                                                }
+                                                2 => {
+                                                    cfg.box_w = (init_w + delta.x).max(20.0);
+                                                    cfg.box_h = (init_h + delta.y).max(20.0);
+                                                }
+                                                3 => {
+                                                    cfg.pos_x = init_x + delta.x;
+                                                    cfg.box_w = (init_w - delta.x).max(20.0);
+                                                    cfg.box_h = (init_h + delta.y).max(20.0);
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    app.state.sync_active_text_layer();
+                                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                                    return 0;
+                                }
+                            }
+                        }
+                    }
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                    return 0;
                 } else if tool.is_shape_tool() || tool == ToolType::Marquee || tool == ToolType::Crop || tool == ToolType::Polygon || tool == ToolType::Eyedropper || tool == ToolType::Fill {
                     // Explicitly NEVER paint continuous brush strokes when non-freehand tools are active
                 } else if tool.is_freehand_stroke_tool() {
@@ -844,9 +1096,61 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
                 app.state.drag_start_canvas_pos = Some(canvas_pos);
             } else if tool == ToolType::Text {
-                app.state.text_placement_pos = Some(canvas_pos);
-                app.is_drawing_on_canvas = false;
-                app.state.set_status(format!("Text insertion point set to ({:.0}, {:.0})", canvas_pos.x, canvas_pos.y));
+                // 1. Check if clicking on active text layer's resize handles
+                if let Some(handle_idx) = hit_test_text_handle(&app.state, screen_pos, app.win_w as f32, app.win_h as f32) {
+                    app.state.text_box_resizing_handle = Some(handle_idx);
+                    app.state.text_drag_start = Some(canvas_pos);
+                    if let Some(active_id) = app.state.active_text_layer_id {
+                        if let Some(layer) = app.state.document.get_layer(active_id) {
+                            if let Some(cfg) = &layer.text {
+                                let font = app.state.text_font.as_ref();
+                                let (mw, mh) = if let Some(f) = font {
+                                    let lines = hollow_core::rasterizer::StrokeRasterizer::wrap_text_lines(&cfg.content, f, cfg.font_size, cfg.letter_spacing, cfg.box_w);
+                                    hollow_core::rasterizer::StrokeRasterizer::measure_text_lines(&lines, f, cfg.font_size, cfg.line_spacing, cfg.letter_spacing)
+                                } else {
+                                    (120.0, cfg.font_size)
+                                };
+                                let bw = if cfg.box_w > 0.0 { cfg.box_w } else { mw.max(60.0) };
+                                let bh = if cfg.box_h > 0.0 { cfg.box_h } else { mh.max(cfg.font_size) };
+                                app.state.text_box_drag_initial_rect = Some((cfg.pos_x, cfg.pos_y, bw, bh));
+                            }
+                        }
+                    }
+                    app.is_drawing_on_canvas = true;
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                    return 0;
+                }
+
+                // 2. Check if clicking inside an existing text layer
+                if let Some(hit_layer_id) = hit_test_text_layer_at(&app.state, canvas_pos) {
+                    app.state.select_text_layer(hit_layer_id);
+                    app.state.text_box_dragging = true;
+                    app.state.text_drag_start = Some(canvas_pos);
+                    if let Some(layer) = app.state.document.get_layer(hit_layer_id) {
+                        if let Some(cfg) = &layer.text {
+                            let font = app.state.text_font.as_ref();
+                            let (mw, mh) = if let Some(f) = font {
+                                let lines = hollow_core::rasterizer::StrokeRasterizer::wrap_text_lines(&cfg.content, f, cfg.font_size, cfg.letter_spacing, cfg.box_w);
+                                hollow_core::rasterizer::StrokeRasterizer::measure_text_lines(&lines, f, cfg.font_size, cfg.line_spacing, cfg.letter_spacing)
+                            } else {
+                                (120.0, cfg.font_size)
+                            };
+                            let bw = if cfg.box_w > 0.0 { cfg.box_w } else { mw.max(60.0) };
+                            let bh = if cfg.box_h > 0.0 { cfg.box_h } else { mh.max(cfg.font_size) };
+                            app.state.text_box_drag_initial_rect = Some((cfg.pos_x, cfg.pos_y, bw, bh));
+                        }
+                    }
+                    app.is_drawing_on_canvas = true;
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                    return 0;
+                }
+
+                // 3. Clicked empty canvas -> create new text layer
+                let _new_id = app.state.create_text_layer_at(canvas_pos, None);
+                app.state.text_box_resizing_handle = Some(2); // BottomRight handle
+                app.state.text_drag_start = Some(canvas_pos);
+                app.state.text_box_drag_initial_rect = Some((canvas_pos.x, canvas_pos.y, 0.0, 0.0));
+                app.is_drawing_on_canvas = true;
                 InvalidateRect(hwnd, std::ptr::null(), 0);
                 return 0;
             } else if tool == ToolType::Eyedropper {
@@ -958,6 +1262,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
             let canvas_pos = app.state.cursor_canvas_pos;
             let tool = app.state.brush.tool;
+
+            if tool == ToolType::Text {
+                app.state.text_box_dragging = false;
+                app.state.text_box_resizing_handle = None;
+                app.state.text_drag_start = None;
+                app.state.text_box_drag_initial_rect = None;
+            }
 
             if tool == ToolType::Lasso {
                 let pts = std::mem::take(&mut app.state.lasso_points);
@@ -1193,10 +1504,105 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             InvalidateRect(hwnd, std::ptr::null(), 0);
             0
         }
+        WM_CHAR => {
+            let ch_code = wparam as u32;
+            if ch_code == 0x08 { // Backspace (handled by Key::Backspace in WM_KEYDOWN)
+                return 0;
+            }
+            if ch_code == 0x0D { // Enter -> '\n'
+                app.events.push(egui::Event::Text("\n".to_string()));
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+                return 0;
+            }
+            if ch_code == 0x09 { // Tab -> '\t'
+                app.events.push(egui::Event::Text("\t".to_string()));
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+                return 0;
+            }
+            if ch_code >= 0x20 && ch_code != 0x7F {
+                if let Some(ch) = char::from_u32(ch_code) {
+                    app.events.push(egui::Event::Text(ch.to_string()));
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                    return 0;
+                }
+            }
+            0
+        }
         WM_KEYDOWN => {
             let is_ctrl = (GetKeyState(0x11) as i32 & 0x8000) != 0; // VK_CONTROL
             let is_shift = (GetKeyState(0x10) as i32 & 0x8000) != 0; // VK_SHIFT
+            let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0; // VK_MENU
+            let modifiers = egui::Modifiers {
+                alt: is_alt,
+                ctrl: is_ctrl,
+                shift: is_shift,
+                mac_cmd: false,
+                command: is_ctrl,
+            };
 
+            // 1. Forward key event to egui
+            if let Some(key) = vk_to_egui_key(wparam) {
+                let repeat = (lparam & (1 << 30)) != 0;
+                app.events.push(egui::Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed: true,
+                    repeat,
+                    modifiers,
+                });
+            }
+
+            // 2. Forward standard clipboard commands to egui when text input / egui is active
+            let is_egui_text_active = app.egui_ctx.wants_keyboard_input()
+                || app.egui_ctx.memory(|m| m.focused().is_some())
+                || (app.state.brush.tool == ToolType::Text && app.state.active_text_layer_id.is_some());
+
+            if is_ctrl {
+                if wparam == 0x56 { // Ctrl+V (Paste)
+                    if let Some(text) = get_clipboard_text(hwnd) {
+                        app.events.push(egui::Event::Paste(text));
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
+                    }
+                } else if wparam == 0x43 { // Ctrl+C (Copy)
+                    app.events.push(egui::Event::Copy);
+                } else if wparam == 0x58 && is_egui_text_active { // Ctrl+X (Cut)
+                    app.events.push(egui::Event::Cut);
+                }
+            }
+
+            // 3. Pause studio hotkeys when text input or text layer is active
+            if is_egui_text_active {
+                match wparam {
+                    0x1B => { // Esc: Finish text editing and clear focus
+                        app.egui_ctx.memory_mut(|m| {
+                            if let Some(focused) = m.focused() {
+                                m.surrender_focus(focused);
+                            }
+                        });
+                        app.state.active_text_layer_id = None;
+                        app.state.set_status("Finished text editing");
+                    }
+                    0x53 if is_ctrl => { // Ctrl+S: Save Project
+                        app.state.pending_file_action = Some(PendingFileAction::SaveProject);
+                    }
+                    0x4E if is_ctrl => { // Ctrl+N: New Canvas
+                        app.state.show_new_canvas_dialog = true;
+                    }
+                    0x4F if is_ctrl => { // Ctrl+O: Open Project
+                        app.state.pending_file_action = Some(PendingFileAction::OpenProject);
+                    }
+                    0x45 if is_ctrl => { // Ctrl+E: Export PNG
+                        app.state.pending_file_action = Some(PendingFileAction::ExportPng);
+                    }
+                    _ => {
+                        // All other single-letter shortcuts (B, E, P, V, X, H, O, T, etc.) are PAUSED so typing works!
+                    }
+                }
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+                return 0;
+            }
+
+            // 4. Standard global hotkeys when NOT in text edit mode
             match wparam {
                 0x09 => { // Tab (Toggle Zen / Full Canvas mode)
                     app.state.show_ui_panels = !app.state.show_ui_panels;
@@ -1372,6 +1778,27 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             0
         }
         WM_KEYUP => {
+            let is_ctrl = (GetKeyState(0x11) as i32 & 0x8000) != 0;
+            let is_shift = (GetKeyState(0x10) as i32 & 0x8000) != 0;
+            let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0;
+            let modifiers = egui::Modifiers {
+                alt: is_alt,
+                ctrl: is_ctrl,
+                shift: is_shift,
+                mac_cmd: false,
+                command: is_ctrl,
+            };
+
+            if let Some(key) = vk_to_egui_key(wparam) {
+                app.events.push(egui::Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed: false,
+                    repeat: false,
+                    modifiers,
+                });
+            }
+
             if wparam == 0x20 {
                 app.is_space_down = false;
                 app.last_pan_screen_pos = None;
@@ -1406,6 +1833,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 let full_output = app.egui_ctx.run(raw_input, |ctx| {
                     render_ui(ctx, &mut app.state);
                 });
+
+                if !full_output.platform_output.copied_text.is_empty() {
+                    unsafe {
+                        set_clipboard_text(hwnd, &full_output.platform_output.copied_text);
+                    }
+                }
 
                 let mut needs_repaint = full_output.viewport_output.get(&egui::ViewportId::ROOT)
                     .map(|v| v.repaint_delay.is_zero())

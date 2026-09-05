@@ -875,4 +875,73 @@ mod tests {
             assert!(max_y >= min_y);
         }
     }
+
+    #[test]
+    fn test_text_layer_lifecycle_and_rasterization() {
+        use crate::layer::TextLayerConfig;
+
+        let mut doc = Document::new(200, 100);
+        let config = TextLayerConfig {
+            content: "Hello Hollow Canvas".to_string(),
+            font_family: "System Default".to_string(),
+            font_size: 28.0,
+            color: [255, 100, 50, 255],
+            align: crate::brush::TextAlign::Center,
+            line_spacing: 1.2,
+            letter_spacing: 0.0,
+            box_w: 180.0,
+            box_h: 60.0,
+            pos_x: 10.0,
+            pos_y: 20.0,
+        };
+
+        // 1. Add Text Layer
+        let text_layer_id = doc.add_text_layer(Some("Greeting".to_string()), config.clone(), None);
+        assert_eq!(doc.layers.len(), 2);
+        let layer = doc.get_layer(text_layer_id).unwrap();
+        assert!(layer.is_text());
+        assert_eq!(layer.name, "Greeting");
+        assert_eq!(layer.text.as_ref().unwrap().content, "Hello Hollow Canvas");
+
+        // 2. Render text onto text layer
+        if let Some(font) = StrokeRasterizer::load_font(None, None) {
+            let updated = doc.update_text_layer_config(text_layer_id, config.clone(), &font);
+            assert!(updated);
+
+            let layer_after = doc.get_layer(text_layer_id).unwrap();
+            let has_non_zero_pixels = layer_after.pixels.iter().any(|&p| p > 0);
+            assert!(has_non_zero_pixels);
+
+            // 3. Duplicate Text Layer preserves Text configuration
+            let dup_id = doc.duplicate_active_layer().unwrap();
+            let dup_layer = doc.get_layer(dup_id).unwrap();
+            assert!(dup_layer.is_text());
+            assert_eq!(dup_layer.text.as_ref().unwrap().content, "Hello Hollow Canvas");
+
+            // 4. Rasterize Text Layer converts to standard paintable pixel layer
+            assert!(doc.rasterize_text_layer(text_layer_id));
+            let rasterized_layer = doc.get_layer(text_layer_id).unwrap();
+            assert!(rasterized_layer.is_raster());
+            assert!(!rasterized_layer.is_text());
+            assert!(rasterized_layer.text.is_none());
+            // Pixels must remain preserved
+            assert!(rasterized_layer.pixels.iter().any(|&p| p > 0));
+        }
+    }
+
+    #[test]
+    fn test_text_paragraph_wrapping() {
+        if let Some(font) = StrokeRasterizer::load_font(None, None) {
+            let text = "The quick brown fox jumps over the lazy dog near the riverbank.";
+            let lines_unbounded = StrokeRasterizer::wrap_text_lines(text, &font, 20.0, 0.0, 0.0);
+            assert_eq!(lines_unbounded.len(), 1);
+
+            let lines_bounded = StrokeRasterizer::wrap_text_lines(text, &font, 20.0, 0.0, 150.0);
+            assert!(lines_bounded.len() > 1);
+            for line in &lines_bounded {
+                let (w, _) = StrokeRasterizer::measure_text(line, &font, 20.0, 1.0, 0.0);
+                assert!(w <= 160.0); // Bounded with minor tolerance
+            }
+        }
+    }
 }

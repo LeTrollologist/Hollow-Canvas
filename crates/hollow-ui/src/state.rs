@@ -311,6 +311,12 @@ pub struct AppState {
     pub text_font: Option<ab_glyph::FontArc>,
     pub text_placement_pos: Option<Vec2>,
     pub text_live_preview: bool,
+    pub active_text_layer_id: Option<hollow_core::layer::LayerId>,
+    pub text_box_dragging: bool,
+    pub text_box_resizing_handle: Option<usize>, // 0: TopLeft, 1: TopRight, 2: BottomRight, 3: BottomLeft
+    pub text_drag_start: Option<Vec2>,
+    pub text_box_drag_initial_rect: Option<(f32, f32, f32, f32)>, // pos_x, pos_y, box_w, box_h
+    pub show_text_hud: bool,
     pub show_shell_status_modal: Option<String>,
 
     // ── Canvas Viewport & Composited Texture ──
@@ -480,6 +486,12 @@ impl AppState {
             text_font: hollow_core::rasterizer::StrokeRasterizer::load_font(None, None),
             text_placement_pos: Some(Vec2::new(50.0, 50.0)),
             text_live_preview: true,
+            active_text_layer_id: None,
+            text_box_dragging: false,
+            text_box_resizing_handle: None,
+            text_drag_start: None,
+            text_box_drag_initial_rect: None,
+            show_text_hud: true,
             show_shell_status_modal: None,
 
             canvas_texture: None,
@@ -498,10 +510,106 @@ impl AppState {
             self.text.font_name = filename;
             self.text.font_path = Some(path.to_string());
             self.text_font = Some(font);
+            self.sync_active_text_layer();
             self.set_status(format!("Loaded custom font: {}", self.text.font_name));
             true
         } else {
             self.set_status("Failed to load font: invalid TTF/OTF file");
+            false
+        }
+    }
+
+    pub fn select_text_layer(&mut self, id: hollow_core::layer::LayerId) {
+        self.active_text_layer_id = Some(id);
+        self.document.active_layer_id = id;
+        if let Some(layer) = self.document.get_layer(id) {
+            if let Some(ref config) = layer.text {
+                self.text.content = config.content.clone();
+                self.text.font_name = config.font_family.clone();
+                self.text.font_size = config.font_size;
+                self.text.align = config.align;
+                self.text.line_spacing = config.line_spacing;
+                self.text.letter_spacing = config.letter_spacing;
+                self.text_placement_pos = Some(Vec2::new(config.pos_x, config.pos_y));
+                self.brush.primary_color = Color::from_rgba8(
+                    config.color[0],
+                    config.color[1],
+                    config.color[2],
+                    config.color[3],
+                );
+            }
+        }
+    }
+
+    pub fn create_text_layer_at(&mut self, pos: Vec2, box_size: Option<Vec2>) -> hollow_core::layer::LayerId {
+        let (box_w, box_h) = match box_size {
+            Some(sz) => (sz.x.max(0.0), sz.y.max(0.0)),
+            None => (0.0, 0.0),
+        };
+        let mut config = hollow_core::layer::TextLayerConfig {
+            content: if self.text.content.trim().is_empty() {
+                "Double-click to edit text".to_string()
+            } else {
+                self.text.content.clone()
+            },
+            font_family: self.text.font_name.clone(),
+            font_size: self.text.font_size,
+            color: self.brush.primary_color.to_rgba8(),
+            align: self.text.align,
+            line_spacing: self.text.line_spacing,
+            letter_spacing: self.text.letter_spacing,
+            box_w,
+            box_h,
+            pos_x: pos.x,
+            pos_y: pos.y,
+        };
+        if config.content == "Hollow Canvas" {
+            config.content = "Text Layer".to_string();
+        }
+        let id = self.document.add_text_layer(None, config.clone(), None);
+        if let Some(font) = &self.text_font {
+            self.document.update_text_layer_config(id, config, font);
+        }
+        self.select_text_layer(id);
+        self.mark_canvas_dirty();
+        self.set_status("Created new interactive Text Layer");
+        id
+    }
+
+    pub fn sync_active_text_layer(&mut self) {
+        let active_id = self.active_text_layer_id.or_else(|| {
+            self.document.active_layer().and_then(|l| if l.is_text() { Some(l.id) } else { None })
+        });
+        if let Some(id) = active_id {
+            self.active_text_layer_id = Some(id);
+            if let Some(layer) = self.document.get_layer_mut(id) {
+                if let Some(mut config) = layer.text.clone() {
+                    config.content = self.text.content.clone();
+                    config.font_family = self.text.font_name.clone();
+                    config.font_size = self.text.font_size;
+                    config.color = self.brush.primary_color.to_rgba8();
+                    config.align = self.text.align;
+                    config.line_spacing = self.text.line_spacing;
+                    config.letter_spacing = self.text.letter_spacing;
+
+                    layer.text = Some(config.clone());
+                    if let Some(font) = &self.text_font {
+                        hollow_core::rasterizer::StrokeRasterizer::rasterize_text_layer_config(layer, &config, font);
+                    }
+                    self.mark_canvas_dirty();
+                }
+            }
+        }
+    }
+
+    pub fn rasterize_active_text_layer(&mut self) -> bool {
+        let active_id = self.document.active_layer_id;
+        if self.document.rasterize_text_layer(active_id) {
+            self.active_text_layer_id = None;
+            self.mark_canvas_dirty();
+            self.set_status("Rasterized text layer to standard pixel bitmap");
+            true
+        } else {
             false
         }
     }
@@ -514,38 +622,8 @@ impl AppState {
             )
         });
 
-        if let Some(layer) = self.document.active_layer() {
-            let before = layer.pixels.clone();
-            let bounds = hollow_core::rasterizer::StrokeRasterizer::rasterize_text(
-                &mut self.document,
-                pos,
-                &self.text.content,
-                self.text_font.as_ref(),
-                self.text.font_size,
-                self.brush.primary_color,
-                self.brush.opacity,
-                self.text.line_spacing,
-                self.text.letter_spacing,
-                self.text.align,
-                self.selection.as_ref(),
-            );
-
-            if bounds.is_some() {
-                if let Some(after_layer) = self.document.active_layer() {
-                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
-                        layer_id: after_layer.id,
-                        description: "Add Text",
-                        before_pixels: before,
-                        after_pixels: after_layer.pixels.clone(),
-                    });
-                    self.history.push(cmd);
-                    self.mark_canvas_dirty();
-                    self.set_status("Placed text on active layer");
-                    return true;
-                }
-            }
-        }
-        false
+        self.create_text_layer_at(pos, None);
+        true
     }
 
     /// Recomposites the document layers into the egui GPU canvas texture
