@@ -6,11 +6,67 @@
 
 **A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.**
 
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE.md)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-brightgreen.svg)](https://github.com/LeTrollologist/Hollow-Canvas)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+<br />
 
+<!-- Tier 1: Project Metadata & Quality Assurance Badges -->
+<p align="center">
+  <a href="https://github.com/LeTrollologist/Hollow-Canvas/releases">
+    <img src="https://img.shields.io/badge/Release-v1.0.3--alpha-A89EE0?style=for-the-badge&logo=github&logoColor=0B1021&labelColor=0B1021" alt="Release" />
+  </a>
+  <a href="crates/">
+    <img src="https://img.shields.io/badge/Engine-100%25_Pure_Rust-E28BF0?style=for-the-badge&logo=rust&logoColor=0B1021&labelColor=0B1021" alt="Engine" />
+  </a>
+  <a href="crates/hollow-render/">
+    <img src="https://img.shields.io/badge/Renderer-Zero--Allocation_60%2B_FPS-5CE0D8?style=for-the-badge&logo=opengl&logoColor=0B1021&labelColor=0B1021" alt="Renderer" />
+  </a>
+  <a href="PRIVACY.md">
+    <img src="https://img.shields.io/badge/Privacy-Offline_%26_Zero_Telemetry-7C6EE6?style=for-the-badge&labelColor=0B1021" alt="Privacy" />
+  </a>
+  <a href="crates/hollow-io/">
+    <img src="https://img.shields.io/badge/Format-HCV_v4_%2B_PNG_Export-7EF2E8?style=for-the-badge&labelColor=0B1021" alt="Project Format" />
+  </a>
+  <a href="LICENSE.md">
+    <img src="https://img.shields.io/badge/License-GPL--3.0-FDCB6E?style=for-the-badge&logo=opensourceinitiative&logoColor=0B1021&labelColor=0B1021" alt="License" />
+  </a>
+</p>
+
+<!-- Tier 2: Supported Target Architectures & Delivery Stack -->
+<p align="center">
+  <img src="https://img.shields.io/badge/Target-Windows_x86__64-5CE0D8?style=flat-square&labelColor=0B1021" alt="Windows x86_64" />
+  &nbsp;
+  <img src="https://img.shields.io/badge/Target-Linux_x86__64-A89EE0?style=flat-square&labelColor=0B1021" alt="Linux x86_64" />
+  &nbsp;
+  <img src="https://img.shields.io/badge/Target-macOS_Universal-E28BF0?style=flat-square&labelColor=0B1021" alt="macOS Universal" />
+</p>
+
+<p align="center">
+  <a href="Cargo.toml">
+    <img src="https://img.shields.io/badge/UI-egui_0.28_%2F_eframe-7EF2E8?style=flat-square&labelColor=0B1021" alt="UI Stack" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/LeTrollologist/vpack-archiver">
+    <img src="https://img.shields.io/badge/Packager-VPack_2.0.1-7C6EE6?style=flat-square&labelColor=0B1021" alt="Packager" />
+  </a>
+  &nbsp;
+  <a href="RELEASE_PROCESS.md">
+    <img src="https://img.shields.io/badge/Integrity-Ed25519_%2B_CRC--32-FDCB6E?style=flat-square&labelColor=0B1021" alt="Integrity" />
+  </a>
+</p>
+
+<!-- Tier 3: Interactive Quick Navigation Buttons -->
+<p align="center">
+  <a href="#-installation--getting-started">
+    <img src="https://img.shields.io/badge/%E2%9A%A1_Quickstart-Run_Natively-5CE0D8?style=for-the-badge&labelColor=0B1021" alt="Quickstart" />
+  </a>
+  &nbsp;
+  <a href="#key-highlights">
+    <img src="https://img.shields.io/badge/%F0%9F%8E%A8_Feature_Tour-Studio_Toolset-A89EE0?style=for-the-badge&labelColor=0B1021" alt="Feature Tour" />
+  </a>
+  &nbsp;
+  <a href="#-keyboard-shortcuts--controls">
+    <img src="https://img.shields.io/badge/%E2%8C%A8%EF%B8%8F_Shortcuts-Full_Reference-E28BF0?style=for-the-badge&labelColor=0B1021" alt="Shortcuts" />
+  </a>
+</p>
 
 </div>
 
@@ -42,11 +98,15 @@
 - 📁 **Nested Layer Groups (Folders)**: Hierarchical folder management with collapsible trees, ancestor visibility/opacity inheritance, and one-click group duplication/ungrouping.
 - 🖌️ **Selection Brush & Eraser**: Direct 8-bit alpha mask painting and erasing with brush dynamics, hardness falloff, and live ruby quick-mask overlay.
 - 🎨 **Modern Studio Toolset**: Brush, Pencil, Watercolor (wet edge/falloff simulation), Chalk (grain dispersion), Spray (stochastic scatter), Smudge (directional velocity smear), Linear & Radial Gradients, Magic Wand fuzzy selection, Eraser modes (Soft, Hard 1-Bit, Color-Target), Dual-Color Vector Shapes, and Reference-layer Flood Fill.
+- 🔤 **Custom Typography & Text Engine**: Text layers rendered through `ab_glyph` with the full system font list plus direct `.ttf`/`.otf` file import, real-time font size, line spacing and letter tracking, Left/Center/Right alignment, subpixel-antialiased rasterization, and on-canvas placement/editing with per-edit undo snapshots.
+- 🧅 **Frame Animation Timeline**: Multi-frame timeline with play/pause preview, adjustable FPS and loop playback, frame add/duplicate/delete/reorder, ghost onion skinning (configurable previous/next frame counts and opacity), and <kbd>[</kbd> / <kbd>]</kbd> frame stepping.
+- 🪟 **Windows Shell Integration & Drag-and-Drop**: Registers "Open with Hollow Canvas" in the Explorer context menu for `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.ico`, `.tga`, `.tiff` and `.hcv`, with one-click register/unregister from *File → Windows Context Menu Integration…* or the `--register-shell` / `--unregister-shell` CLI flags, plus native `WM_DROPFILES` drag-and-drop file opening.
 - 🔒 **Layer Alpha Lock & Clipping Masks**: Protect layer transparency (`Alpha Lock`) or clip layers directly to underlying art bounds (`Clipping Mask`).
 - 👁 **Zen / Full Canvas Mode**: Toggle all UI docks and toolbars with <kbd>Tab</kbd> for pure, distraction-free illustration with floating restore controls.
 - ✦ **New Canvas Studio**: Pre-loaded potentials (1K/2K/4K Square, 1080p/4K Displays, A4/A5 Print @ 300 DPI, Social Media Banners, Pixel Art) and custom dimensions with aspect-ratio locking.
 - 📐 **Symmetry & Grid Overlays**: Real-time Horizontal, Vertical, Quad, and multi-segment Radial/Mandala symmetry, with toggleable pixel grids (8px–128px) and dynamic viewport rulers.
-- 💡 **Reference Lightbox**: Floating reference image dock with toggleable high-contrast white lightbox and checkerboard backlight modes.
+- 💡 **Reference Viewer & Tracing Paper**: Floating `🖼` reference dock (detached window or on-canvas tracing mode) with zoom/pan, <kbd>T</kbd> tracing-paper toggle, and Dark / Pure-White Lightbox / Checkerboard backlight modes.
+- 🪞 **View Flip & Fresh-Eye Review**: Horizontal viewport flip (<kbd>H</kbd>) — composition-only, never touches pixel data — for catching asymmetry while painting.
 - 🛡️ **Zero-Allocation Rendering**: Highly optimized software rendering pipeline with reusable composite buffers for silky smooth 60+ FPS viewport navigation and drawing.
 - 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.hcv` v4) alongside Ed25519-signed `.vpack` releases.
 
@@ -61,7 +121,7 @@ Hollow Canvas/
 ├── assets/           # Application icons (SVG, ICO, PNG) and banner art
 ├── crates/
 │   ├── hollow-core/  # Core domain models, perspective geometry, affine/quad/mesh/TPS deformation, adjustment filters, layers, and rasterizers
-│   ├── hollow-render/# Software renderer, perspective guides, texture caching, grid/ruler overlays, and UI primitives
+│   ├── hollow-render/ # Software renderer, perspective guides, texture caching, grid/ruler overlays, and UI primitives
 │   ├── hollow-io/    # Binary HCV v4 project serialization, PNG export, and file parsing
 │   ├── hollow-ui/    # Modern egui-based dock panels, studio viewport, tools shelf, transform studio, perspective dock, and palettes
 │   └── hollow-app/   # Universal cross-platform desktop application orchestrator via eframe
@@ -77,18 +137,18 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 [**VPack Archiver**](https://github.com/LeTrollologist/vpack-archiver) is the high-performance universal archive manager for `.vpack` packages.
 
-1. Download [`hollow-canvas-v0.17.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) and [`hollow-publisher.pub`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v1.0.3-alpha-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) and [`hollow-publisher.pub`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the package with `vpack`:
    ```bash
    # Extract all files
-   vpack extract hollow-canvas-v0.17.0-windows-x86_64.vpack
+   vpack extract hollow-canvas-v1.0.3-alpha-windows-x86_64.vpack
 
    # Or extract to a custom directory
-   vpack extract hollow-canvas-v0.17.0-windows-x86_64.vpack -o ./HollowCanvas/
+   vpack extract hollow-canvas-v1.0.3-alpha-windows-x86_64.vpack -o ./HollowCanvas/
    ```
 3. *(Optional)* Verify Ed25519 signature and CRC-32 integrity:
    ```bash
-   vpack test hollow-canvas-v0.17.0-windows-x86_64.vpack
+   vpack test hollow-canvas-v1.0.3-alpha-windows-x86_64.vpack
    ```
 4. Run `hollow-canvas.exe`.
 
@@ -98,10 +158,10 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 No additional archive tools required — works with standard Windows extraction:
 
-1. Download [`hollow-canvas-v0.17.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v1.0.3-alpha-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the zip file using PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\hollow-canvas-v0.17.0-windows-x86_64.zip -DestinationPath .\HollowCanvas
+   Expand-Archive -Path .\hollow-canvas-v1.0.3-alpha-windows-x86_64.zip -DestinationPath .\HollowCanvas
    ```
 3. Double-click `HollowCanvas\hollow-canvas.exe` to launch immediately.
 
@@ -112,8 +172,9 @@ No additional archive tools required — works with standard Windows extraction:
 If you prefer building from source with full compiler optimizations:
 
 **Prerequisites:**
-- [Rust Toolchain](https://www.rust-lang.org/tools/install) (1.75+ recommended)
-- Windows 10 / 11 (64-bit)
+- [Rust Toolchain](https://www.rust-lang.org/tools/install) — 1.80+ recommended (this release was built and verified with `rustc 1.98.0`)
+- **Windows 10 / 11 (64-bit)** for the prebuilt binaries in `dist/`
+- Linux / macOS build from source through `eframe` 0.28 (`winit`, `glow`, X11/Wayland/Cocoa) — no Windows SDK required
 
 1. Clone the repository:
    ```bash
@@ -135,32 +196,81 @@ If you prefer building from source with full compiler optimizations:
 
 ## ⌨️ Keyboard Shortcuts & Controls
 
+### Tools
+
 | Action | Shortcut |
 | :--- | :--- |
-| **Zen / Full Canvas Mode** | <kbd>Tab</kbd> |
-| **Mixing Scratchpad Dock** | <kbd>F4</kbd> |
-| **Reference Lightbox Dock** | <kbd>F3</kbd> |
-| **Brush Tool** | <kbd>B</kbd> |
-| **Pencil Tool** | <kbd>P</kbd> |
-| **Magic Wand Tool** | <kbd>W</kbd> |
-| **Gradient Tool** | <kbd>G</kbd> |
-| **Eraser Tool** | <kbd>E</kbd> |
-| **Eyedropper (Pick Color)** | <kbd>I</kbd> or <kbd>Alt</kbd> + Click |
+| **Brush** | <kbd>B</kbd> |
+| **Pencil** | <kbd>P</kbd> |
+| **Eraser** | <kbd>E</kbd> |
+| **Magic Wand (fuzzy select)** | <kbd>W</kbd> |
+| **Gradient** | <kbd>G</kbd> |
 | **Marquee Select** | <kbd>M</kbd> |
-| **Move / Pan View** | <kbd>V</kbd> (Drag) |
-| **Viewport Pan** | <kbd>Space</kbd> + Drag or Middle Mouse Drag |
-| **Viewport Zoom** | <kbd>Mouse Wheel</kbd> |
+| **Lasso Select** | <kbd>L</kbd> |
+| **Selection Brush** | <kbd>Q</kbd> |
+| **Selection Eraser** | <kbd>Shift</kbd> + <kbd>Q</kbd> |
+| **Move Layer** | <kbd>V</kbd> |
+| **Free Transform Studio** | <kbd>Ctrl</kbd> + <kbd>T</kbd> |
+| **Eyedropper (Pick Color)** | <kbd>I</kbd> or <kbd>Alt</kbd> + Click |
 | **Swap Primary/Secondary Color** | <kbd>X</kbd> |
-| **Create New Canvas** | <kbd>Ctrl</kbd> + <kbd>N</kbd> |
+
+### Viewport & Canvas
+
+| Action | Shortcut |
+| :--- | :--- |
+| **Viewport Pan** | <kbd>Space</kbd> + Drag or Middle-Mouse Drag |
+| **Viewport Zoom** | <kbd>Mouse Wheel</kbd> |
+| **Fit to Screen** | <kbd>Ctrl</kbd> + <kbd>0</kbd> |
+| **Actual Size (100%)** | <kbd>Ctrl</kbd> + <kbd>1</kbd> |
+| **Zen / Full Canvas Mode** | <kbd>Tab</kbd> |
+| **Flip View Horizontally** | <kbd>H</kbd> |
 | **Toggle Canvas Grid** | <kbd>Ctrl</kbd> + <kbd>'</kbd> |
 | **Toggle Canvas Rulers** | <kbd>Ctrl</kbd> + <kbd>R</kbd> |
-| **Commit Polygon / Crop** | <kbd>Enter</kbd> |
-| **Cancel Polygon / Deselect** | <kbd>Esc</kbd> or <kbd>Ctrl</kbd> + <kbd>D</kbd> |
-| **Undo** | <kbd>Ctrl</kbd> + <kbd>Z</kbd> |
-| **Redo** | <kbd>Ctrl</kbd> + <kbd>Y</kbd> or <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> |
+| **Toggle Tracing Paper** | <kbd>T</kbd> |
+| **Toggle Perspective Snapping** | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd> |
+| **Mixing Scratchpad Dock** | <kbd>F4</kbd> |
+| **Perspective Studio Dock** | <kbd>F5</kbd> |
+
+### Animation Timeline
+
+| Action | Shortcut |
+| :--- | :--- |
+| **Toggle Onion Skinning** | <kbd>O</kbd> |
+| **Previous / Next Frame** | <kbd>[</kbd> / <kbd>]</kbd> |
+
+### Document & Selection
+
+| Action | Shortcut |
+| :--- | :--- |
+| **New Canvas** | <kbd>Ctrl</kbd> + <kbd>N</kbd> |
+| **Open Project / Image** | <kbd>Ctrl</kbd> + <kbd>O</kbd> |
 | **Save Project** | <kbd>Ctrl</kbd> + <kbd>S</kbd> |
 | **Export PNG** | <kbd>Ctrl</kbd> + <kbd>E</kbd> |
-| **Open Project** | <kbd>Ctrl</kbd> + <kbd>O</kbd> |
+| **Select All** | <kbd>Ctrl</kbd> + <kbd>A</kbd> |
+| **Deselect** | <kbd>Ctrl</kbd> + <kbd>D</kbd> or <kbd>Esc</kbd> |
+| **Fill Selection (active layer)** | <kbd>Shift</kbd> + <kbd>F5</kbd> or <kbd>Alt</kbd> + <kbd>Backspace</kbd> |
+| **Invert Colors** | <kbd>Ctrl</kbd> + <kbd>I</kbd> |
+| **Commit Polygon / Crop / Transform** | <kbd>Enter</kbd> |
+| **Cancel Polygon / Crop / Transform** | <kbd>Esc</kbd> |
+| **Undo** | <kbd>Ctrl</kbd> + <kbd>Z</kbd> |
+| **Redo** | <kbd>Ctrl</kbd> + <kbd>Y</kbd> or <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> |
+
+> Global hotkeys are suspended while a text box is being edited, so <kbd>B</kbd>, <kbd>T</kbd>, <kbd>Q</kbd>, … type normal characters instead of switching tools.
+
+---
+
+## 🖥️ Command-Line Interface
+
+The packaged binary (`hollow-canvas.exe`; `hollow-app.exe` when built with Cargo) also exposes a headless CLI:
+
+| Command | Description |
+| :--- | :--- |
+| `hollow-canvas.exe [FILE]` | Launch the studio, optionally opening an image or `.hcv` project immediately |
+| `hollow-canvas.exe --register-shell` | Register **Open with Hollow Canvas** in the Windows Explorer context menu |
+| `hollow-canvas.exe --unregister-shell` | Remove the Explorer context-menu association |
+| `hollow-canvas.exe export <INPUT> -o <OUTPUT> [--format png\|jpg\|webp]` | Flatten a project/image to a single image without starting the UI |
+| `hollow-canvas.exe inspect <INPUT>` | Print canvas size, active layer, theme, and the full layer stack |
+| `hollow-canvas.exe --help` | Print the CLI usage summary |
 
 ---
 
