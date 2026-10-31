@@ -64,7 +64,7 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
 | Per-monitor V2 DPI awareness | ✅ | `SetProcessDpiAwarenessContext` + `egui` pixels-per-point |
 | Undo memory budget | ✅ | 512 MiB default; oldest steps evicted, newest kept |
 | Theme persistence | ✅ | Saved with preferences |
-| CI (`cargo check` / `test` / release build) | ✅ | `.github/workflows/ci.yml` |
+| CI | ✅ | Local only — `make check` / `python scripts/pipeline.py <tag> --no-publish` (no GitHub Actions by design) |
 
 ---
 

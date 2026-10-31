@@ -29,7 +29,7 @@
     <img src="https://img.shields.io/badge/License-GPL--3.0-FDCB6E?style=for-the-badge&logo=opensourceinitiative&logoColor=0B1021&labelColor=0B1021" alt="License" />
   </a>
   <a href="crates/hollow-core/src/tests.rs">
-    <img src="https://img.shields.io/badge/Tests-50_Passing-22C55E?style=for-the-badge&logo=githubactions&logoColor=0B1021&labelColor=0B1021" alt="Tests" />
+    <img src="https://img.shields.io/badge/Tests-50_Passing-22C55E?style=for-the-badge&labelColor=0B1021" alt="Tests" />
   </a>
 </p>
 
@@ -294,6 +294,16 @@ Contributions are welcome! Please feel free to submit issues, feature requests, 
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+### Local verification (no GitHub Actions)
+
+Releases are verified entirely on the developer machine — there is no CI
+workflow by design (see [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md)):
+
+```bash
+make check                                            # cargo check --all-targets + workspace tests
+python scripts/pipeline.py v1.0.4-alpha --no-publish  # build, test, audit, package, sign (no upload)
+```
 
 ---
 
