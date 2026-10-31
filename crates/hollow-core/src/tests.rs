@@ -812,6 +812,7 @@ mod tests {
     fn test_non_destructive_adjustment_layers() {
         use crate::layer::AdjustmentType;
 
+
         let mut doc = Document::new(10, 10);
         // Base drawing layer filled with gray (128, 128, 128, 255)
         for y in 0..10 {
@@ -943,5 +944,104 @@ mod tests {
                 assert!(w <= 160.0); // Bounded with minor tolerance
             }
         }
+    }
+
+    #[derive(Debug)]
+    struct CostlyCommand {
+        bytes: usize,
+    }
+
+    impl crate::history::Command for CostlyCommand {
+        fn name(&self) -> &'static str {
+            "Costly"
+        }
+        fn cost(&self) -> usize {
+            self.bytes
+        }
+        fn undo(&mut self, _doc: &mut Document) {}
+        fn redo(&mut self, _doc: &mut Document) {}
+    }
+
+    #[test]
+    fn test_history_memory_budget_evicts_oldest_steps() {
+        let mut doc = Document::new(4, 4);
+        let mut history = crate::history::HistoryStack::with_budget(100, 300);
+        for _ in 0..10 {
+            history.push(Box::new(CostlyCommand { bytes: 100 }));
+        }
+        // The byte budget (300) binds before the step cap (100).
+        assert_eq!(history.len(), 3);
+        assert!(history.retained_bytes() <= 300);
+        assert_eq!(history.max_bytes(), 300);
+
+        let generation = history.generation();
+        assert!(history.can_undo());
+        assert!(history.undo(&mut doc).is_some());
+        assert_eq!(history.generation(), generation + 1);
+        assert!(history.can_redo());
+    }
+
+    #[test]
+    fn test_selection_intersect_and_layer_alpha() {
+        let mut left = SelectionMask::from_rect(16, 16, Vec2::new(0.0, 0.0), Vec2::new(8.0, 16.0));
+        let right = SelectionMask::from_rect(16, 16, Vec2::new(4.0, 0.0), Vec2::new(16.0, 16.0));
+        left.intersect(&right);
+
+        assert!(left.is_selected(5, 5));
+        assert!(!left.is_selected(2, 2));
+        assert!(!left.is_selected(10, 5));
+
+        let mut pixels = vec![0u8; 4 * 4 * 4];
+        let alpha_index = (1 * 4 + 1) * 4 + 3;
+        pixels[alpha_index] = 255;
+        let from_alpha = SelectionMask::from_layer_alpha(&pixels, 4, 4, 8);
+        assert!(from_alpha.is_selected(1, 1));
+        assert!(!from_alpha.is_selected(0, 0));
+    }
+
+    #[test]
+    fn test_levels_pixelate_motion_blur_colorize() {
+        // Identity levels leave the value unchanged.
+        let mut pixel = vec![128u8, 128, 128, 255];
+        crate::filter::filter_levels(&mut pixel, 1, 1, 0.0, 1.0, 1.0, None);
+        assert_eq!(pixel[0], 128);
+
+        // Gamma > 1 brightens midtones (output = input^(1/gamma), Photoshop convention).
+        let mut pixel = vec![128u8, 128, 128, 255];
+        crate::filter::filter_levels(&mut pixel, 1, 1, 0.0, 1.0, 2.0, None);
+        assert!(pixel[0] > 128);
+
+        // Gamma < 1 darkens midtones.
+        let mut pixel = vec![128u8, 128, 128, 255];
+        crate::filter::filter_levels(&mut pixel, 1, 1, 0.0, 1.0, 0.5, None);
+        assert!(pixel[0] < 128);
+
+        // Pixelate flattens each block to its average.
+        let mut px = vec![0u8; 4 * 4 * 4];
+        for i in 0..16 {
+            px[i * 4] = if i < 8 { 0 } else { 200 };
+            px[i * 4 + 3] = 255;
+        }
+        crate::filter::filter_pixelate(&mut px, 4, 4, 4, None);
+        let flattened = px[0];
+        for i in 0..16 {
+            assert_eq!(px[i * 4], flattened);
+        }
+        assert_eq!(flattened, 100);
+
+        // Motion blur along 0 degrees averages horizontally.
+        let mut px = vec![0u8; 2 * 4];
+        px[0] = 255;
+        px[3] = 255;
+        px[7] = 255;
+        crate::filter::filter_motion_blur(&mut px, 2, 1, 1, 0.0, None);
+        assert!(px[0] > 0 && px[0] < 255);
+        assert_eq!(px[3], 255);
+
+        // Colorize rewrites RGB but preserves alpha.
+        let mut px = vec![100u8, 100, 100, 255];
+        crate::filter::filter_colorize(&mut px, 1, 1, 200.0, 0.6, None);
+        assert_eq!(px[3], 255);
+        assert_ne!((px[0], px[1], px[2]), (100, 100, 100));
     }
 }

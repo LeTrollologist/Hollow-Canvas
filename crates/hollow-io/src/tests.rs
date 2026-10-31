@@ -152,4 +152,107 @@ mod tests {
         assert_eq!(loaded_cfg.pos_x, 4.0);
         assert_eq!(loaded_cfg.pos_y, 6.0);
     }
+
+    #[test]
+    fn test_atomic_save_replaces_file_and_leaves_no_temp() {
+        let dir = std::env::temp_dir().join(format!("hc-atomic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("art.hcv");
+
+        let doc = Document::new(16, 16);
+        crate::project::save_project_file(&doc, &path).unwrap();
+
+        let mut bigger = Document::new(48, 32);
+        bigger.add_layer(Some("Second".to_string()));
+        crate::project::save_project_file(&bigger, &path).unwrap();
+
+        let loaded = crate::project::load_project_file(&path).unwrap();
+        assert_eq!((loaded.width, loaded.height), (48, 32));
+        assert_eq!(loaded.layers.len(), 2);
+
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "atomic save left a temp file behind");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_jpeg_quality_changes_output_size() {
+        let mut doc = Document::new(64, 64);
+        {
+            let layer = doc.active_layer_mut().unwrap();
+            for y in 0..64 {
+                for x in 0..64 {
+                    let idx = ((y * 64 + x) * 4) as usize;
+                    layer.pixels[idx] = (x * 4) as u8;
+                    layer.pixels[idx + 1] = (y * 4) as u8;
+                    layer.pixels[idx + 2] = ((x + y) * 2).min(255) as u8;
+                    layer.pixels[idx + 3] = 255;
+                }
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!("hc-jpeg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let low = dir.join("q20.jpg");
+        let high = dir.join("q95.jpg");
+
+        crate::export::export_flat_image_with_quality(
+            &doc,
+            &low,
+            crate::export::ExportFormat::Jpeg,
+            true,
+            Some(20),
+        )
+        .unwrap();
+        crate::export::export_flat_image_with_quality(
+            &doc,
+            &high,
+            crate::export::ExportFormat::Jpeg,
+            true,
+            Some(95),
+        )
+        .unwrap();
+
+        let low_len = std::fs::metadata(&low).unwrap().len();
+        let high_len = std::fs::metadata(&high).unwrap().len();
+        assert!(low_len > 0 && high_len > 0);
+        assert!(
+            high_len > low_len,
+            "quality 95 ({high_len} bytes) should exceed quality 20 ({low_len} bytes)"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_sprite_sheet_packs_frames_in_grid() {
+        let (w, h) = (8u32, 8u32);
+        let red = [255u8, 0, 0, 255];
+        let blue = [0u8, 0, 255, 255];
+        let frame = |color: [u8; 4]| -> Vec<u8> {
+            color.iter().copied().cycle().take((w * h * 4) as usize).collect()
+        };
+
+        let dir = std::env::temp_dir().join(format!("hc-sheet-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sheet_path = dir.join("sheet.png");
+
+        let (sw, sh) =
+            crate::export::export_sprite_sheet(&[frame(red), frame(blue)], w, h, 2, &sheet_path)
+                .unwrap();
+        assert_eq!((sw, sh), (16, 8));
+
+        let sheet = image::open(&sheet_path).unwrap().to_rgba8();
+        assert_eq!(sheet.dimensions(), (16, 8));
+        assert_eq!(sheet.get_pixel(0, 0).0, red);
+        assert_eq!(sheet.get_pixel(8, 0).0, blue);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
 }

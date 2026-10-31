@@ -3,8 +3,8 @@ use hollow_core::brush::{BrushPoint, ToolType};
 use hollow_core::history::LayerPixelsSnapshotCommand;
 use hollow_core::rasterizer::StrokeRasterizer;
 use hollow_core::selection::SelectionMask;
-use hollow_io::export::{export_flat_image, ExportFormat};
-use hollow_io::project::{load_project_file, save_project_file};
+use hollow_io::export::{export_flat_image, export_flat_image_with_quality, ExportFormat};
+use hollow_io::project::load_project_file;
 use hollow_render::SoftwareRenderer;
 use hollow_ui::{
     configure_hollow_style, render_ui, AppState, PendingFileAction,
@@ -163,6 +163,12 @@ extern "system" {
     fn SetClipboardData(uFormat: UINT, hMem: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     fn EmptyClipboard() -> i32;
     fn GlobalAlloc(uFlags: UINT, dwBytes: usize) -> *mut std::ffi::c_void;
+    fn SetWindowTextW(hWnd: HWND, lpString: *const u16) -> i32;
+    fn MessageBoxW(hWnd: HWND, lpText: *const u16, lpCaption: *const u16, uType: UINT) -> i32;
+    fn GetDpiForSystem() -> u32;
+    fn SetProcessDpiAwarenessContext(value: isize) -> i32;
+    fn GetPointerType(pointerId: u32, pointerType: *mut u32) -> i32;
+    fn GetPointerPenInfo(pointerId: u32, penInfo: *mut std::ffi::c_void) -> i32;
 }
 
 fn vk_to_egui_key(vk: usize) -> Option<egui::Key> {
@@ -296,6 +302,14 @@ struct HollowCanvasDesktopApp {
     stroke_dirty: bool,
     stroke_perspective_axis: Option<Vec2>,
     has_initialized_view: bool,
+    /// Live stylus pressure (0..=1) sampled from `WM_POINTER*`; `None` for mouse input.
+    pen_pressure: Option<f32>,
+    /// Tilt in degrees from the pen, reserved for tilt-aware brush dynamics.
+    pen_tilt: (f32, f32),
+    /// Last window title pushed to Win32, to avoid redundant SetWindowTextW calls.
+    last_window_title: String,
+    /// Timestamp of the previous autosave check.
+    last_autosave_tick: Instant,
 }
 
 fn hit_test_transform_handle(
@@ -577,6 +591,10 @@ impl HollowCanvasDesktopApp {
 
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     const WM_DESTROY: UINT = 0x0002;
+    const WM_CLOSE: UINT = 0x0010;
+    const WM_POINTERUPDATE: UINT = 0x0245;
+    const WM_POINTERDOWN: UINT = 0x0246;
+    const WM_POINTERUP: UINT = 0x0247;
     const WM_SIZE: UINT = 0x0005;
     const WM_PAINT: UINT = 0x000F;
     const WM_MOUSEMOVE: UINT = 0x0200;
@@ -598,6 +616,75 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
     };
 
     match msg {
+        WM_CLOSE => {
+            // Guard unsaved work: Save / Discard / Cancel before the window dies.
+            if app.state.is_dirty() {
+                let text = to_wide("This artwork has unsaved changes.\n\nSave before closing?");
+                let caption = to_wide("Hollow Canvas");
+                let answer = MessageBoxW(
+                    hwnd,
+                    text.as_ptr(),
+                    caption.as_ptr(),
+                    0x0000_0003 | 0x0000_0030, // MB_YESNOCANCEL | MB_ICONWARNING
+                );
+
+                match answer {
+                    2 => return 0, // Cancel
+                    6 => {
+                        // Yes: quick-save when a path is known, otherwise prompt for one.
+                        let saved = if app.state.document_path.is_some() {
+                            app.state.quick_save()
+                        } else if let Some(path) = hollow_ui::save_project_dialog() {
+                            app.state.save_project_to(&path).is_ok()
+                        } else {
+                            false
+                        };
+                        if !saved {
+                            return 0; // cancel dialog or write failure — keep the window open
+                        }
+                    }
+                    _ => {} // No: discard changes
+                }
+            }
+            app.state.save_preferences();
+            PostQuitMessage(0);
+            0
+        }
+        WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP => {
+            // Stylus pressure sampling. Mouse input stays on the legacy WM_MOUSE*
+            // path (Windows delivers both for pens), so this only annotates strokes.
+            let pointer_id = (wparam & 0xFFFF) as u32;
+            let mut pointer_type: u32 = 0;
+            let is_pen = GetPointerType(pointer_id, &mut pointer_type) != 0 && pointer_type == 2; // PT_PEN
+
+            if !is_pen {
+                return DefWindowProcW(hwnd, msg, wparam, lparam);
+            }
+
+            if msg == WM_POINTERUP {
+                app.pen_pressure = None;
+                app.pen_tilt = (0.0, 0.0);
+                return 0;
+            }
+
+            // POINTER_PEN_INFO layout on x64: POINTER_INFO (96 bytes), penFlags,
+            // penMask, pressure (0..=1024), rotation, tiltX, tiltY.
+            #[cfg(target_pointer_width = "64")]
+            {
+                let mut buf = [0u8; 256];
+                let ok = GetPointerPenInfo(pointer_id, buf.as_mut_ptr() as *mut std::ffi::c_void);
+                if ok != 0 {
+                    let pressure = u32::from_ne_bytes([buf[104], buf[105], buf[106], buf[107]]);
+                    let tilt_x = i32::from_ne_bytes([buf[112], buf[113], buf[114], buf[115]]);
+                    let tilt_y = i32::from_ne_bytes([buf[116], buf[117], buf[118], buf[119]]);
+                    if pressure > 0 {
+                        app.pen_pressure = Some((pressure as f32 / 1024.0).clamp(0.01, 1.0));
+                    }
+                    app.pen_tilt = (tilt_x as f32, tilt_y as f32);
+                }
+            }
+            0
+        }
         WM_DESTROY => {
             PostQuitMessage(0);
             0
@@ -873,7 +960,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.current_velocity = app.current_velocity * 0.65 + instant_speed * 0.35;
 
                     // Compute velocity dynamic pressure
-                    let pressure = if app.state.brush.velocity_dynamics {
+                    let velocity_pressure = if app.state.brush.velocity_dynamics {
                         let speed_ratio = (app.current_velocity / 1400.0).clamp(0.0, 1.0);
                         let taper = app.state.brush.velocity_taper_strength.clamp(0.0, 1.0);
                         let min_size = app.state.brush.velocity_min_size.clamp(0.05, 1.0);
@@ -881,6 +968,19 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         (1.0 - taper * (1.0 - speed_factor)).clamp(min_size, 1.0)
                     } else {
                         1.0
+                    };
+
+                    // A stylus in contact overrides velocity with real pressure; velocity
+                    // dynamics then only adds a light taper on top when enabled.
+                    let pressure = match app.pen_pressure {
+                        Some(pen) if pen > 0.0 => {
+                            if app.state.brush.velocity_dynamics {
+                                (pen * velocity_pressure).clamp(0.0, 1.0)
+                            } else {
+                                pen
+                            }
+                        }
+                        _ => velocity_pressure,
                     };
 
                     // Compute S-Level Global Stroke Stabilization & Lazy Rope Pull
@@ -1582,8 +1682,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.state.active_text_layer_id = None;
                         app.state.set_status("Finished text editing");
                     }
-                    0x53 if is_ctrl => { // Ctrl+S: Save Project
-                        app.state.pending_file_action = Some(PendingFileAction::SaveProject);
+                    0x53 if is_ctrl => { // Ctrl+S (save) / Ctrl+Shift+S (save as)
+                        app.state.pending_file_action = Some(if is_shift {
+                            PendingFileAction::SaveProjectAs
+                        } else {
+                            PendingFileAction::SaveProject
+                        });
                     }
                     0x4E if is_ctrl => { // Ctrl+N: New Canvas
                         app.state.show_new_canvas_dialog = true;
@@ -1591,7 +1695,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     0x4F if is_ctrl => { // Ctrl+O: Open Project
                         app.state.pending_file_action = Some(PendingFileAction::OpenProject);
                     }
-                    0x45 if is_ctrl => { // Ctrl+E: Export PNG
+                    0x45 if is_ctrl => { // Ctrl+E: Export image
                         app.state.pending_file_action = Some(PendingFileAction::ExportPng);
                     }
                     _ => {
@@ -1632,8 +1736,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.state.set_status(format!("Redo: {}", action));
                     }
                 }
-                0x53 if is_ctrl => { // Ctrl+S
-                    app.state.pending_file_action = Some(PendingFileAction::SaveProject);
+                0x53 if is_ctrl => { // Ctrl+S (save) / Ctrl+Shift+S (save as)
+                    app.state.pending_file_action = Some(if is_shift {
+                        PendingFileAction::SaveProjectAs
+                    } else {
+                        PendingFileAction::SaveProject
+                    });
                 }
                 0x4F if is_ctrl => { // Ctrl+O
                     app.state.pending_file_action = Some(PendingFileAction::OpenProject);
@@ -2110,14 +2218,31 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.state.document = doc;
                         app.state.history.clear();
                         app.state.selection = None;
+                        app.state.document_path = None;
+                        app.state.mark_saved();
                         app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
                         app.state.set_status(format!("New canvas created: {} × {} px", w, h));
                     }
                     PendingFileAction::SaveProject => {
+                        // Quick-save to the known path; only prompt when the file is new.
+                        let target = app.state.document_path.clone();
+                        let path = match target {
+                            Some(p) => Some(p),
+                            None => hollow_ui::save_project_dialog(),
+                        };
+                        match path {
+                            Some(p) => {
+                                if let Err(e) = app.state.save_project_to(&p) {
+                                    app.state.set_status(format!("Save error: {}", e));
+                                }
+                            }
+                            None => app.state.set_status("Save cancelled"),
+                        }
+                    }
+                    PendingFileAction::SaveProjectAs => {
                         if let Some(path) = hollow_ui::save_project_dialog() {
-                            match save_project_file(&app.state.document, &path) {
-                                Ok(_) => app.state.set_status(format!("Saved to {}", path.display())),
-                                Err(e) => app.state.set_status(format!("Save error: {}", e)),
+                            if let Err(e) = app.state.save_project_to(&path) {
+                                app.state.set_status(format!("Save error: {}", e));
                             }
                         }
                     }
@@ -2127,6 +2252,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                                 Ok(doc) => {
                                     app.state.document = doc;
                                     app.state.history.clear();
+                                    app.state.document_path = Some(path.clone());
+                                    app.state.mark_saved();
+                                    app.state.note_recent_file(&path);
+                                    app.state.save_preferences();
                                     app.state.set_status(format!("Loaded {}", path.display()));
                                 }
                                 Err(e) => app.state.set_status(format!("Load error: {}", e)),
@@ -2134,9 +2263,24 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         }
                     }
                     PendingFileAction::ExportPng => {
-                        if let Some(path) = hollow_ui::export_png_dialog() {
-                            match export_flat_image(&app.state.document, &path, ExportFormat::Png, !app.state.document.is_transparent) {
-                                Ok(_) => app.state.set_status(format!("Exported PNG to {}", path.display())),
+                        let (format, extension, label) = match app.state.export_format {
+                            1 => (ExportFormat::Jpeg, "jpg", "JPEG Image (*.jpg)"),
+                            2 => (ExportFormat::WebP, "webp", "WebP Image (*.webp)"),
+                            _ => (ExportFormat::Png, "png", "PNG Image (*.png)"),
+                        };
+                        if let Some(path) = hollow_ui::export_image_dialog(extension, label) {
+                            match export_flat_image_with_quality(
+                                &app.state.document,
+                                &path,
+                                format,
+                                !app.state.document.is_transparent,
+                                Some(app.state.jpeg_quality),
+                            ) {
+                                Ok(_) => app.state.set_status(format!(
+                                    "Exported {} to {}",
+                                    extension.to_uppercase(),
+                                    path.display()
+                                )),
                                 Err(e) => app.state.set_status(format!("Export error: {}", e)),
                             }
                         }
@@ -2171,6 +2315,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         Ok(doc) => {
                             app.state.document = doc;
                             app.state.history.clear();
+                            app.state.document_path = Some(path.clone());
+                            app.state.mark_saved();
+                            app.state.note_recent_file(&path);
+                            app.state.save_preferences();
                             app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
                             app.state.set_status(format!("Loaded project: {}", path.display()));
                         }
@@ -2187,6 +2335,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     }
                     app.state.document = doc;
                     app.state.history.clear();
+                    app.state.document_path = None;
+                    app.state.mark_saved();
                     app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
                     app.state.set_status(format!("Opened image: {} ({} × {} px)", path.display(), w, h));
                 }
@@ -2289,15 +2439,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("=== HOLLOW CANVAS · GRAPHICS STUDIO ===");
-    let initial_width = 1380;
-    let initial_height = 860;
 
-    let app_state = if args.len() > 1 && !args[1].starts_with('-') {
+    // Opt into per-monitor V2 DPI awareness before any window exists, so GDI
+    // surfaces are not bitmap-stretched on scaled displays. Failure is harmless
+    // (already-set awareness or an older Windows build).
+    let dpi_scale = unsafe {
+        let _ = SetProcessDpiAwarenessContext(-4); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+        (GetDpiForSystem().max(96) as f32) / 96.0
+    };
+
+    let initial_width = (1380.0 * dpi_scale) as usize;
+    let initial_height = (860.0 * dpi_scale) as usize;
+
+    let mut app_state = if args.len() > 1 && !args[1].starts_with('-') {
         let initial_file = PathBuf::from(&args[1]);
         if initial_file.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("hcv")).unwrap_or(false) {
             match load_project_file(&initial_file) {
                 Ok(doc) => {
                     let mut s = AppState::from_document(doc);
+                    s.document_path = Some(initial_file.clone());
+                    s.mark_saved();
+                    s.note_recent_file(&initial_file);
                     s.set_status(format!("Loaded project: {}", initial_file.display()));
                     s
                 }
@@ -2342,7 +2504,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         AppState::default()
     };
 
+    app_state.load_preferences();
+
+    // Offer the crash-recovery snapshot left behind by a previous session.
+    {
+        let recovery_path = app_state.autosave_path();
+        if recovery_path.exists() {
+            let text = to_wide(&format!(
+                "A crash-recovery snapshot was found:\n{}\n\nRestore it?\n\nYes = open the snapshot\nNo = discard it and keep the saved file",
+                recovery_path.display()
+            ));
+            let caption = to_wide("Hollow Canvas · Recover artwork");
+            let answer = unsafe {
+                MessageBoxW(
+                    std::ptr::null_mut(),
+                    text.as_ptr(),
+                    caption.as_ptr(),
+                    0x0000_0004 | 0x0000_0040, // MB_YESNO | MB_ICONINFORMATION
+                )
+            };
+            if answer == 6 {
+                match load_project_file(&recovery_path) {
+                    Ok(doc) => {
+                        app_state = AppState::from_document(doc);
+                        app_state.load_preferences();
+                        app_state.mark_dirty();
+                        app_state.note_recent_file(&recovery_path);
+                        app_state
+                            .set_status("Recovered autosave snapshot — use Save As to keep it");
+                    }
+                    Err(e) => eprintln!("Failed to restore autosave snapshot: {}", e),
+                }
+            } else {
+                let _ = std::fs::remove_file(&recovery_path);
+            }
+        }
+    }
+
     let egui_ctx = egui::Context::default();
+    egui_ctx.set_pixels_per_point(dpi_scale);
     configure_hollow_style(&egui_ctx, app_state.theme_accent_color());
 
     let mut desktop_app = Box::new(HollowCanvasDesktopApp {
@@ -2372,6 +2572,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stroke_dirty: false,
         stroke_perspective_axis: None,
         has_initialized_view: false,
+        pen_pressure: None,
+        pen_tilt: (0.0, 0.0),
+        last_window_title: String::new(),
+        last_autosave_tick: Instant::now(),
     });
 
     unsafe {
@@ -2459,6 +2663,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
+
+            // Window title mirrors the active document (with a trailing `*` when dirty).
+            let app_ptr = GLOBAL_APP_PTR;
+            if !app_ptr.is_null() {
+                let app = &mut *app_ptr;
+                let title = format!("Hollow Canvas · {}", app.state.document_title());
+                if title != app.last_window_title {
+                    app.last_window_title = title.clone();
+                    let wide = to_wide(&title);
+                    SetWindowTextW(hwnd, wide.as_ptr());
+                }
+
+                // Periodic crash-recovery snapshot (checked at most every 5 s).
+                if app.last_autosave_tick.elapsed().as_secs() >= 5 {
+                    app.last_autosave_tick = Instant::now();
+                    app.state.maybe_autosave();
+                }
+            }
         }
 
         GLOBAL_APP_PTR = std::ptr::null_mut();

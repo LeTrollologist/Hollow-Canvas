@@ -221,6 +221,32 @@ impl SelectionMask {
         self.recompute_metadata();
     }
 
+    /// Multiplies both masks together (companion to union/subtract for boolean selection edits).
+    pub fn intersect(&mut self, other: &SelectionMask) {
+        if self.width != other.width || self.height != other.height {
+            return;
+        }
+        for (a, &b) in self.mask.iter_mut().zip(other.mask.iter()) {
+            *a = ((*a as u16 * b as u16) / 255) as u8;
+        }
+        self.recompute_metadata();
+    }
+
+    /// Builds a selection from a layer's alpha channel (`pixels` is tightly packed RGBA8).
+    ///
+    /// Alpha values below `threshold` are dropped so stray anti-aliasing fringes
+    /// do not create a selection; everything else keeps its fractional coverage.
+    pub fn from_layer_alpha(pixels: &[u8], width: u32, height: u32, threshold: u8) -> Self {
+        let size = (width as usize) * (height as usize);
+        let mut mask = vec![0u8; size];
+        let available = (pixels.len() / 4).min(size);
+        for i in 0..available {
+            let alpha = pixels[i * 4 + 3];
+            mask[i] = if alpha >= threshold { alpha } else { 0 };
+        }
+        Self::from_mask_vec(width, height, mask)
+    }
+
     #[inline]
     pub fn get_value(&self, x: u32, y: u32) -> u8 {
         if x < self.width && y < self.height {

@@ -730,3 +730,192 @@ pub fn filter_chromatic_aberration(
         }
     }
 }
+/// Levels: remaps the black/white input range and applies a midtone gamma.
+///
+/// `black` and `white` are normalized input levels (0.0..=1.0), `gamma` is the
+/// midtone exponent (1.0 = neutral, <1.0 brightens, >1.0 darkens).
+pub fn filter_levels(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    black: f32,
+    white: f32,
+    gamma: f32,
+    selection: Option<&SelectionMask>,
+) {
+    let black = black.clamp(0.0, 0.99);
+    let white = white.clamp(black + 0.01, 1.0);
+    let gamma = gamma.clamp(0.05, 10.0);
+    let range = white - black;
+    let inv_gamma = 1.0 / gamma;
+    let total_pixels = (width * height) as usize;
+
+    for i in 0..total_pixels {
+        let x = (i as u32) % width;
+        let y = (i as u32) / width;
+
+        if let Some(mask) = selection {
+            if !mask.is_selected(x, y) {
+                continue;
+            }
+        }
+
+        let idx = i * 4;
+        if pixels[idx + 3] == 0 {
+            continue;
+        }
+
+        for c in 0..3 {
+            let normalized = (pixels[idx + c] as f32 / 255.0 - black) / range;
+            let shaped = normalized.clamp(0.0, 1.0).powf(inv_gamma);
+            pixels[idx + c] = (shaped * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
+/// Colorize: replaces chroma with a single hue/saturation while preserving luminance.
+pub fn filter_colorize(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    hue: f32,
+    saturation: f32,
+    selection: Option<&SelectionMask>,
+) {
+    let saturation = saturation.clamp(0.0, 1.0);
+    let total_pixels = (width * height) as usize;
+
+    for i in 0..total_pixels {
+        let x = (i as u32) % width;
+        let y = (i as u32) / width;
+
+        if let Some(mask) = selection {
+            if !mask.is_selected(x, y) {
+                continue;
+            }
+        }
+
+        let idx = i * 4;
+        if pixels[idx + 3] == 0 {
+            continue;
+        }
+
+        let r = pixels[idx] as f32;
+        let g = pixels[idx + 1] as f32;
+        let b = pixels[idx + 2] as f32;
+        let lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
+        let (nr, ng, nb) = hsl_to_rgb(hue, saturation, lum);
+        pixels[idx] = nr;
+        pixels[idx + 1] = ng;
+        pixels[idx + 2] = nb;
+    }
+}
+
+/// Pixelate: averages each `block`x`block` cell and writes the flat colour back.
+pub fn filter_pixelate(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    block: u32,
+    selection: Option<&SelectionMask>,
+) {
+    let block = block.clamp(2, 256);
+    if width == 0 || height == 0 {
+        return;
+    }
+    let src = pixels.to_vec();
+    let bw = width as usize;
+    let bh = height as usize;
+
+    for by in (0..bh).step_by(block as usize) {
+        for bx in (0..bw).step_by(block as usize) {
+            let x1 = (bx + block as usize).min(bw);
+            let y1 = (by + block as usize).min(bh);
+            let mut acc = [0u32; 4];
+            let mut count = 0u32;
+
+            for y in by..y1 {
+                for x in bx..x1 {
+                    let idx = (y * bw + x) * 4;
+                    for c in 0..4 {
+                        acc[c] += src[idx + c] as u32;
+                    }
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                continue;
+            }
+
+            let avg = [
+                (acc[0] / count) as u8,
+                (acc[1] / count) as u8,
+                (acc[2] / count) as u8,
+                (acc[3] / count) as u8,
+            ];
+
+            for y in by..y1 {
+                for x in bx..x1 {
+                    if let Some(mask) = selection {
+                        if !mask.is_selected(x as u32, y as u32) {
+                            continue;
+                        }
+                    }
+                    let idx = (y * bw + x) * 4;
+                    pixels[idx..idx + 4].copy_from_slice(&avg);
+                }
+            }
+        }
+    }
+}
+
+/// Motion blur: box-averages samples along a line of `distance` pixels at `angle_deg`.
+pub fn filter_motion_blur(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    distance: u32,
+    angle_deg: f32,
+    selection: Option<&SelectionMask>,
+) {
+    if distance == 0 || width == 0 || height == 0 {
+        return;
+    }
+    let dist = distance.clamp(1, 128) as i32;
+    let src = pixels.to_vec();
+    let w = width as i32;
+    let h = height as i32;
+    let rad = angle_deg.to_radians();
+    let dx = rad.cos();
+    let dy = rad.sin();
+    let samples = dist * 2 + 1;
+
+    for y in 0..h {
+        for x in 0..w {
+            if let Some(mask) = selection {
+                if !mask.is_selected(x as u32, y as u32) {
+                    continue;
+                }
+            }
+            let dst_idx = ((y * w + x) * 4) as usize;
+            if src[dst_idx + 3] == 0 {
+                continue;
+            }
+
+            let mut acc = [0u32; 4];
+            for s in -dist..=dist {
+                let sx = (x + (dx * s as f32).round() as i32).clamp(0, w - 1);
+                let sy = (y + (dy * s as f32).round() as i32).clamp(0, h - 1);
+                let s_idx = ((sy * w + sx) * 4) as usize;
+                for c in 0..4 {
+                    acc[c] += src[s_idx + c] as u32;
+                }
+            }
+            for c in 0..4 {
+                pixels[dst_idx + c] = (acc[c] / samples as u32) as u8;
+            }
+        }
+    }
+}
+
+

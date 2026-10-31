@@ -2,7 +2,8 @@ pub mod export;
 pub mod project;
 
 pub use export::{
-    export_animated_gif, export_flat_image, export_frame_sequence, ExportError, ExportFormat,
+    export_animated_gif, export_flat_image, export_flat_image_with_quality, export_frame_sequence,
+    export_sprite_sheet, ExportError, ExportFormat,
 };
 pub use project::{
     load_project_file, load_project_from_reader, save_project_file, save_project_to_writer,

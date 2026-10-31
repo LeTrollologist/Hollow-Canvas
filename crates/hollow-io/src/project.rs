@@ -194,9 +194,26 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
     Ok(())
 }
 
+/// Writes a project file atomically: the stream is written to a sibling
+/// `.hcv.tmp` file and renamed over the target only after it is fully flushed,
+/// so an interrupted save can never truncate an existing artwork.
 pub fn save_project_file(doc: &Document, path: impl AsRef<Path>) -> Result<(), ProjectError> {
-    let file = File::create(path)?;
-    save_project_to_writer(doc, file)
+    let path = path.as_ref();
+    let mut tmp_name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    tmp_name.push(".tmp");
+    let tmp_path = path.with_file_name(tmp_name);
+
+    let result = (|| -> Result<(), ProjectError> {
+        let file = File::create(&tmp_path)?;
+        save_project_to_writer(doc, file)?;
+        std::fs::rename(&tmp_path, path)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+    result
 }
 
 pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, ProjectError> {

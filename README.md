@@ -11,7 +11,7 @@
 <!-- Tier 1: Project Metadata & Quality Assurance Badges -->
 <p align="center">
   <a href="https://github.com/LeTrollologist/Hollow-Canvas/releases">
-    <img src="https://img.shields.io/badge/Release-v1.0.3--alpha-A89EE0?style=for-the-badge&logo=github&logoColor=0B1021&labelColor=0B1021" alt="Release" />
+    <img src="https://img.shields.io/badge/Release-v1.0.4--alpha-A89EE0?style=for-the-badge&logo=github&logoColor=0B1021&labelColor=0B1021" alt="Release" />
   </a>
   <a href="crates/">
     <img src="https://img.shields.io/badge/Engine-100%25_Pure_Rust-E28BF0?style=for-the-badge&logo=rust&logoColor=0B1021&labelColor=0B1021" alt="Engine" />
@@ -23,25 +23,28 @@
     <img src="https://img.shields.io/badge/Privacy-Offline_%26_Zero_Telemetry-7C6EE6?style=for-the-badge&labelColor=0B1021" alt="Privacy" />
   </a>
   <a href="crates/hollow-io/">
-    <img src="https://img.shields.io/badge/Format-HCV_v4_%2B_PNG_Export-7EF2E8?style=for-the-badge&labelColor=0B1021" alt="Project Format" />
+    <img src="https://img.shields.io/badge/Format-HCV_v5_%2B_Image_Export-7EF2E8?style=for-the-badge&labelColor=0B1021" alt="Project Format" />
   </a>
   <a href="LICENSE.md">
     <img src="https://img.shields.io/badge/License-GPL--3.0-FDCB6E?style=for-the-badge&logo=opensourceinitiative&logoColor=0B1021&labelColor=0B1021" alt="License" />
   </a>
+  <a href="crates/hollow-core/src/tests.rs">
+    <img src="https://img.shields.io/badge/Tests-50_Passing-22C55E?style=for-the-badge&logo=githubactions&logoColor=0B1021&labelColor=0B1021" alt="Tests" />
+  </a>
 </p>
 
-<!-- Tier 2: Supported Target Architectures & Delivery Stack -->
+<!-- Tier 2: Runtime Target & Delivery Stack -->
 <p align="center">
-  <img src="https://img.shields.io/badge/Target-Windows_x86__64-5CE0D8?style=flat-square&labelColor=0B1021" alt="Windows x86_64" />
+  <img src="https://img.shields.io/badge/Platform-Windows_10_%2F_11_x86__64-5CE0D8?style=flat-square&labelColor=0B1021" alt="Windows 10/11 x86_64" />
   &nbsp;
-  <img src="https://img.shields.io/badge/Target-Linux_x86__64-A89EE0?style=flat-square&labelColor=0B1021" alt="Linux x86_64" />
+  <img src="https://img.shields.io/badge/Toolchain-Rust_1.80%2B-E28BF0?style=flat-square&logo=rust&logoColor=0B1021&labelColor=0B1021" alt="Rust 1.80+" />
   &nbsp;
-  <img src="https://img.shields.io/badge/Target-macOS_Universal-E28BF0?style=flat-square&labelColor=0B1021" alt="macOS Universal" />
+  <img src="https://img.shields.io/badge/Undo-Bounded_Memory-7C6EE6?style=flat-square&labelColor=0B1021" alt="Bounded undo memory" />
 </p>
 
 <p align="center">
   <a href="Cargo.toml">
-    <img src="https://img.shields.io/badge/UI-egui_0.28_%2F_eframe-7EF2E8?style=flat-square&labelColor=0B1021" alt="UI Stack" />
+    <img src="https://img.shields.io/badge/UI-egui_0.28_%2B_Win32_GDI-7EF2E8?style=flat-square&labelColor=0B1021" alt="UI Stack" />
   </a>
   &nbsp;
   <a href="https://github.com/LeTrollologist/vpack-archiver">
@@ -66,6 +69,10 @@
   <a href="#%EF%B8%8F-keyboard-shortcuts--controls">
     <img src="https://img.shields.io/badge/%E2%8C%A8%EF%B8%8F_Shortcuts-Full_Reference-E28BF0?style=for-the-badge&labelColor=0B1021" alt="Shortcuts" />
   </a>
+  &nbsp;
+  <a href="ROADMAP.md">
+    <img src="https://img.shields.io/badge/%F0%9F%97%BA%EF%B8%8F_Roadmap-Whats_Next-FDCB6E?style=for-the-badge&labelColor=0B1021" alt="Roadmap" />
+  </a>
 </p>
 
 </div>
@@ -78,10 +85,10 @@
 
 ### Key Highlights
  
-- 🌍 **Universal Cross-Platform Architecture (Linux / Windows / macOS Agnostic)**:
-  - **Pure Rust Native App**: Replaced Win32-specific GDI C-FFI message loops with pure Rust `eframe` 0.28 (winit, glow, x11, wayland) and `rfd` 0.14 native file dialogs.
+- 🖥 **Windows-Native Architecture (Win32 + GDI, pure Rust)**: A hand-rolled `GetMessageW` message loop and `SetDIBitsToDevice` blit feed a software framebuffer; `egui` 0.28 supplies widgets and layout on top. No C++ runtime, no GPU driver dependency, no external UI framework.
   - **Zero C++ Dependencies**: 100% memory-safe Rust with instant compilation and zero OS-specific C runtime bottlenecks.
-  - **High-DPI & Multi-Monitor Support**: Native subpixel display scaling and window management.
+  - **Per-Monitor V2 DPI Awareness**: `SetProcessDpiAwarenessContext` plus `egui` pixels-per-point, so the interface is crisp at 125–200 % scaling instead of bitmap-stretched.
+  - **Portability-Ready Crate Split**: Windowing lives only in `hollow-app`; `hollow-core`, `hollow-render`, `hollow-io` and `hollow-ui` are platform-agnostic, so the `eframe`/`winit` port in `ROADMAP.md` is a front-end swap rather than a rewrite.
 - 🎨 **Live Interactive Viewport with Real-Time Direct Drawing**:
   - **Direct Viewport Interaction**: Drawing, brushing, and erasing occur directly inside the `egui::CentralPanel` viewport with low-latency GPU texture streaming (`recomposite_canvas`).
   - **Dynamic Viewport Rulers & Overlays**: Real-time pixel rulers with tracking cursor ticks, configurable canvas grid, and symmetry guide axes.
@@ -108,7 +115,11 @@
 - 💡 **Reference Viewer & Tracing Paper**: Floating `🖼` reference dock (detached window or on-canvas tracing mode) with zoom/pan, <kbd>T</kbd> tracing-paper toggle, and Dark / Pure-White Lightbox / Checkerboard backlight modes.
 - 🪞 **View Flip & Fresh-Eye Review**: Horizontal viewport flip (<kbd>H</kbd>) — composition-only, never touches pixel data — for catching asymmetry while painting.
 - 🛡️ **Zero-Allocation Rendering**: Highly optimized software rendering pipeline with reusable composite buffers for silky smooth 60+ FPS viewport navigation and drawing.
-- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.hcv` v4) alongside Ed25519-signed `.vpack` releases.
+- 💾 **Crash-Proof Save Pipeline**: Unsaved-changes guard on close (`Save` / `Discard` / `Cancel`), quick-save to the known path (<kbd>Ctrl</kbd>+<kbd>S</kbd>), Save As (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>), atomic temp-file-then-rename writes, recent-project menu, and an autosave recovery snapshot (default every 120 s) that is offered back on the next launch.
+- ✍ **Stylus Pressure & Tilt**: Pen input is sampled through `WM_POINTER` / `GetPointerPenInfo`; real pressure drives brush size while the mouse path (and velocity dynamics) keeps working unchanged.
+- 🧠 **Memory-Bounded Undo**: The 50-step history also enforces a 512 MiB budget, evicting the oldest full-layer snapshots first so long sessions cannot balloon into multi-gigabyte RSS.
+- 📊 **Tone & Stylize Filters**: Levels (black/white/gamma), Colorize, Pixelate and Motion Blur alongside the existing blur/sharpen/grain/vignette/lens set — all with live, non-destructive previews and selection awareness.
+- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.hcv` v5) alongside Ed25519-signed `.vpack` releases.
 
 ---
 
@@ -122,9 +133,9 @@ Hollow Canvas/
 ├── crates/
 │   ├── hollow-core/  # Core domain models, perspective geometry, affine/quad/mesh/TPS deformation, adjustment filters, layers, and rasterizers
 │   ├── hollow-render/ # Software renderer, perspective guides, texture caching, grid/ruler overlays, and UI primitives
-│   ├── hollow-io/    # Binary HCV v4 project serialization, PNG export, and file parsing
+│   ├── hollow-io/    # Binary HCV v5 project serialization, image export, and file parsing
 │   ├── hollow-ui/    # Modern egui-based dock panels, studio viewport, tools shelf, transform studio, perspective dock, and palettes
-│   └── hollow-app/   # Universal cross-platform desktop application orchestrator via eframe
+│   └── hollow-app/   # Win32 + GDI host: message loop, stylus sampling, autosave ticker, CLI
 ```
 
 ---
@@ -137,18 +148,18 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 [**VPack Archiver**](https://github.com/LeTrollologist/vpack-archiver) is the high-performance universal archive manager for `.vpack` packages.
 
-1. Download [`hollow-canvas-v1.0.3-alpha-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) and [`hollow-publisher.pub`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v1.0.4-alpha-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) and [`hollow-publisher.pub`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the package with `vpack`:
    ```bash
    # Extract all files
-   vpack extract hollow-canvas-v1.0.3-alpha-windows-x86_64.vpack
+   vpack extract hollow-canvas-v1.0.4-alpha-windows-x86_64.vpack
 
    # Or extract to a custom directory
-   vpack extract hollow-canvas-v1.0.3-alpha-windows-x86_64.vpack -o ./HollowCanvas/
+   vpack extract hollow-canvas-v1.0.4-alpha-windows-x86_64.vpack -o ./HollowCanvas/
    ```
 3. *(Optional)* Verify Ed25519 signature and CRC-32 integrity:
    ```bash
-   vpack test hollow-canvas-v1.0.3-alpha-windows-x86_64.vpack
+   vpack test hollow-canvas-v1.0.4-alpha-windows-x86_64.vpack
    ```
 4. Run `hollow-canvas.exe`.
 
@@ -158,10 +169,10 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 No additional archive tools required — works with standard Windows extraction:
 
-1. Download [`hollow-canvas-v1.0.3-alpha-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`hollow-canvas-v1.0.4-alpha-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
 2. Extract the zip file using PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\hollow-canvas-v1.0.3-alpha-windows-x86_64.zip -DestinationPath .\HollowCanvas
+   Expand-Archive -Path .\hollow-canvas-v1.0.4-alpha-windows-x86_64.zip -DestinationPath .\HollowCanvas
    ```
 3. Double-click `HollowCanvas\hollow-canvas.exe` to launch immediately.
 
@@ -173,8 +184,7 @@ If you prefer building from source with full compiler optimizations:
 
 **Prerequisites:**
 - [Rust Toolchain](https://www.rust-lang.org/tools/install) — 1.80+ recommended (this release was built and verified with `rustc 1.98.0`)
-- **Windows 10 / 11 (64-bit)** for the prebuilt binaries in `dist/`
-- Linux / macOS build from source through `eframe` 0.28 (`winit`, `glow`, X11/Wayland/Cocoa) — no Windows SDK required
+- **Windows 10 / 11 (64-bit)** — the host layer is Win32 + GDI, so there is no Linux/macOS build yet (tracked in [`ROADMAP.md`](ROADMAP.md))
 
 1. Clone the repository:
    ```bash
@@ -245,7 +255,8 @@ If you prefer building from source with full compiler optimizations:
 | **New Canvas** | <kbd>Ctrl</kbd> + <kbd>N</kbd> |
 | **Open Project / Image** | <kbd>Ctrl</kbd> + <kbd>O</kbd> |
 | **Save Project** | <kbd>Ctrl</kbd> + <kbd>S</kbd> |
-| **Export PNG** | <kbd>Ctrl</kbd> + <kbd>E</kbd> |
+| **Save Project As** | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd> |
+| **Export Image (PNG / JPEG / WebP)** | <kbd>Ctrl</kbd> + <kbd>E</kbd> |
 | **Select All** | <kbd>Ctrl</kbd> + <kbd>A</kbd> |
 | **Deselect** | <kbd>Ctrl</kbd> + <kbd>D</kbd> or <kbd>Esc</kbd> |
 | **Fill Selection (active layer)** | <kbd>Shift</kbd> + <kbd>F5</kbd> or <kbd>Alt</kbd> + <kbd>Backspace</kbd> |

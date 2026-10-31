@@ -74,6 +74,29 @@ fn render_tool_button(
     response.clicked()
 }
 
+/// Restores the layer snapshot captured when a filter modal opened, then runs `apply`.
+///
+/// Filter previews are non-destructive: every slider tick re-runs the filter from the
+/// pristine snapshot instead of compounding on the previous preview.
+fn restore_and_preview(state: &mut AppState, apply: impl Fn(&mut [u8], u32, u32)) {
+    let width = state.document.width;
+    let height = state.document.height;
+    let AppState {
+        filter_original_pixels,
+        document,
+        ..
+    } = state;
+    let Some(orig) = filter_original_pixels else {
+        return;
+    };
+    if let Some(layer) = document.active_layer_mut() {
+        if layer.pixels.len() == orig.len() {
+            layer.pixels.copy_from_slice(orig);
+            apply(&mut layer.pixels, width, height);
+        }
+    }
+}
+
 pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     let accent = state.document.theme.accent_color();
     let [ar, ag, ab, _] = accent.to_rgba8();
@@ -117,11 +140,59 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 state.pending_file_action = Some(PendingFileAction::SaveProject);
                                 ui.close_menu();
                             }
-                            ui.separator();
-                            if ui.button("📤 Export Flat PNG... (Ctrl+E)").clicked() {
-                                state.pending_file_action = Some(PendingFileAction::ExportPng);
+                            if ui.button("💾 Save As... (Ctrl+Shift+S)").clicked() {
+                                state.pending_file_action = Some(PendingFileAction::SaveProjectAs);
                                 ui.close_menu();
                             }
+                            if !state.recent_files.is_empty() {
+                                ui.menu_button("🕘 Recent Projects", |ui| {
+                                    let recents = state.recent_files.clone();
+                                    for path in recents {
+                                        let label = path
+                                            .file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("(missing file)")
+                                            .to_string();
+                                        if ui
+                                            .button(label)
+                                            .on_hover_text(path.display().to_string())
+                                            .clicked()
+                                        {
+                                            match hollow_io::project::load_project_file(&path) {
+                                                Ok(doc) => {
+                                                    state.document = doc;
+                                                    state.history.clear();
+                                                    state.document_path = Some(path.clone());
+                                                    state.mark_saved();
+                                                    state.note_recent_file(&path);
+                                                    state.set_status(format!("Loaded {}", path.display()));
+                                                }
+                                                Err(e) => {
+                                                    state.set_status(format!("Load error: {}", e))
+                                                }
+                                            }
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
+                            }
+                            ui.separator();
+                            ui.menu_button("📤 Export Image...", |ui| {
+                                ui.radio_value(&mut state.export_format, 0, "PNG (lossless, alpha)");
+                                ui.radio_value(&mut state.export_format, 1, "JPEG (flattened, no alpha)");
+                                ui.radio_value(&mut state.export_format, 2, "WebP (lossless, alpha)");
+                                if state.export_format == 1 {
+                                    ui.add(
+                                        egui::Slider::new(&mut state.jpeg_quality, 1..=100)
+                                            .text("JPEG quality"),
+                                    );
+                                }
+                                ui.separator();
+                                if ui.button("Export Flat Image (Ctrl+E)").clicked() {
+                                    state.pending_file_action = Some(PendingFileAction::ExportPng);
+                                    ui.close_menu();
+                                }
+                            });
                             if ui.button("🎬 Export Animation...").clicked() {
                                 state.show_export_animation_dialog = true;
                                 ui.close_menu();
@@ -169,6 +240,51 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 if let Some(mask) = &mut state.selection {
                                     mask.invert();
                                     state.set_status("Selection inverted");
+                                }
+                                ui.close_menu();
+                            }
+                            if ui.button("◱ Select Layer Alpha").clicked() {
+                                if let Some(layer) = state.document.active_layer() {
+                                    let mask = SelectionMask::from_layer_alpha(
+                                        &layer.pixels,
+                                        state.document.width,
+                                        state.document.height,
+                                        8,
+                                    );
+                                    let selected =
+                                        mask.mask.iter().filter(|&&v| v > 8).count();
+                                    state.selection = Some(mask);
+                                    state.set_status(format!(
+                                        "Selected {} px from layer alpha",
+                                        selected
+                                    ));
+                                } else {
+                                    state.set_status("No active layer");
+                                }
+                                ui.close_menu();
+                            }
+                            if ui.button("∩ Intersect with Layer Alpha").clicked() {
+                                let alpha = state.document.active_layer().map(|layer| {
+                                    SelectionMask::from_layer_alpha(
+                                        &layer.pixels,
+                                        state.document.width,
+                                        state.document.height,
+                                        8,
+                                    )
+                                });
+                                if let Some(alpha) = alpha {
+                                    match &mut state.selection {
+                                        Some(mask) => {
+                                            mask.intersect(&alpha);
+                                            state.set_status("Selection intersected with layer alpha");
+                                        }
+                                        None => {
+                                            state.selection = Some(alpha);
+                                            state.set_status("Selection created from layer alpha");
+                                        }
+                                    }
+                                } else {
+                                    state.set_status("No active layer");
                                 }
                                 ui.close_menu();
                             }
@@ -321,6 +437,24 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             }
                             if ui.button("🔍 Vignette & Lens FX...").clicked() {
                                 state.begin_filter_modal(ActiveFilterModal::VignetteChromatic);
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            ui.label(RichText::new("TONE & STYLIZE").size(8.5).strong().color(Color32::from_rgb(120, 135, 170)));
+                            if ui.button("📊 Levels...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::Levels);
+                                ui.close_menu();
+                            }
+                            if ui.button("🎨 Colorize...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::Colorize);
+                                ui.close_menu();
+                            }
+                            if ui.button("🟦 Pixelate...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::Pixelate);
+                                ui.close_menu();
+                            }
+                            if ui.button("💨 Motion Blur...").clicked() {
+                                state.begin_filter_modal(ActiveFilterModal::MotionBlur);
                                 ui.close_menu();
                             }
                         });
@@ -2506,6 +2640,222 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             }
         }
 
+        ActiveFilterModal::Levels => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("📊 Levels")
+                .fixed_size(Vec2::new(380.0, 210.0))
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.screen_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    changed |= ui
+                        .add(egui::Slider::new(&mut state.filter_levels_black, 0.0..=0.9).text("Black point"))
+                        .changed();
+                    changed |= ui
+                        .add(egui::Slider::new(&mut state.filter_levels_white, 0.1..=1.0).text("White point"))
+                        .changed();
+                    changed |= ui
+                        .add(egui::Slider::new(&mut state.filter_levels_gamma, 0.2..=3.0).text("Midtone gamma"))
+                        .changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(RichText::new("Apply Levels").strong().color(accent_c32))
+                            .clicked()
+                        {
+                            do_apply = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                let preview = state.filter_preview_active;
+                let sel = sel_mask.clone();
+                let (black, white, gamma) = (
+                    state.filter_levels_black,
+                    state.filter_levels_white,
+                    state.filter_levels_gamma,
+                );
+                restore_and_preview(state, |pixels, w, h| {
+                    if preview {
+                        hollow_core::filter::filter_levels(pixels, w, h, black, white, gamma, sel.as_ref());
+                    }
+                });
+            }
+
+            if do_apply {
+                state.apply_filter_modal("Levels");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
+        ActiveFilterModal::Colorize => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("🎨 Colorize")
+                .fixed_size(Vec2::new(380.0, 190.0))
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.screen_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    changed |= ui
+                        .add(egui::Slider::new(&mut state.filter_colorize_hue, 0.0..=360.0).text("Hue"))
+                        .changed();
+                    changed |= ui
+                        .add(egui::Slider::new(&mut state.filter_colorize_saturation, 0.0..=1.0).text("Saturation"))
+                        .changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(RichText::new("Apply Colorize").strong().color(accent_c32))
+                            .clicked()
+                        {
+                            do_apply = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                let preview = state.filter_preview_active;
+                let sel = sel_mask.clone();
+                let (hue, sat) = (state.filter_colorize_hue, state.filter_colorize_saturation);
+                restore_and_preview(state, |pixels, w, h| {
+                    if preview {
+                        hollow_core::filter::filter_colorize(pixels, w, h, hue, sat, sel.as_ref());
+                    }
+                });
+            }
+
+            if do_apply {
+                state.apply_filter_modal("Colorize");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
+        ActiveFilterModal::Pixelate => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("🟦 Pixelate")
+                .fixed_size(Vec2::new(360.0, 170.0))
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.screen_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    changed |= ui
+                        .add(egui::Slider::new(&mut state.filter_pixelate_block, 2..=64).text("Block size"))
+                        .changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(RichText::new("Apply Pixelate").strong().color(accent_c32))
+                            .clicked()
+                        {
+                            do_apply = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                let preview = state.filter_preview_active;
+                let sel = sel_mask.clone();
+                let block = state.filter_pixelate_block;
+                restore_and_preview(state, |pixels, w, h| {
+                    if preview {
+                        hollow_core::filter::filter_pixelate(pixels, w, h, block, sel.as_ref());
+                    }
+                });
+            }
+
+            if do_apply {
+                state.apply_filter_modal("Pixelate");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
+        ActiveFilterModal::MotionBlur => {
+            let mut do_apply = false;
+            let mut do_cancel = false;
+            let mut changed = false;
+
+            egui::Window::new("💨 Motion Blur")
+                .fixed_size(Vec2::new(380.0, 190.0))
+                .collapsible(false)
+                .resizable(false)
+                .default_pos(ctx.screen_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .show(ctx, |ui| {
+                    changed |= ui
+                        .add(egui::Slider::new(&mut state.filter_motion_distance, 1..=64).text("Distance (px)"))
+                        .changed();
+                    changed |= ui
+                        .add(egui::Slider::new(&mut state.filter_motion_angle, 0.0..=180.0).text("Angle (°)"))
+                        .changed();
+
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut state.filter_preview_active, "Live Preview");
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(RichText::new("Apply Motion Blur").strong().color(accent_c32))
+                            .clicked()
+                        {
+                            do_apply = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            do_cancel = true;
+                        }
+                    });
+                });
+
+            if changed || state.filter_preview_active {
+                let preview = state.filter_preview_active;
+                let sel = sel_mask.clone();
+                let (dist, angle) = (state.filter_motion_distance, state.filter_motion_angle);
+                restore_and_preview(state, |pixels, w, h| {
+                    if preview {
+                        hollow_core::filter::filter_motion_blur(pixels, w, h, dist, angle, sel.as_ref());
+                    }
+                });
+            }
+
+            if do_apply {
+                state.apply_filter_modal("Motion Blur");
+            } else if do_cancel {
+                state.cancel_filter_modal();
+            }
+        }
+
         ActiveFilterModal::None => {}
     }
 
@@ -3083,8 +3433,16 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Format:").size(11.0).color(Color32::from_rgb(180, 190, 215)));
                     ui.radio_value(&mut state.export_anim_format, 0, "GIF (.gif)");
-                    ui.radio_value(&mut state.export_anim_format, 1, "PNG Sequence");
+                    ui.radio_value(&mut state.export_anim_format, 1, "Sprite Sheet (.png)");
+                    ui.radio_value(&mut state.export_anim_format, 2, "PNG Sequence");
                 });
+
+                if state.export_anim_format == 1 {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Columns:").size(11.0).color(Color32::from_rgb(180, 190, 215)));
+                        ui.add(egui::DragValue::new(&mut state.sprite_columns).range(1..=32));
+                    });
+                }
 
                 ui.checkbox(&mut state.export_anim_loop, "Infinite Loop (Repeat)");
                 ui.add_space(8.0);
@@ -3113,6 +3471,15 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             match hollow_io::export_animated_gif(&frames_rgba, w, h, state.export_anim_fps, state.export_anim_loop, &out_path) {
                                 Ok(_) => state.set_status(format!("Exported animated GIF to {}", out_path.display())),
                                 Err(e) => state.set_status(format!("Export failed: {}", e)),
+                            }
+                        } else if state.export_anim_format == 1 {
+                            let out_path = out_dir.join("spritesheet.png");
+                            match hollow_io::export_sprite_sheet(&frames_rgba, w, h, state.sprite_columns, &out_path) {
+                                Ok((sw, sh)) => state.set_status(format!(
+                                    "Exported {}×{} sprite sheet ({} frames) to {}",
+                                    sw, sh, frames_rgba.len(), out_path.display()
+                                )),
+                                Err(e) => state.set_status(format!("Export sprite sheet failed: {}", e)),
                             }
                         } else {
                             match hollow_io::export_frame_sequence(&frames_rgba, w, h, &out_dir, "frame", hollow_io::ExportFormat::Png) {

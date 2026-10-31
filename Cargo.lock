@@ -413,6 +413,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
+name = "crunchy"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -620,6 +626,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "fax"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caf1079563223d5d59d83c85886a56e586cfd5c1a26292e971a0fa266531ac5a"
+
+[[package]]
 name = "fdeflate"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -773,6 +785,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "half"
+version = "2.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
+dependencies = [
+ "cfg-if",
+ "crunchy",
+ "zerocopy",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -792,7 +815,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hollow-app"
-version = "1.0.3-alpha"
+version = "1.0.4-alpha"
 dependencies = [
  "egui",
  "env_logger",
@@ -807,7 +830,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-core"
-version = "1.0.3-alpha"
+version = "1.0.4-alpha"
 dependencies = [
  "ab_glyph",
  "glam",
@@ -819,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-io"
-version = "1.0.3-alpha"
+version = "1.0.4-alpha"
 dependencies = [
  "flate2",
  "hollow-core",
@@ -829,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-render"
-version = "1.0.3-alpha"
+version = "1.0.4-alpha"
 dependencies = [
  "egui",
  "glam",
@@ -841,7 +864,7 @@ dependencies = [
 
 [[package]]
 name = "hollow-ui"
-version = "1.0.3-alpha"
+version = "1.0.4-alpha"
 dependencies = [
  "ab_glyph",
  "egui",
@@ -971,6 +994,7 @@ dependencies = [
  "moxcms",
  "num-traits",
  "png",
+ "tiff",
  "zune-core",
  "zune-jpeg",
 ]
@@ -1704,6 +1728,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.4",
+]
+
+[[package]]
+name = "tiff"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63feaf3343d35b6ca4d50483f94843803b0f51634937cc2ec519fc32232bc52"
+dependencies = [
+ "fax",
+ "flate2",
+ "half",
+ "quick-error",
+ "weezl",
+ "zune-jpeg",
 ]
 
 [[package]]

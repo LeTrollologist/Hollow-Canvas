@@ -1,4 +1,6 @@
 use glam::Vec2;
+use std::path::PathBuf;
+use std::time::Instant;
 use hollow_core::blend::BlendMode;
 use hollow_core::brush::BrushSettings;
 use hollow_core::color::{Color, DEFAULT_PALETTE};
@@ -127,6 +129,7 @@ impl CanvasPreset {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingFileAction {
     SaveProject,
+    SaveProjectAs,
     OpenProject,
     ExportPng,
     OpenReferenceImage,
@@ -144,6 +147,10 @@ pub enum ActiveFilterModal {
     SharpenUnsharp,
     FilmGrain,
     VignetteChromatic,
+    Levels,
+    Colorize,
+    Pixelate,
+    MotionBlur,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,6 +234,23 @@ pub struct AppState {
     pub is_space_panning: bool,
     pub pan_drag_start: Option<Vec2>,
     pub pending_file_action: Option<PendingFileAction>,
+
+    // ── Document lifecycle & save safety ──
+    /// Path of the project on disk, once it has been saved or opened.
+    pub document_path: Option<PathBuf>,
+    /// `HistoryStack::generation()` captured at the last successful save.
+    pub saved_generation: u64,
+    pub recent_files: Vec<PathBuf>,
+    pub autosave_enabled: bool,
+    pub autosave_interval_secs: u64,
+    pub last_autosave: Instant,
+    /// Set when an autosave snapshot has been written and not yet cleared by a real save.
+    pub autosave_pending: bool,
+    // ── Export settings ──
+    pub jpeg_quality: u8,
+    pub sprite_columns: u32,
+    /// Flat export format: 0 = PNG, 1 = JPEG, 2 = WebP.
+    pub export_format: u8,
     pub drag_start_canvas_pos: Option<Vec2>,
     pub polygon_points: Vec<Vec2>,
     pub crop_box: Option<(Vec2, Vec2)>,
@@ -265,6 +289,16 @@ pub struct AppState {
 
     pub filter_chromatic_shift: f32,
     pub filter_chromatic_angle: f32,
+
+    // ── Levels / Colorize / Pixelate / Motion Blur ──
+    pub filter_levels_black: f32,
+    pub filter_levels_white: f32,
+    pub filter_levels_gamma: f32,
+    pub filter_colorize_hue: f32,
+    pub filter_colorize_saturation: f32,
+    pub filter_pixelate_block: u32,
+    pub filter_motion_distance: u32,
+    pub filter_motion_angle: f32,
 
     // ── Free Transform Session ──
     pub transform_session: TransformSession,
@@ -408,6 +442,16 @@ impl AppState {
             is_space_panning: false,
             pan_drag_start: None,
             pending_file_action: None,
+            document_path: None,
+            saved_generation: 0,
+            recent_files: Vec::new(),
+            autosave_enabled: true,
+            autosave_interval_secs: 120,
+            last_autosave: Instant::now(),
+            autosave_pending: false,
+            jpeg_quality: 90,
+            sprite_columns: 4,
+            export_format: 0,
             drag_start_canvas_pos: None,
             polygon_points: Vec::new(),
             crop_box: None,
@@ -446,6 +490,15 @@ impl AppState {
 
             filter_chromatic_shift: 4.0,
             filter_chromatic_angle: 0.0,
+
+            filter_levels_black: 0.0,
+            filter_levels_white: 1.0,
+            filter_levels_gamma: 1.0,
+            filter_colorize_hue: 200.0,
+            filter_colorize_saturation: 0.55,
+            filter_pixelate_block: 8,
+            filter_motion_distance: 12,
+            filter_motion_angle: 0.0,
 
             transform_session: TransformSession::default(),
 
@@ -1505,6 +1558,193 @@ impl AppState {
             self.paint_scratchpad_point(pos, prev, pressure);
             prev = Some(pos);
         }
+    }
+    // ─────────────────────────────────────────────────────────────────────
+    // Document lifecycle & save safety
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// True when the document has edits that are not on disk yet.
+    ///
+    /// Derived from the history generation counter, so it covers strokes,
+    /// filters, layer operations and undo/redo without touching every call site.
+    pub fn is_dirty(&self) -> bool {
+        self.history.generation() != self.saved_generation
+    }
+
+    /// Records the current history generation as "written to disk".
+    pub fn mark_saved(&mut self) {
+        self.saved_generation = self.history.generation();
+        self.autosave_pending = false;
+    }
+
+    /// File name (or `Untitled.hcv`) with a trailing `*` when there are unsaved edits.
+    pub fn document_title(&self) -> String {
+        let name = self
+            .document_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("Untitled.hcv")
+            .to_string();
+        if self.is_dirty() {
+            format!("{} *", name)
+        } else {
+            name
+        }
+    }
+
+    pub fn note_recent_file(&mut self, path: &std::path::Path) {
+        self.recent_files.retain(|p| p != path);
+        self.recent_files.insert(0, path.to_path_buf());
+        self.recent_files.truncate(8);
+    }
+
+    /// Saves to an explicit path and updates path/recent/preferences bookkeeping.
+    pub fn save_project_to(&mut self, path: &std::path::Path) -> Result<(), String> {
+        // Snapshot the recovery path before the document gains its real name, so an
+        // untitled document's snapshot is also cleaned up after "Save As".
+        let previous_autosave = self.autosave_path();
+        hollow_io::save_project_file(&self.document, path).map_err(|e| e.to_string())?;
+        self.document_path = Some(path.to_path_buf());
+        self.mark_saved();
+        let _ = std::fs::remove_file(&previous_autosave);
+        self.note_recent_file(path);
+        self.save_preferences();
+        self.clear_autosave();
+        self.set_status(format!("Saved to {}", path.display()));
+        Ok(())
+    }
+
+    /// Forces the dirty state (used when restoring a crash-recovery snapshot).
+    pub fn mark_dirty(&mut self) {
+        self.saved_generation = u64::MAX;
+    }
+
+    /// Saves to the already-known path without prompting. False when there is no path yet.
+    pub fn quick_save(&mut self) -> bool {
+        match self.document_path.clone() {
+            Some(path) => self.save_project_to(&path).is_ok(),
+            None => false,
+        }
+    }
+
+    /// `%LOCALAPPDATA%\HollowCanvas\autosave` (temp dir fallback).
+    pub fn autosave_dir() -> PathBuf {
+        let base = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        base.join("HollowCanvas").join("autosave")
+    }
+
+    /// `%LOCALAPPDATA%\HollowCanvas\autosave\<stem>-autosave.hcv`.
+    pub fn autosave_path(&self) -> PathBuf {
+        let stem = self
+            .document_path
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "untitled".to_string());
+        Self::autosave_dir().join(format!("{}-autosave.hcv", stem))
+    }
+
+    /// Writes a recovery snapshot if the interval elapsed and there are unsaved edits.
+    pub fn maybe_autosave(&mut self) -> bool {
+        if !self.autosave_enabled || !self.is_dirty() {
+            return false;
+        }
+        if self.last_autosave.elapsed().as_secs() < self.autosave_interval_secs {
+            return false;
+        }
+        self.last_autosave = Instant::now();
+        let path = self.autosave_path();
+        if let Some(dir) = path.parent() {
+            if std::fs::create_dir_all(dir).is_err() {
+                return false;
+            }
+        }
+        if hollow_io::save_project_file(&self.document, &path).is_ok() {
+            self.autosave_pending = true;
+            self.set_status(format!("Auto-saved recovery snapshot: {}", path.display()));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Deletes the recovery snapshot after a successful real save.
+    pub fn clear_autosave(&mut self) {
+        let path = self.autosave_path();
+        let _ = std::fs::remove_file(&path);
+        self.autosave_pending = false;
+    }
+    // ─────────────────────────────────────────────────────────────────────
+    // Preferences (theme / JPEG quality / autosave / recent files)
+    // ─────────────────────────────────────────────────────────────────────
+
+    pub fn preferences_path() -> PathBuf {
+        Self::autosave_dir()
+            .parent()
+            .map(|d| d.join("preferences.txt"))
+            .unwrap_or_else(|| std::env::temp_dir().join("hollow-canvas-preferences.txt"))
+    }
+
+    pub fn load_preferences(&mut self) {
+        let Ok(text) = std::fs::read_to_string(Self::preferences_path()) else {
+            return;
+        };
+        for line in text.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let value = value.trim();
+            match key.trim() {
+                "theme" => {
+                    self.document.theme = match value {
+                        "1" => hollow_core::color::ThemeMode::Moonlit,
+                        "2" => hollow_core::color::ThemeMode::EmberGlow,
+                        _ => hollow_core::color::ThemeMode::DeepMist,
+                    };
+                }
+                "jpeg_quality" => {
+                    if let Ok(q) = value.parse::<u8>() {
+                        self.jpeg_quality = q.clamp(1, 100);
+                    }
+                }
+                "autosave" => self.autosave_enabled = value != "0",
+                "autosave_interval" => {
+                    if let Ok(secs) = value.parse::<u64>() {
+                        self.autosave_interval_secs = secs.clamp(15, 3600);
+                    }
+                }
+                "recent" => {
+                    if !value.is_empty() {
+                        self.recent_files.push(PathBuf::from(value));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn save_preferences(&self) {
+        let path = Self::preferences_path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let theme = match self.document.theme {
+            hollow_core::color::ThemeMode::Moonlit => 1,
+            hollow_core::color::ThemeMode::EmberGlow => 2,
+            _ => 0,
+        };
+        let mut out = String::new();
+        out.push_str(&format!("theme={}\n", theme));
+        out.push_str(&format!("jpeg_quality={}\n", self.jpeg_quality));
+        out.push_str(&format!("autosave={}\n", if self.autosave_enabled { 1 } else { 0 }));
+        out.push_str(&format!("autosave_interval={}\n", self.autosave_interval_secs));
+        for recent in &self.recent_files {
+            out.push_str(&format!("recent={}\n", recent.display()));
+        }
+        let _ = std::fs::write(&path, out);
     }
 }
 
