@@ -63,7 +63,7 @@
     <img src="https://img.shields.io/badge/%F0%9F%8E%A8_Feature_Tour-Studio_Toolset-A89EE0?style=for-the-badge&labelColor=0B1021" alt="Feature Tour" />
   </a>
   &nbsp;
-  <a href="#-keyboard-shortcuts--controls">
+  <a href="#%EF%B8%8F-keyboard-shortcuts--controls">
     <img src="https://img.shields.io/badge/%E2%8C%A8%EF%B8%8F_Shortcuts-Full_Reference-E28BF0?style=for-the-badge&labelColor=0B1021" alt="Shortcuts" />
   </a>
 </p>
