@@ -510,21 +510,32 @@ A modern, high-performance, local-first digital illustration, concept art, and g
 
 ### ✨ What's New in {version}
 
-* **🔤 Custom Typography & Text Engine**:
-  - **Full Custom Font Support**: Load any system font or browse for external TrueType (`.ttf`) and OpenType (`.otf`) font files directly via file picker.
-  - **Rich Typographic Controls**: Real-time Font Size, Line Spacing, Letter Spacing (tracking), and Multi-line Text Alignment (Left, Center, Right).
-  - **Live Canvas Placement & Antialiasing**: Interactive on-canvas placement target with subpixel antialiased rasterization and layer undo snapshots.
+* **💾 Crash-Proof Save Pipeline**:
+  - **Unsaved-Changes Guard**: Closing the window now asks *Save / Discard / Cancel* instead of silently dropping the artwork.
+  - **Quick Save & Save As**: <kbd>Ctrl+S</kbd> writes straight to the known path; <kbd>Ctrl+Shift+S</kbd> saves a copy. The title bar shows `*` while edits are unsaved.
+  - **Atomic Writes**: Projects are written to a `.tmp` sibling and renamed over the target, so an interrupted save can never truncate an existing file.
+  - **Autosave & Crash Recovery**: A recovery snapshot is written every 120 s of unsaved edits and offered back on the next launch. Recent projects are remembered.
 
-* **🪟 Windows File Explorer Context Menu Integration & Drag-and-Drop**:
-  - **Shell Integration**: Register "Open with Hollow Canvas" in Windows Explorer context menu for all supported image formats (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.ico`, `.tga`, `.tiff`, `.hcv`).
-  - **One-Click Setup**: Register and unregister seamlessly via UI menu (*File -> Windows Context Menu Integration...*) or CLI flags (`--register-shell`, `--unregister-shell`).
-  - **Native Drag-and-Drop (`WM_DROPFILES`)**: Drag and drop any image or `.hcv` project file directly into the application window to open instantly.
+* **✍ Stylus Pressure & Tilt**:
+  - **Real Pen Input**: Pressure and tilt are sampled through `WM_POINTER` / `GetPointerPenInfo`; pressure now drives brush size, while mouse input and velocity dynamics keep working exactly as before.
 
-* **📐 UI Layout & Dock Run-off Polish**:
-  - **Zero Horizontal Run-off**: Reorganized top menu bar with compact responsive action badges and tooltips.
-  - **Dock Padding & Sizing Hygiene**: Re-architected active layer controls, blend mode dropdowns, preset shelves, and canvas action buttons to strictly prevent panel overflow.
+* **📊 Tone & Stylize Filters** (live, non-destructive previews, selection-aware):
+  - **Levels**: black point, white point and midtone gamma.
+  - **Colorize**: single-hue recolouring that preserves luminance.
+  - **Pixelate** and **Motion Blur** with configurable distance/angle.
 
-* **📦 VPack 2.0.1 Upgraded Cryptographic Trust & Verification**:
+* **🧠 Memory-Bounded Undo**: The 50-step history now also enforces a 512 MiB budget, evicting the oldest full-layer snapshots first so long sessions cannot balloon into multi-gigabyte RSS.
+
+* **🔗 Interop & Export**:
+  - **JPEG quality control** (1–100) with correct alpha flattening over white.
+  - **Sprite-sheet export** alongside animated GIF and PNG sequences.
+  - **TIFF / TGA / ICO decoding** enabled, so the extensions advertised by the Explorer context menu actually open.
+
+* **🖥 Platform**:
+  - **Per-Monitor V2 DPI Awareness** with `egui` pixels-per-point — crisp UI at 125–200 % scaling.
+  - **Persisted preferences** (theme, JPEG quality, autosave interval, recent files).
+
+* **📦 VPack 2.0.1 Cryptographic Trust**:
   - **Ed25519 Publisher Signature**: Verified with official publisher public key (`{publisher_key}`).
   - **High-Ratio Deflate Compression & CRC-32 Validation**: Validated via `vpack test`.
 
