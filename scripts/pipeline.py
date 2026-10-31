@@ -281,7 +281,31 @@ def upload_to_virustotal(zip_path: Path, api_key: str) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def poll_virustotal_analysis(analysis_id: str, api_key: str, max_retries: int = 12) -> dict:
+def request_virustotal_reanalyse(sha256_hash: str, api_key: str) -> dict:
+    """Queue a fresh analysis for a sample VirusTotal already knows about.
+
+    Re-uploading identical bytes returns HTTP 409, and a file record can exist
+    with `last_analysis_stats` all zero (submitted, never analysed), so this is
+    the only way to obtain a real verdict for such a file.
+    """
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"https://www.virustotal.com/api/v3/files/{sha256_hash}/analyse",
+        data=b"",
+        headers={
+            "x-apikey": api_key,
+            "Content-Length": "0",
+            "User-Agent": "HollowCanvas-ReleasePipeline/1.0",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def poll_virustotal_analysis(analysis_id: str, api_key: str, max_retries: int = 18) -> dict:
     import json
     import time
     import urllib.request
@@ -298,8 +322,9 @@ def poll_virustotal_analysis(analysis_id: str, api_key: str, max_retries: int = 
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                status = data.get("data", {}).get("attributes", {}).get("status")
-                if status == "completed":
+                attributes = data.get("data", {}).get("attributes", {})
+                status = attributes.get("status")
+                if status == "completed" and stats_total(attributes.get("stats", {})) > 0:
                     return data
                 print(f"  Waiting for VirusTotal scan to complete (status: {status}, poll {attempt + 1}/{max_retries})...")
         except Exception as e:
@@ -325,6 +350,19 @@ def get_virustotal_file_report(sha256_hash: str, api_key: str) -> dict:
             return json.loads(resp.read().decode("utf-8"))
     except Exception:
         return {}
+
+
+def stats_total(stats: dict) -> int:
+    """Total engines that returned a verdict.
+
+    VirusTotal creates a file record on first submission, so a record can exist
+    with `last_analysis_stats` all zero (never scanned). Treating that as a
+    completed scan would report a false "0 detections" result.
+    """
+    try:
+        return sum(int(v) for v in (stats or {}).values())
+    except (TypeError, ValueError):
+        return 0
 
 
 def stage_virustotal(tag_dir: Path, zip_path: Path, sha256_hash: str) -> dict:
@@ -368,35 +406,53 @@ def stage_virustotal(tag_dir: Path, zip_path: Path, sha256_hash: str) -> dict:
     if api_key:
         print(f"  Checking if {zip_path.name} ({sha256_hash[:12]}...) is already scanned on VirusTotal...")
         existing_report = get_virustotal_file_report(sha256_hash, api_key)
+        existing_stats = {}
         if existing_report and "data" in existing_report:
+            existing_stats = existing_report.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+        if existing_report and "data" in existing_report and stats_total(existing_stats) > 0:
             attributes = existing_report.get("data", {}).get("attributes", {})
-            stats = attributes.get("last_analysis_stats", {})
+            stats = existing_stats
             vt_data["scanned"] = True
             vt_data["status"] = "completed"
             vt_data["stats"] = stats
+            vt_data["engines_total"] = stats_total(stats)
             with open(vt_report_file, "w", encoding="utf-8") as f:
                 json.dump(existing_report, f, indent=2)
-            print(f"  Existing VirusTotal report found: {stats.get('malicious', 0)} malicious / {stats.get('suspicious', 0)} suspicious / {stats.get('undetected', 0)} clean")
+            print(f"  Existing VirusTotal report found: {stats.get('malicious', 0)} malicious / {stats.get('suspicious', 0)} suspicious / {stats.get('undetected', 0)} clean ({stats_total(stats)} engines reporting)")
         else:
-            print(f"  Uploading {zip_path.name} to VirusTotal API v3...")
+            # A file record can exist with no analysis at all, and re-uploading the
+            # same bytes returns HTTP 409 — in both cases request a re-analysis.
+            known_record = bool(existing_report and "data" in existing_report)
+            analysis_id = ""
             try:
-                resp = upload_to_virustotal(zip_path, api_key)
-                analysis_id = resp.get("data", {}).get("id")
-                if analysis_id:
-                    print(f"  Scan queued with Analysis ID: {analysis_id}")
-                    analysis = poll_virustotal_analysis(analysis_id, api_key)
-                    if analysis:
-                        attributes = analysis.get("data", {}).get("attributes", {})
-                        stats = attributes.get("stats", {})
-                        vt_data["scanned"] = True
-                        vt_data["status"] = attributes.get("status", "completed")
-                        vt_data["stats"] = stats
-                        with open(vt_report_file, "w", encoding="utf-8") as f:
-                            json.dump(analysis, f, indent=2)
-                        print(f"  VirusTotal scan completed: {stats.get('malicious', 0)} malicious / {stats.get('suspicious', 0)} suspicious / {stats.get('undetected', 0)} clean")
+                if known_record:
+                    print("  File record exists without a completed analysis — requesting re-analysis...")
+                    resp = request_virustotal_reanalyse(sha256_hash, api_key)
+                else:
+                    print(f"  Uploading {zip_path.name} to VirusTotal API v3...")
+                    resp = upload_to_virustotal(zip_path, api_key)
+                analysis_id = resp.get("data", {}).get("id", "")
             except Exception as e:
-                print(f"  \033[1;33mWarning: VirusTotal API upload failed: {e}\033[0m")
+                print(f"  \033[1;33mWarning: VirusTotal submission failed: {e}\033[0m")
                 print(f"  Falling back to direct permalink: {permalink}")
+
+            if analysis_id:
+                print(f"  Scan queued with Analysis ID: {analysis_id}")
+                analysis = poll_virustotal_analysis(analysis_id, api_key)
+                if analysis:
+                    attributes = analysis.get("data", {}).get("attributes", {})
+                    stats = attributes.get("stats", {})
+                    vt_data["scanned"] = True
+                    vt_data["status"] = attributes.get("status", "completed")
+                    vt_data["stats"] = stats
+                    vt_data["engines_total"] = stats_total(stats)
+                    with open(vt_report_file, "w", encoding="utf-8") as f:
+                        json.dump(analysis, f, indent=2)
+                    print(f"  VirusTotal scan completed: {stats.get('malicious', 0)} malicious / {stats.get('suspicious', 0)} suspicious / {stats.get('undetected', 0)} clean ({stats_total(stats)} engines reporting)")
+                else:
+                    vt_data["scanned"] = True
+                    vt_data["status"] = "pending"
+                    print("  Scan still queued at VirusTotal — release notes will report it as pending.")
     else:
         print(f"  Note: 'VIRUSTOTAL_API_KEY' or 'VT_API_KEY' not set.")
         print(f"  Direct verification permalink generated: {permalink}")
@@ -406,12 +462,16 @@ def stage_virustotal(tag_dir: Path, zip_path: Path, sha256_hash: str) -> dict:
         f.write(f"====================================================\n")
         f.write(f"SHA-256: {sha256_hash}\n")
         f.write(f"Permalink: {permalink}\n")
-        if vt_data["scanned"]:
+        if vt_data["scanned"] and stats_total(vt_data.get("stats", {})) > 0:
             stats = vt_data["stats"]
             f.write(f"Status: {vt_data['status']}\n")
+            f.write(f"Engines Reporting: {stats_total(stats)}\n")
             f.write(f"Malicious: {stats.get('malicious', 0)}\n")
             f.write(f"Suspicious: {stats.get('suspicious', 0)}\n")
             f.write(f"Clean/Undetected: {stats.get('undetected', 0)}\n")
+        elif vt_data["scanned"]:
+            f.write("Status: Submitted — analysis pending at the permalink above\n")
+            f.write("Engines Reporting: 0 (scan queued or still in progress)\n")
         else:
             f.write(f"Status: Direct permalink verification ready (API key not set or offline)\n")
 
@@ -429,11 +489,20 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
 
     zip_hash = vt_data.get("sha256", "N/A")
     vt_url = vt_data.get("permalink", f"https://www.virustotal.com/gui/file/{zip_hash}")
-    vt_status_text = (
-        f"🟢 {vt_data['stats'].get('malicious', 0)} detections ({vt_data['stats'].get('undetected', 0)} engines clean)"
-        if vt_data.get("scanned")
-        else "⚪ Not Scanned via API (No VIRUSTOTAL_API_KEY configured — Manual lookup link available)"
-    )
+    vt_stats = vt_data.get("stats", {}) or {}
+    engines_total = stats_total(vt_stats)
+    if vt_data.get("scanned") and engines_total > 0:
+        vt_status_text = (
+            f"🟢 {vt_stats.get('malicious', 0)} detections "
+            f"({vt_stats.get('undetected', 0)} undetected / {engines_total} engines reporting)"
+        )
+    elif vt_data.get("scanned"):
+        vt_status_text = "🟡 Submitted to VirusTotal — analysis pending (open the permalink for live results)"
+    else:
+        vt_status_text = "⚪ Not Scanned via API (No VIRUSTOTAL_API_KEY configured — Manual lookup link available)"
+
+    pub_key_file = ROOT_DIR / "keys" / "hollow-publisher.pub"
+    publisher_key = pub_key_file.read_text(encoding="utf-8").strip() if pub_key_file.exists() else "N/A"
 
     release_body = f"""## 🌟 Hollow Canvas {version} · Studio Release
  
@@ -456,7 +525,7 @@ A modern, high-performance, local-first digital illustration, concept art, and g
   - **Dock Padding & Sizing Hygiene**: Re-architected active layer controls, blend mode dropdowns, preset shelves, and canvas action buttons to strictly prevent panel overflow.
 
 * **📦 VPack 2.0.1 Upgraded Cryptographic Trust & Verification**:
-  - **Ed25519 Publisher Signature**: Verified with official publisher public key (`3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f`).
+  - **Ed25519 Publisher Signature**: Verified with official publisher public key (`{publisher_key}`).
   - **High-Ratio Deflate Compression & CRC-32 Validation**: Validated via `vpack test`.
 
 ### 🛡️ Security & VirusTotal Verification
@@ -464,7 +533,7 @@ A modern, high-performance, local-first digital illustration, concept art, and g
 | :--- | :--- | :--- |
 | **VirusTotal Scan** | {vt_status_text} | [View VirusTotal Report]({vt_url}) |
 | **SHA-256 Checksum** | `{zip_hash}` | Match against `SHA256SUMS.txt` |
-| **Ed25519 Signature** | `3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f` | Verified via `vpack test` |
+| **Ed25519 Publisher Key** | `{publisher_key}` | Verified via `vpack test` |
 | **Audit Summary** | Local Security & Compliance Verified | Uploaded as `virustotal-summary.txt` |
 
 ### 📦 Downloads & Assets
