@@ -60,6 +60,7 @@ VERSION_FILES = [
     "crates/aurelia-ui/Cargo.toml",
     "crates/aurelia-app/Cargo.toml",
     "README.md",
+    "INSTALL.md",
     "Makefile",
     "assets/banner.svg",
     "installer/aurelia.iss",
@@ -285,6 +286,9 @@ class ReleasePipeline:
             if rel == "README.md":
                 versions |= set(re.findall(r"Release-v(\d+\.\d+\.\d+)", text))
                 versions |= set(re.findall(r"Aurelia-v(\d+\.\d+\.\d+)-win64", text))
+            if rel == "INSTALL.md":
+                versions |= set(re.findall(r"Aurelia-v(\d+\.\d+\.\d+)-win64", text))
+                versions |= set(re.findall(r"Aurelia-Setup-(\d+\.\d+\.\d+)", text))
             if rel == "Makefile":
                 versions |= set(re.findall(r"TAG \?= v(\d+\.\d+\.\d+)", text))
             if rel == "assets/banner.svg":
