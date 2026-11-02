@@ -7,7 +7,20 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
 
 ---
 
-## Shipped in v2.0.0
+## Shipped in v2.1.0
+
+### Packaging & release engineering
+
+| Item | Status | Notes |
+| :--- | :--- | :--- |
+| Morrow-style staged pipeline | ✅ | `scripts/pipeline.py`: preflight → version → build → test → package → verify → publish → ship, resumable with `--from`/`--skip` |
+| Per-tag release records | ✅ | `releases/<tag>.json` (assets, hashes, tests, republish count) + `release-notes/<tag>.md` |
+| Git-only publishing | ✅ | Commit pipeline-owned files, annotated tag, push, verify the remote tag object |
+| REST artifact upload | ✅ | `scripts/release_page.py` (no forge CLI), refuses to upload bytes that disagree with `SHA256SUMS.txt` |
+| Inno Setup installer | ✅ | Per-user `%LOCALAPPDATA%\Programs\Aurelia`, optional `.aur`/`.hcv` associations, smart uninstall |
+| Portable zip + manifest | ✅ | `Aurelia-v<ver>-win64.zip`, `SHA256SUMS.txt` |
+| VPack retired | ✅ | No `.vpack`, no signing stage, no VirusTotal upload (see below) |
+
 
 ### Rebrand: Hollow Canvas → Aurelia
 
@@ -95,3 +108,5 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
 - 💤 **ICC colour management / 16-bit pipelines** — every layer is 8-bit sRGB `Vec<u8>`; a colour-managed float pipeline touches the rasterizer, filters, blend modes and the project format.
 - 💤 **PSD import/export**, **APNG / animated WebP / MP4 export** — need third-party codecs (the `image` crate cannot write animated WebP).
 - 💤 **`render_ui` split** — 3.4k-line function; panel extraction is mechanical but touch-heavy, best done behind the new tests.
+- 💤 **VPack + Ed25519 signing** — retired in v2.1.0 for simplicity: releases are now a portable zip, an Inno Setup installer and a SHA-256 manifest. `keys/aurelia-publisher.*` are kept unused so signing can return without minting a new identity. If it does, the plan is a `sign` stage between `verify` and `publish`, plus a `.vpack` (or `.zip.sig`) asset — not a change to the stage order.
+- 💤 **Code-signing certificate** — the installer and `aurelia.exe` are unsigned, so SmartScreen warns on first run; an Authenticode certificate would remove that prompt and is the higher-value integrity upgrade compared with archive signing.
