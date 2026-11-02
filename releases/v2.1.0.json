@@ -1,0 +1,30 @@
+{
+  "tag": "v2.1.0",
+  "version": "2.1.0",
+  "product": "Aurelia",
+  "remote": null,
+  "tests": "50 tests passed across the workspace (0 failed)",
+  "notes": "release-notes/v2.1.0.md",
+  "assets": [
+    {
+      "name": "Aurelia-Setup-2.1.0.exe",
+      "bytes": 4116606,
+      "sha256": "BCEA827F1EBE7DCE356E009EAF04F0161341F715381C657574E189B8A1830563"
+    },
+    {
+      "name": "Aurelia-v2.1.0-win64.zip",
+      "bytes": 2600363,
+      "sha256": "09F71BFB58B38E4AA604A428D5DD0E20D7E2AE7BB4D5F7CE87CD20D644636595"
+    },
+    {
+      "name": "RELEASE_NOTES.md",
+      "bytes": 3088,
+      "sha256": "F4EFCB711895721303B0D4DDC8EF5DC2B2DFBD5D62DF2C19B8F030A38D1501E4"
+    }
+  ],
+  "installer": "Aurelia-Setup-2.1.0.exe",
+  "published_at": "2026-11-02T15:38:56Z",
+  "republish_count": 0,
+  "recorded_near_commit": "a035f0521dd10314bf8ae47c54214f11588d6ab7",
+  "previous_publication": null
+}
