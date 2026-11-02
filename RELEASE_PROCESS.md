@@ -52,7 +52,7 @@ above if it cannot find it.
 | **`build`** | Compile | `cargo build --release -p aurelia-app`; records the binary hash |
 | **`test`** | Verify | `cargo test --workspace`; records `N tests passed` |
 | **`package`** | Bundle | Portable zip + `Aurelia-Setup-<ver>.exe` + release notes in `dist/<tag>/` |
-| **`virustotal`** | Scan | Submits the zip **and** the installer to the VirusTotal API v3, writes the verdict into the release notes and `virustotal-summary.txt`, and aborts on detections unless `--force` |
+| **`virustotal`** | Scan | Submits the zip **and** the installer to the VirusTotal API v3, writes the verdict into the release notes and `virustotal-summary.txt`, and aborts on detections unless `--max-detections`/`--force` allow them |
 | **`verify`** | Integrity | `SHA256SUMS.txt`, zip member/licensing checks, installer `MZ`/size check, ledger drift detection |
 | **`publish`** | Git | Commits pipeline-owned changes only, annotated tag, push branch + tag, verifies `origin` |
 | **`ship`** | Upload | `scripts/release_page.py` attaches the verified bytes to the GitHub release page over the REST API |
@@ -66,21 +66,22 @@ above if it cannot find it.
 make release TAG=v2.1.0
 
 # Equivalent
-python scripts/pipeline.py v2.1.0
+python scripts/pipeline.py v2.2.1
 ```
 
 Common variants:
 
 ```bash
-python scripts/pipeline.py v2.1.0 --dry-run        # print the plan, touch nothing
-python scripts/pipeline.py v2.1.0 --no-publish     # build/package/verify only
-python scripts/pipeline.py v2.1.0 --skip-installer # portable zip only (no Inno Setup)
-python scripts/pipeline.py v2.1.0 --from package   # resume after a failed stage
-python scripts/pipeline.py v2.1.0 --skip test      # skip a stage
-python scripts/pipeline.py v2.1.0 --no-bump        # declarations already correct
-python scripts/pipeline.py v2.1.0 --clobber        # republish an existing tag
-python scripts/pipeline.py v2.1.0 --force          # publish a dirty tree / move a tag
-python scripts/pipeline.py v2.1.0 --from ship      # retry just the upload
+python scripts/pipeline.py v2.2.1 --dry-run        # print the plan, touch nothing
+python scripts/pipeline.py v2.2.1 --no-publish     # build/package/verify only
+python scripts/pipeline.py v2.2.1 --skip-installer # portable zip only (no Inno Setup)
+python scripts/pipeline.py v2.2.1 --from package   # resume after a failed stage
+python scripts/pipeline.py v2.2.1 --skip test      # skip a stage
+python scripts/pipeline.py v2.2.1 --no-bump        # declarations already correct
+python scripts/pipeline.py v2.2.1 --clobber        # republish an existing tag
+python scripts/pipeline.py v2.2.1 --force          # publish a dirty tree / move a tag
+python scripts/pipeline.py v2.2.1 --max-detections 4  # tolerate known VirusTotal false positives
+python scripts/pipeline.py v2.2.1 --from ship      # retry just the upload
 ```
 
 Makefile shortcuts: `release`, `check`, `version`, `build`, `test`, `package`,
@@ -131,7 +132,7 @@ produced `Setup` file is a real PE image above a size floor.
 
 The `virustotal` stage scans **both shipped binaries** — `Aurelia-v<ver>-win64.zip`
 and `Aurelia-Setup-<ver>.exe` — and refuses to publish if any engine reports a
-detection (`--force` overrides).
+detection unless `--max-detections N` tolerates a known count or `--force` overrides.
 
 **Key handling.** The API key is read from the environment only:
 
