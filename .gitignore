@@ -17,3 +17,11 @@ exports/
 .env
 __pycache__/
 *.pyc
+
+# Local build/UI-review artifacts
+check.log
+build.log
+build.out
+test.log
+test.err
+ui-*.png

@@ -1,3 +1,4 @@
+pub mod design;
 pub mod dialogs;
 pub mod icons;
 pub mod shell;
