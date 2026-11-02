@@ -79,6 +79,22 @@ VERSION_FILES = [
 # Paths the pipeline is allowed to change and then commit on its own.
 MANAGED_PATHS = set(VERSION_FILES) | {"Cargo.lock", "release-notes", "releases", "dist"}
 
+# How each declaration is rewritten. Rules are applied to every VERSION_FILES entry,
+# and only the patterns that actually occur in a file can match, so the set is
+# idempotent: running the pipeline over an already-correct tree changes nothing.
+# This is deliberately *not* gated on the app manifest's version -- a hand-made
+# bump (or a docs edit after a bump) must still be normalised, otherwise the
+# consistency check below fails on a release that is otherwise ready.
+DECLARATION_RULES = [
+    (re.compile(r'(?m)^version = "\d+\.\d+\.\d+"'), lambda v: f'version = "{v}"'),
+    (re.compile(r"(Release-v)\d+\.\d+\.\d+"), lambda v: rf"\g<1>{v}"),
+    (re.compile(r"(Aurelia-v)\d+\.\d+\.\d+(-win64)"), lambda v: rf"\g<1>{v}\g<2>"),
+    (re.compile(r"(Aurelia-Setup-)\d+\.\d+\.\d+"), lambda v: rf"\g<1>{v}"),
+    (re.compile(r"(TAG \?= v)\d+\.\d+\.\d+"), lambda v: rf"\g<1>{v}"),
+    (re.compile(r"(v)\d+\.\d+\.\d+( · PRODUCTION)"), lambda v: rf"\g<1>{v}\g<2>"),
+    (re.compile(r'(MyAppVersion ")\d+\.\d+\.\d+(")'), lambda v: rf"\g<1>{v}\g<2>"),
+]
+
 
 def log(msg: str, header: bool = False):
     if header:
@@ -259,25 +275,16 @@ class ReleasePipeline:
         log("Preflight passed.")
 
     # ── stage 2: version ────────────────────────────────────────────────
-    def _current_version(self) -> str:
-        text = (ROOT / "crates" / APP_CRATE / "Cargo.toml").read_text(encoding="utf-8")
-        match = re.search(r'^version = "([^"]+)"', text, re.MULTILINE)
-        if not match:
-            raise RuntimeError("cannot read the current version from the app manifest")
-        return match.group(1)
-
     def _bump_declarations(self):
-        current = self._current_version()
-        if current == self.ver:
-            return []
         changed = []
-        pattern = re.compile(re.escape(current))
         for rel in VERSION_FILES:
             path = ROOT / rel
             if not path.exists():
                 continue
             text = self._read_preserving(path)
-            updated = pattern.sub(self.ver, text)
+            updated = text
+            for pattern, build in DECLARATION_RULES:
+                updated = pattern.sub(build(self.ver), updated)
             if updated != text:
                 self._write_preserving(path, updated)
                 changed.append(rel)
