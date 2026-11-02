@@ -92,6 +92,7 @@ DECLARATION_RULES = [
     (re.compile(r"(Aurelia-Setup-)\d+\.\d+\.\d+"), lambda v: rf"\g<1>{v}"),
     (re.compile(r"(TAG \?= v)\d+\.\d+\.\d+"), lambda v: rf"\g<1>{v}"),
     (re.compile(r"(v)\d+\.\d+\.\d+( · PRODUCTION)"), lambda v: rf"\g<1>{v}\g<2>"),
+    (re.compile(r'(MyAppVersionNumeric ")\d+\.\d+\.\d+\.\d+(")'), lambda v: rf"\g<1>{v}.0\g<2>"),
     (re.compile(r'(MyAppVersion ")\d+\.\d+\.\d+(")'), lambda v: rf"\g<1>{v}\g<2>"),
 ]
 
@@ -313,6 +314,9 @@ class ReleasePipeline:
                 versions |= set(re.findall(r"v(\d+\.\d+\.\d+) · PRODUCTION", text))
             if rel == "installer/aurelia.iss":
                 versions |= set(re.findall(r'MyAppVersion "(\d+\.\d+\.\d+)"', text))
+                # The numeric fallback feeds the installer's file-version metadata.
+                versions |= set(
+                    re.findall(r'MyAppVersionNumeric "(\d+\.\d+\.\d+)\.\d+"', text))
             if versions:
                 declared[rel] = versions
         return declared
