@@ -4,9 +4,6 @@ version = "2.2.1"
 edition = "2021"
 description = "Immediate-mode user interface, studio panels, palette docks, and modals for Aurelia"
 
-[lib]
-test = false
-
 [dependencies]
 aurelia-core = { path = "../aurelia-core", version = "2.2.1" }
 aurelia-render = { path = "../aurelia-render", version = "2.2.1" }

@@ -310,6 +310,24 @@ class ReleasePipeline:
                 declared[rel] = versions
         return declared
 
+    VERSION_LITERAL = re.compile(r'"(v?\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)"')
+
+    def _hardcoded_version_literals(self):
+        """Version strings baked into Rust sources.
+
+        The UI must read `aurelia_ui::APP_VERSION` (env!("CARGO_PKG_VERSION")) instead of
+        hardcoding a version, otherwise the About dialog silently drifts behind the build
+        -- which is exactly how v2.0-v2.2 shipped an About box that said v1.0.2-alpha.
+        """
+        offenders = []
+        for path in sorted((ROOT / "crates").rglob("*.rs")):
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                for match in self.VERSION_LITERAL.finditer(line):
+                    if match.group(1) != self.ver:
+                        offenders.append(
+                            f"{path.relative_to(ROOT)}:{lineno} {match.group(1)}")
+        return offenders
+
     def stage_version(self):
         log("STAGE 2: Version bump & declaration consistency", header=True)
         if self.dry_run:
@@ -335,7 +353,16 @@ class ReleasePipeline:
         missing = [rel for rel in VERSION_FILES if not (ROOT / rel).exists()]
         if missing:
             raise RuntimeError(f"Missing version declaration files: {', '.join(missing)}")
-        log(f"All {len(declared)} declaration files agree on {self.ver}.")
+
+        literals = self._hardcoded_version_literals()
+        if literals:
+            raise RuntimeError(
+                "Hardcoded version literals found in Rust sources; read "
+                'aurelia_ui::APP_VERSION (env!("CARGO_PKG_VERSION")) instead:\n  '
+                + "\n  ".join(literals)
+            )
+        log(f"All {len(declared)} declaration files agree on {self.ver}; "
+            f"no hardcoded version literals in Rust sources.")
 
     # ── stage 3: build ──────────────────────────────────────────────────
     def stage_build(self):

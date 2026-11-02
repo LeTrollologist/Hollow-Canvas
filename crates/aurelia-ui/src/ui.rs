@@ -119,7 +119,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
                     ui.label(RichText::new("✦ AURELIA").size(12.5).strong().color(Color32::from_rgb(253, 249, 236)));
-                    ui.label(RichText::new("v1.0.3-alpha").size(9.0).color(Color32::from_rgb(165, 152, 115)));
+                    ui.label(RichText::new(format!("v{}", crate::APP_VERSION)).size(9.0).color(Color32::from_rgb(165, 152, 115)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -530,7 +530,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(3.0, 0.0);
 
-                        if ui.button("ℹ").on_hover_text("About Aurelia (v1.0.2-alpha)").clicked() {
+                        if ui.button("ℹ").on_hover_text(format!("About Aurelia (v{})", crate::APP_VERSION)).clicked() {
                             state.show_about_dialog = true;
                         }
 
@@ -3803,7 +3803,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("AURELIA").size(18.0).strong().color(Color32::from_rgb(253, 249, 236)));
                     ui.label(RichText::new("Illustration · Animation · Painting Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 1.0.2-alpha · Pure Native Rust").size(10.0).color(Color32::from_rgb(172, 161, 130)));
+                    ui.label(RichText::new(format!("Version {} · Pure Native Rust", crate::APP_VERSION)).size(10.0).color(Color32::from_rgb(172, 161, 130)));
                 });
 
                 ui.add_space(8.0);

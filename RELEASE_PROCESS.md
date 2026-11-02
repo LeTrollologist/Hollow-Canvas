@@ -48,7 +48,7 @@ above if it cannot find it.
 | Stage | Operation | Detail |
 | :--- | :--- | :--- |
 | **`preflight`** | Environment | Toolchain versions, Inno Setup discovery, git branch/remote, dirty-tree policy |
-| **`version`** | Version bump | Rewrites the tag into every declaration (5 crates, README, Makefile, banner, installer) then *proves* no stale version survives |
+| **`version`** | Version bump | Rewrites the tag into every declaration (5 crates, README, INSTALL, Makefile, banner, installer), *proves* no stale version survives, and rejects hardcoded version literals in Rust sources (the UI must read `APP_VERSION`) |
 | **`build`** | Compile | `cargo build --release -p aurelia-app`; records the binary hash |
 | **`test`** | Verify | `cargo test --workspace`; records `N tests passed` |
 | **`package`** | Bundle | Portable zip + `Aurelia-Setup-<ver>.exe` + release notes in `dist/<tag>/` |

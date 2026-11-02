@@ -29,7 +29,7 @@
     <img src="https://img.shields.io/badge/License-GPL--3.0-C9527F?style=for-the-badge&logo=opensourceinitiative&logoColor=1A120B&labelColor=1A120B" alt="License" />
   </a>
   <a href="crates/aurelia-core/src/tests.rs">
-    <img src="https://img.shields.io/badge/Tests-50_Passing-F7E08A?style=for-the-badge&labelColor=1A120B" alt="Tests" />
+    <img src="https://img.shields.io/badge/Tests-51_Passing-F7E08A?style=for-the-badge&labelColor=1A120B" alt="Tests" />
   </a>
 </p>
 
