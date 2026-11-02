@@ -584,12 +584,17 @@ impl SoftwareRenderer {
         let left_x_start = vp_min_x;
         let right_x_end = vp_max_x;
 
-        let ruler_bg = 0xFF120E0A;
-        let ruler_border = 0xFF3E2F25;
-        let ruler_tick = 0xFF8A7458;
-        // Ticks past the document edge are dimmed: that area is off-canvas.
-        let ruler_tick_off = 0xFF4A3D2D;
-        let ruler_label = 0xFFC9B48F;
+        let ruler_bg = 0xFF14110D;
+        // Beyond the canvas the strip is recessed instead of merely dimmed.
+        let ruler_bg_off = 0xFF0D0A07;
+        // 1 px bevel along the outer edge of each strip.
+        let ruler_highlight = 0xFF1E1913;
+        let ruler_border = 0xFF3A2E24;
+        let tick_minor = 0xFF5E4E3D;
+        let tick_mid = 0xFF8A7458;
+        let tick_major = 0xFFC0A886;
+        let tick_off = 0xFF352C24;
+        let ruler_label = 0xFFDDC9A6;
         let ruler_marker = 0xFFF6C45A;
         let ruler_accent = 0xFFF6C45A;
 
@@ -598,77 +603,88 @@ impl SoftwareRenderer {
         let zoom = zoom.max(0.02);
         let center_x = (win_w as f32) * 0.5 + pan.x + center_offset.x;
         let center_y = (win_h as f32) * 0.5 + pan.y + center_offset.y;
-        let to_sx = |v: f32| ((v - doc_w * 0.5) * zoom + center_x).round() as isize;
-        let to_sy = |v: f32| ((v - doc_h * 0.5) * zoom + center_y).round() as isize;
-        let to_cx = |sx: f32| (sx - center_x) / zoom + doc_w * 0.5;
-        let to_cy = |sy: f32| (sy - center_y) / zoom + doc_h * 0.5;
+        let bottom_y_end = vp_max_y;
 
-        // Label spacing drives the step, so numbers never collide at any zoom.
-        let (major_step, minor_step) = ruler_steps(zoom);
-        let steps_per_major = (major_step / minor_step).round().max(1.0) as usize;
+        // Geometry comes from pure helpers (`ruler_ticks` / `ruler_labels`) so the
+        // placement can be unit-tested without a framebuffer.
+        let top_ticks = ruler_ticks(doc_w, zoom, center_x, left_x_start as isize, right_x_end as isize);
+        let top_labels = ruler_labels(&top_ticks, doc_w, right_x_end as isize);
+        let left_ticks = ruler_ticks(
+            doc_h,
+            zoom,
+            center_y,
+            (top_y_start + top_ruler_h) as isize,
+            bottom_y_end as isize,
+        );
+        let left_labels = ruler_labels(&left_ticks, doc_h, bottom_y_end as isize);
 
-        // 1. Top horizontal ruler band
+        // Canvas edges in screen space, used to recess the off-canvas part.
+        let doc_x0 = doc_to_screen(0.0, doc_w, zoom, center_x);
+        let doc_x1 = doc_to_screen(doc_w, doc_w, zoom, center_x);
+        let doc_y0 = doc_to_screen(0.0, doc_h, zoom, center_y);
+        let doc_y1 = doc_to_screen(doc_h, doc_h, zoom, center_y);
+
+        // ── Top strip ───────────────────────────────────────────────────────
         for ry in 0..top_ruler_h {
             let y = top_y_start + ry;
             if y >= win_h {
                 continue;
             }
             let row = y * win_w;
-            let color = if ry == top_ruler_h - 1 { ruler_border } else { ruler_bg };
             for x in left_x_start..right_x_end {
-                let pixel_idx = row + x;
-                if pixel_idx < buffer.len() {
-                    buffer[pixel_idx] = color;
-                }
-            }
-        }
-
-        let bottom_y_end = vp_max_y;
-
-        // Ticks for the top ruler: minor every `minor_step`, labelled major every 5th.
-        // The range spans the visible strip, so ticks past the canvas edge dim out.
-        let first_i = (to_cx(vp_min_x as f32) / minor_step).floor().max(0.0) as usize;
-        let last_i = (to_cx(right_x_end as f32) / minor_step).ceil().max(0.0) as usize;
-        let mut next_label_x = f32::NEG_INFINITY;
-        for i in first_i..=last_i {
-            let value = i as f32 * minor_step;
-            let sx = to_sx(value);
-            if sx < left_x_start as isize || sx >= right_x_end as isize {
-                continue;
-            }
-            let is_major = i % steps_per_major == 0;
-            let tick_len = if is_major { 6 } else { 3 };
-            let tick_color = if value > doc_w { ruler_tick_off } else { ruler_tick };
-            for ty in (top_ruler_h - 1 - tick_len)..(top_ruler_h - 1) {
-                let idx = (top_y_start + ty) * win_w + sx as usize;
+                let centre = x as f32 + 0.5;
+                let on_canvas = centre >= doc_x0 && centre < doc_x1;
+                let color = if ry == top_ruler_h - 1 {
+                    ruler_border
+                } else if ry == 0 {
+                    ruler_highlight
+                } else if on_canvas {
+                    ruler_bg
+                } else {
+                    ruler_bg_off
+                };
+                let idx = row + x;
                 if idx < buffer.len() {
-                    buffer[idx] = tick_color;
-                }
-            }
-
-            if is_major && value <= doc_w {
-                let budget = right_x_end as f32 - sx as f32 - 3.0;
-                if sx as f32 >= next_label_x {
-                    let used = draw_ruler_label_h(
-                        buffer,
-                        win_w,
-                        win_h,
-                        sx + 3,
-                        (top_y_start + 1) as isize,
-                        value.round() as i64,
-                        ruler_label,
-                        budget,
-                    );
-                    if used > 0 {
-                        next_label_x = sx as f32 + 3.0 + used as f32 + 8.0;
-                    }
+                    buffer[idx] = color;
                 }
             }
         }
 
-        // Document bounds are emphasised: 0 and the far edge.
+        for tick in &top_ticks {
+            let len = tick.level.length();
+            let color = if tick.value > doc_w {
+                tick_off
+            } else {
+                match tick.level {
+                    TickLevel::Major => tick_major,
+                    TickLevel::Mid => tick_mid,
+                    TickLevel::Minor => tick_minor,
+                }
+            };
+            for ty in (top_ruler_h - 1 - len)..(top_ruler_h - 1) {
+                let idx = (top_y_start + ty) * win_w + tick.screen as usize;
+                if idx < buffer.len() {
+                    buffer[idx] = color;
+                }
+            }
+        }
+
+        for label in &top_labels {
+            draw_ruler_label_h(
+                buffer,
+                win_w,
+                win_h,
+                label.screen + 4,
+                (top_y_start + 1) as isize,
+                label.value.round() as i64,
+                ruler_label,
+                right_x_end as f32 - label.screen as f32 - 4.0,
+            );
+        }
+
+        // Canvas bounds are emphasised: 0 and the far edge.
         for bound in [0.0_f32, doc_w] {
-            let sx = to_sx(bound);
+            let sx = doc_to_screen(bound, doc_w, zoom, center_x).round() as isize;
             if sx >= left_x_start as isize && sx < right_x_end as isize {
                 for ty in 1..(top_ruler_h - 1) {
                     let idx = (top_y_start + ty) * win_w + sx as usize;
@@ -679,74 +695,85 @@ impl SoftwareRenderer {
             }
         }
 
-        // Top cursor marker (2 px so it reads at a glance)
-        let cursor_sx = to_sx(cursor_pos.x);
+        // Cursor marker: 1 px accent line with a soft 5 px glow.
+        let cursor_sx = doc_to_screen(cursor_pos.x, doc_w, zoom, center_x).round() as isize;
         if cursor_sx >= left_x_start as isize && cursor_sx < right_x_end as isize {
             for ty in 0..top_ruler_h {
-                for dx in 0..2 {
-                    let idx = (top_y_start + ty) * win_w + (cursor_sx + dx).max(0) as usize;
-                    if idx < buffer.len() && (cursor_sx + dx) < right_x_end as isize {
+                for d in -2isize..=2 {
+                    let x = cursor_sx + d;
+                    if x < left_x_start as isize || x >= right_x_end as isize {
+                        continue;
+                    }
+                    let idx = (top_y_start + ty) * win_w + x as usize;
+                    if idx >= buffer.len() {
+                        continue;
+                    }
+                    if d == 0 {
                         buffer[idx] = ruler_marker;
+                    } else {
+                        blend_px(buffer, idx, ruler_marker, if d.abs() == 1 { 96 } else { 40 });
                     }
                 }
             }
         }
 
-        // 2. Left vertical ruler band (starts below the corner)
+        // ── Left strip ──────────────────────────────────────────────────────
         for y in (top_y_start + top_ruler_h)..bottom_y_end {
             let row = y * win_w;
+            let centre = y as f32 + 0.5;
+            let on_canvas = centre >= doc_y0 && centre < doc_y1;
             for rx in 0..left_ruler_w {
-                let x = left_x_start + rx;
-                let pixel_idx = row + x;
+                let color = if rx == left_ruler_w - 1 {
+                    ruler_border
+                } else if rx == 0 {
+                    ruler_highlight
+                } else if on_canvas {
+                    ruler_bg
+                } else {
+                    ruler_bg_off
+                };
+                let pixel_idx = row + left_x_start + rx;
                 if pixel_idx < buffer.len() {
-                    buffer[pixel_idx] = if rx == left_ruler_w - 1 { ruler_border } else { ruler_bg };
+                    buffer[pixel_idx] = color;
                 }
             }
         }
 
-        // Ticks for the left ruler, mirrored from the top ruler.
-        let first_j = (to_cy((top_y_start + top_ruler_h) as f32) / minor_step).floor().max(0.0) as usize;
-        let last_j = (to_cy(bottom_y_end as f32) / minor_step).ceil().max(0.0) as usize;
-        let mut next_label_y = f32::NEG_INFINITY;
-        for i in first_j..=last_j {
-            let value = i as f32 * minor_step;
-            let sy = to_sy(value);
-            if sy < (top_y_start + top_ruler_h) as isize || sy >= bottom_y_end as isize {
-                continue;
-            }
-            let is_major = i % steps_per_major == 0;
-            let tick_len = if is_major { 6 } else { 3 };
-            let tick_color = if value > doc_h { ruler_tick_off } else { ruler_tick };
-            for tx in (left_ruler_w - 1 - tick_len)..(left_ruler_w - 1) {
-                let idx = sy as usize * win_w + left_x_start + tx;
+        for tick in &left_ticks {
+            let len = tick.level.length();
+            let color = if tick.value > doc_h {
+                tick_off
+            } else {
+                match tick.level {
+                    TickLevel::Major => tick_major,
+                    TickLevel::Mid => tick_mid,
+                    TickLevel::Minor => tick_minor,
+                }
+            };
+            for tx in (left_ruler_w - 1 - len)..(left_ruler_w - 1) {
+                let idx = tick.screen as usize * win_w + left_x_start + tx;
                 if idx < buffer.len() {
-                    buffer[idx] = tick_color;
-                }
-            }
-
-            if is_major && value <= doc_h {
-                let budget = bottom_y_end as f32 - sy as f32 - 3.0;
-                if sy as f32 >= next_label_y {
-                    let used = draw_ruler_label_v(
-                        buffer,
-                        win_w,
-                        win_h,
-                        (left_x_start + 1) as isize,
-                        sy + 3,
-                        value.round() as i64,
-                        ruler_label,
-                        budget,
-                    );
-                    if used > 0 {
-                        next_label_y = sy as f32 + 3.0 + used as f32 + 8.0;
-                    }
+                    buffer[idx] = color;
                 }
             }
         }
 
-        // Document bounds on the vertical ruler
+        for label in &left_labels {
+            draw_ruler_label_v(
+                buffer,
+                win_w,
+                win_h,
+                (left_x_start + 1) as isize,
+                label.screen + 4,
+                label.value.round() as i64,
+                ruler_label,
+                bottom_y_end as f32 - label.screen as f32 - 4.0,
+            );
+        }
+
+        // Canvas bounds on the vertical ruler
         for bound in [0.0_f32, doc_h] {
-            let sy = to_sy(bound);
+            let sy = doc_to_screen(bound, doc_h, zoom, center_y).round() as isize;
             if sy >= (top_y_start + top_ruler_h) as isize && sy < bottom_y_end as isize {
                 for tx in 1..(left_ruler_w - 1) {
                     let idx = sy as usize * win_w + left_x_start + tx;
@@ -757,30 +784,45 @@ impl SoftwareRenderer {
             }
         }
 
-        // Left cursor marker
-        let cursor_sy = to_sy(cursor_pos.y);
+        // Cursor marker with the same soft glow as the top strip.
+        let cursor_sy = doc_to_screen(cursor_pos.y, doc_h, zoom, center_y).round() as isize;
         if cursor_sy >= (top_y_start + top_ruler_h) as isize && cursor_sy < bottom_y_end as isize {
             for tx in 0..left_ruler_w {
-                for dy in 0..2 {
-                    let idx = (cursor_sy + dy).max(0) as usize * win_w + left_x_start + tx;
-                    if idx < buffer.len() && (cursor_sy + dy) < bottom_y_end as isize {
+                for d in -2isize..=2 {
+                    let y = cursor_sy + d;
+                    if y < (top_y_start + top_ruler_h) as isize || y >= bottom_y_end as isize {
+                        continue;
+                    }
+                    let idx = y as usize * win_w + left_x_start + tx;
+                    if idx >= buffer.len() {
+                        continue;
+                    }
+                    if d == 0 {
                         buffer[idx] = ruler_marker;
+                    } else {
+                        blend_px(buffer, idx, ruler_marker, if d.abs() == 1 { 96 } else { 40 });
                     }
                 }
             }
         }
 
-        // Corner block, painted last so nothing spills into it.
+        // Beveled corner cap, painted last so nothing spills into it.
         for ry in 0..top_ruler_h {
             for rx in 0..left_ruler_w {
                 let (x, y) = (left_x_start + rx, top_y_start + ry);
                 if x >= win_w || y >= win_h {
                     continue;
                 }
-                let edge = rx == left_ruler_w - 1 || ry == top_ruler_h - 1;
+                let color = if rx == left_ruler_w - 1 || ry == top_ruler_h - 1 {
+                    ruler_border
+                } else if rx == 0 || ry == 0 {
+                    ruler_highlight
+                } else {
+                    ruler_bg
+                };
                 let idx = y * win_w + x;
                 if idx < buffer.len() {
-                    buffer[idx] = if edge { ruler_border } else { ruler_bg };
+                    buffer[idx] = color;
                 }
             }
         }
@@ -1023,15 +1065,60 @@ const RULER_GLYPH_SCALE: usize = 2;
 const RULER_GLYPH_W: usize = 5 * RULER_GLYPH_SCALE;
 const RULER_GLYPH_H: usize = 7 * RULER_GLYPH_SCALE;
 /// Advance of one glyph including the inter-digit gap.
-const RULER_ADVANCE: usize = RULER_GLYPH_W + RULER_GLYPH_SCALE;
+pub const RULER_ADVANCE: usize = RULER_GLYPH_W + RULER_GLYPH_SCALE;
+/// Minimum gap between two label strings, in pixels.
+const LABEL_GAP: f32 = 6.0;
+/// Gap between a major tick and the start of its label.
+pub const LABEL_OFFSET: f32 = 4.0;
 
-/// Picks a (major, minor) tick step such that labelled ticks sit far enough apart
-/// at the current zoom to hold a 5-digit label — the 1/2/5 ladder cartography uses.
-fn ruler_steps(zoom: f32) -> (f32, f32) {
+/// Visual weight of a ruler tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TickLevel {
+    Minor,
+    Mid,
+    Major,
+}
+
+impl TickLevel {
+    /// Tick length in pixels, measured inward from the strip's border.
+    pub fn length(self) -> usize {
+        match self {
+            TickLevel::Minor => 3,
+            TickLevel::Mid => 5,
+            TickLevel::Major => 7,
+        }
+    }
+}
+
+/// One tick on a ruler.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RulerTick {
+    /// Position along the canvas axis, in document pixels.
+    pub value: f32,
+    /// Position along the strip, in screen pixels.
+    pub screen: isize,
+    pub level: TickLevel,
+}
+
+/// Document coordinate -> screen coordinate (unrounded).
+pub fn doc_to_screen(value: f32, doc_len: f32, zoom: f32, centre: f32) -> f32 {
+    (value - doc_len * 0.5) * zoom.max(0.02) + centre
+}
+
+/// Screen coordinate -> document coordinate (unrounded).
+pub fn screen_to_doc(screen: f32, doc_len: f32, zoom: f32, centre: f32) -> f32 {
+    (screen - centre) / zoom.max(0.02) + doc_len * 0.5
+}
+
+/// Tick ladder: `(major, minor, subdivisions_per_major)`.
+///
+/// Majors carry the labels; each major is split `subdivisions` times. The ladder
+/// is picked so labels never collide and minors stay at least 4 px apart.
+pub fn ruler_steps(zoom: f32) -> (f32, f32, u32) {
     const LADDER: [f32; 13] = [
         1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0, 5000.0,
     ];
-    let zoom = zoom.max(0.01);
+    let zoom = zoom.max(0.02);
     let mut major = *LADDER.last().unwrap();
     for step in LADDER {
         if step * zoom >= 64.0 {
@@ -1039,9 +1126,95 @@ fn ruler_steps(zoom: f32) -> (f32, f32) {
             break;
         }
     }
-    // Five subdivisions per labelled tick, unless they would be sub-pixel.
-    let minor = if (major / 5.0) * zoom >= 3.0 { major / 5.0 } else { major };
-    (major, minor)
+    // Prefer tenths (which give a mid tick at the half), then fifths, then halves.
+    for subs in [10u32, 5, 2] {
+        if (major / subs as f32) * zoom >= 4.0 {
+            return (major, major / subs as f32, subs);
+        }
+    }
+    (major, major, 1)
+}
+
+/// Every tick visible in the strip `[lo, hi)`, counted from canvas 0.
+///
+/// Ticks continue past the document edge so the canvas boundary reads clearly;
+/// callers dim them via `RulerTick::value > doc_len`.
+pub fn ruler_ticks(doc_len: f32, zoom: f32, centre: f32, lo: isize, hi: isize) -> Vec<RulerTick> {
+    let zoom = zoom.max(0.02);
+    let (_, minor, subs) = ruler_steps(zoom);
+    if !(doc_len > 0.0) || hi <= lo || !zoom.is_finite() || !centre.is_finite() {
+        return Vec::new();
+    }
+
+    let first = (screen_to_doc(lo as f32, doc_len, zoom, centre) / minor).floor().max(0.0) as i64;
+    let last = (screen_to_doc(hi as f32, doc_len, zoom, centre) / minor).ceil().max(0.0) as i64;
+    // Hard ceiling: a pathological zoom must not spin out here.
+    let last = last.min(first.saturating_add(8192));
+
+    let mut ticks = Vec::new();
+    for i in first..=last {
+        let value = i as f32 * minor;
+        if !value.is_finite() {
+            break;
+        }
+        let screen = doc_to_screen(value, doc_len, zoom, centre).round() as isize;
+        if screen < lo || screen >= hi {
+            continue;
+        }
+        let level = if subs > 1 && i % subs as i64 == 0 {
+            TickLevel::Major
+        } else if subs >= 4 && i % (subs as i64 / 2) == 0 {
+            TickLevel::Mid
+        } else {
+            TickLevel::Minor
+        };
+        ticks.push(RulerTick { value, screen, level });
+    }
+    ticks
+}
+
+/// Width in pixels of `value` when drawn with the ruler font.
+pub fn ruler_label_width(value: f32) -> usize {
+    let (_, len) = ruler_digits(value.round() as i64);
+    len * RULER_GLYPH_W + len.saturating_sub(1) * RULER_GLYPH_SCALE
+}
+
+/// The major ticks that should carry a label: inside the canvas, far enough from
+/// the previous label that the numbers never touch, and fully inside the strip.
+pub fn ruler_labels(ticks: &[RulerTick], doc_len: f32, strip_hi: isize) -> Vec<RulerTick> {
+    let mut out = Vec::new();
+    let mut next_free = f32::NEG_INFINITY;
+    for tick in ticks {
+        if tick.level != TickLevel::Major || tick.value > doc_len + 0.5 {
+            continue;
+        }
+        let width = ruler_label_width(tick.value) as f32;
+        let start = tick.screen as f32 + LABEL_OFFSET;
+        if start + width > strip_hi as f32 || start < next_free {
+            continue;
+        }
+        out.push(*tick);
+        next_free = start + width + LABEL_GAP;
+    }
+    out
+}
+
+/// Alpha-composites `color` over one pixel (0xAARRGGBB, opaque output).
+#[inline]
+fn blend_px(buffer: &mut [u32], idx: usize, color: u32, alpha: u32) {
+    let Some(&dst) = buffer.get(idx) else { return };
+    if alpha == 0 {
+        return;
+    }
+    if alpha >= 255 {
+        buffer[idx] = color;
+        return;
+    }
+    let mix = |src: u32, dst: u32| ((src * alpha + dst * (255 - alpha)) / 255) & 0xFF;
+    let r = mix((color >> 16) & 0xFF, (dst >> 16) & 0xFF);
+    let g = mix((color >> 8) & 0xFF, (dst >> 8) & 0xFF);
+    let b = mix(color & 0xFF, dst & 0xFF);
+    buffer[idx] = 0xFF00_0000 | (r << 16) | (g << 8) | b;
 }
 
 fn ruler_digits(value: i64) -> ([u8; 6], usize) {
@@ -1092,7 +1265,10 @@ fn draw_ruler_label_h(
 ) -> usize {
     let (digits, len) = ruler_digits(value);
     let width = len * RULER_GLYPH_W + len.saturating_sub(1) * RULER_GLYPH_SCALE;
-    if width as f32 > budget || x < 0 {
+    if width as f32 > budget || x < 0 || y < 0 {
+        return 0;
+    }
+    if (y as usize).saturating_add(RULER_GLYPH_H) > win_h {
         return 0;
     }
     let s = RULER_GLYPH_SCALE;
@@ -1136,7 +1312,11 @@ fn draw_ruler_label_v(
 ) -> usize {
     let (digits, len) = ruler_digits(value);
     let height = len * RULER_GLYPH_W + len.saturating_sub(1) * RULER_GLYPH_SCALE;
-    if height as f32 > budget || y < 0 {
+    if height as f32 > budget || x < 0 || y < 0 {
+        return 0;
+    }
+    // The rotated glyph is `RULER_GLYPH_H` wide, so it must fit the strip width.
+    if (x as usize).saturating_add(RULER_GLYPH_H) > win_w {
         return 0;
     }
     let s = RULER_GLYPH_SCALE;
@@ -1220,12 +1400,14 @@ mod ruler_tests {
 
     #[test]
     fn ruler_step_keeps_labelled_ticks_apart_at_every_zoom() {
-        // Label spacing must stay >= 56 px, using the usual 1/2/5 ladder.
+        // Label spacing must stay >= 64 px, using the usual 1/2/5 ladder.
         for (zoom, expected_major) in [(0.1_f32, 1000.0_f32), (0.41, 200.0), (1.0, 100.0), (2.0, 50.0), (8.0, 10.0)] {
-            let (major, minor) = ruler_steps(zoom);
+            let (major, minor, subs) = ruler_steps(zoom);
             assert_eq!(major, expected_major, "major step at zoom {zoom}");
-            assert!(major * zoom >= 56.0, "labels collide at zoom {zoom}");
+            assert!(major * zoom >= 64.0, "labels collide at zoom {zoom}");
             assert!(minor > 0.0 && minor <= major, "minor step out of range at zoom {zoom}");
+            assert!(minor * zoom >= 4.0 || subs == 1, "minor ticks too dense at zoom {zoom}");
+            assert!((minor * subs as f32 - major).abs() < 1e-3, "minor x subs must equal major");
         }
     }
 
@@ -1234,7 +1416,7 @@ mod ruler_tests {
         let mut previous = f32::INFINITY;
         let mut zoom = 0.05_f32;
         while zoom <= 8.0 {
-            let (major, _) = ruler_steps(zoom);
+            let (major, _, _) = ruler_steps(zoom);
             assert!(major <= previous, "step grew while zooming in at {zoom}");
             previous = major;
             zoom += 0.01;
@@ -1279,6 +1461,149 @@ mod ruler_tests {
         let used = draw_ruler_label_v(&mut buffer, 40, 120, 1, 2, 1080, white, 60.0);
         assert!(used > 0);
         assert!(buffer.iter().any(|&p| p == white));
+    }
+
+    #[test]
+    fn ticks_are_evenly_spaced_and_ordered() {
+        for zoom in [0.05f32, 0.2, 0.41, 1.0, 2.5, 8.0] {
+            let (_, minor, _) = ruler_steps(zoom);
+            let ticks = ruler_ticks(1920.0, zoom, 700.0, 0, 900);
+            assert!(ticks.len() > 1, "no ticks at zoom {zoom}");
+            for pair in ticks.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                assert!(b.value > a.value, "values must ascend at zoom {zoom}");
+                assert!(
+                    (b.value - a.value - minor).abs() < 1e-2,
+                    "uneven step at zoom {zoom}: {} then {}",
+                    a.value,
+                    b.value
+                );
+                assert!(b.screen >= a.screen, "screen positions must ascend at zoom {zoom}");
+                // Screen spacing must track the zoomed step to within rounding.
+                let expected = (b.value - a.value) * zoom;
+                assert!(
+                    ((b.screen - a.screen) as f32 - expected).abs() <= 1.01,
+                    "tick drift at zoom {zoom}: expected {expected}, got {}",
+                    b.screen - a.screen
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tick_levels_follow_the_ladder() {
+        let zoom = 1.0;
+        let (major, minor, subs) = ruler_steps(zoom);
+        let ticks = ruler_ticks(1920.0, zoom, 500.0, 0, 1200);
+        for tick in &ticks {
+            let index = (tick.value / minor).round() as i64;
+            let expected = if index % subs as i64 == 0 {
+                TickLevel::Major
+            } else if subs >= 4 && index % (subs as i64 / 2) == 0 {
+                TickLevel::Mid
+            } else {
+                TickLevel::Minor
+            };
+            assert_eq!(tick.level, expected, "level for value {}", tick.value);
+        }
+        let majors: Vec<f32> = ticks
+            .iter()
+            .filter(|t| t.level == TickLevel::Major)
+            .map(|t| t.value)
+            .collect();
+        assert!(majors.len() > 2);
+        for pair in majors.windows(2) {
+            assert!(
+                (pair[1] - pair[0] - major).abs() < 1e-2,
+                "majors {} apart, expected {major}",
+                pair[1] - pair[0]
+            );
+        }
+    }
+
+    #[test]
+    fn labels_never_overlap_and_stay_on_the_canvas() {
+        for doc_len in [1920.0_f32, 1080.0, 4096.0, 120.0] {
+            let mut zoom = 0.05_f32;
+            while zoom <= 8.0 {
+                let ticks = ruler_ticks(doc_len, zoom, 640.0, 0, 1000);
+                let labels = ruler_labels(&ticks, doc_len, 1000);
+                assert!(labels.len() < 64, "{} labels is too many", labels.len());
+                let mut previous_end = f32::NEG_INFINITY;
+                for label in &labels {
+                    assert!(
+                        label.value >= 0.0 && label.value <= doc_len + 0.5,
+                        "label {} outside a {doc_len} px canvas",
+                        label.value
+                    );
+                    let start = label.screen as f32 + LABEL_OFFSET;
+                    assert!(
+                        start >= previous_end,
+                        "labels overlap at zoom {zoom} on a {doc_len} px canvas"
+                    );
+                    previous_end = start + ruler_label_width(label.value) as f32;
+                }
+                zoom += 0.05;
+            }
+        }
+    }
+
+    #[test]
+    fn labels_stay_inside_the_strip() {
+        let ticks = ruler_ticks(1920.0, 1.0, 500.0, 0, 400);
+        for label in ruler_labels(&ticks, 1920.0, 400) {
+            let end = label.screen as f32 + LABEL_OFFSET + ruler_label_width(label.value) as f32;
+            assert!(end <= 400.0, "label runs past the strip edge: {end}");
+        }
+    }
+
+    #[test]
+    fn screen_and_document_coordinates_round_trip() {
+        for zoom in [0.05f32, 0.41, 1.0, 3.3, 8.0] {
+            for value in [0.0_f32, 1.0, 37.5, 959.5, 1920.0] {
+                let screen = doc_to_screen(value, 1920.0, zoom, 512.0);
+                let back = screen_to_doc(screen, 1920.0, zoom, 512.0);
+                assert!(
+                    (back - value).abs() < 0.01,
+                    "round trip drifted at zoom {zoom}: {value} -> {back}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn canvas_bounds_map_to_the_canvas_edges() {
+        // Centre 500, 1920 px wide at 50 %: the canvas spans 500 +/- 480.
+        assert!((doc_to_screen(0.0, 1920.0, 0.5, 500.0) - 20.0).abs() < 1e-3);
+        assert!((doc_to_screen(1920.0, 1920.0, 0.5, 500.0) - 980.0).abs() < 1e-3);
+        assert!((doc_to_screen(960.0, 1920.0, 0.5, 500.0) - 500.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn degenerate_inputs_do_not_panic() {
+        assert!(ruler_ticks(0.0, 1.0, 0.0, 0, 100).is_empty());
+        assert!(ruler_ticks(100.0, 1.0, 0.0, 50, 50).is_empty());
+        // A centre far off-screen and an extreme zoom must stay bounded.
+        assert!(ruler_ticks(100.0, f32::MIN_POSITIVE, 1e9, 0, 100).len() < 8193);
+        assert!(ruler_ticks(1e9, 8.0, -1e9, 0, 100).len() < 8193);
+        // A NaN zoom is clamped rather than propagated.
+        assert!(ruler_ticks(100.0, f32::NAN, 0.0, 0, 100).len() < 8193);
+    }
+
+    #[test]
+    fn blending_respects_alpha() {
+        let mut buffer = [0xFF00_0000u32];
+        blend_px(&mut buffer, 0, 0xFFFF_FFFF, 0);
+        assert_eq!(buffer[0], 0xFF00_0000, "alpha 0 must not change the pixel");
+
+        let mut buffer = [0xFF00_0000u32];
+        blend_px(&mut buffer, 0, 0xFFFF_FFFF, 255);
+        assert_eq!(buffer[0], 0xFFFF_FFFF, "alpha 255 must replace the pixel");
+
+        let mut buffer = [0xFF00_0000u32];
+        blend_px(&mut buffer, 0, 0xFFFF_FFFF, 128);
+        let mid = (buffer[0] >> 16) & 0xFF;
+        assert!((120..=136).contains(&mid), "midpoint not blended: {mid}");
     }
 }
 
