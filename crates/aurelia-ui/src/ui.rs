@@ -1,4 +1,6 @@
 use crate::design;
+use crate::fonts;
+
 use crate::icons::draw_tool_icon;
 use crate::state::{ActiveFilterModal, AppState, CanvasPreset, PendingFileAction};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Stroke, Vec2};
@@ -20,44 +22,83 @@ fn render_tool_button(
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
 
     if ui.is_rect_visible(rect) {
+        // Damped hover/press so the shelf glides instead of flickering.
+        let id = ui.id().with(("tool", label));
+        let hover = ui
+            .ctx()
+            .animate_bool_with_time(id, response.hovered(), 0.12);
+        let press = ui
+            .ctx()
+            .animate_bool_with_time(id.with("press"), response.is_pointer_button_down_on(), 0.05);
+
+        let rounding = egui::Rounding::same(design::RADIUS);
+        let base = if is_selected {
+            design::mix(design::INK_RAISED_TOP, accent_c32.linear_multiply(0.32), 0.5)
+        } else {
+            design::mix(
+                design::INK_RAISED,
+                design::INK_RAISED_TOP,
+                (0.25 + 0.75 * hover) * (1.0 - 0.5 * press),
+            )
+        };
+        let sheen = if is_selected {
+            Color32::from_rgba_unmultiplied(accent_c32.r(), accent_c32.g(), accent_c32.b(), 34)
+        } else {
+            Color32::from_white_alpha((11.0 + 11.0 * hover) as u8)
+        };
+
         let painter = ui.painter();
-        let is_hovered = response.hovered();
+        design::gloss(painter, rect, rounding, base, sheen);
 
-        let bg_fill = if is_selected {
-            Color32::from_rgba_unmultiplied(accent_c32.r(), accent_c32.g(), accent_c32.b(), 45)
-        } else if is_hovered {
-            Color32::from_rgb(52, 41, 28)
+        if is_selected {
+            painter.rect_stroke(
+                rect,
+                rounding,
+                Stroke::new(1.0, accent_c32.linear_multiply(0.90)),
+            );
+            // Slim accent bar on the leading edge marks the active tool.
+            let bar = egui::Rect::from_min_size(
+                rect.min + egui::vec2(0.0, 4.0),
+                egui::vec2(2.0, rect.height() - 8.0),
+            );
+            painter.rect_filled(bar, 1.0, accent_c32);
+        } else if hover > 0.01 {
+            painter.rect_stroke(
+                rect,
+                rounding,
+                Stroke::new(
+                    1.0,
+                    Color32::from_rgba_unmultiplied(
+                        accent_c32.r(),
+                        accent_c32.g(),
+                        accent_c32.b(),
+                        (150.0 * hover) as u8,
+                    ),
+                ),
+            );
         } else {
-            design::INK_RAISED
-        };
-
-        let stroke = if is_selected {
-            Stroke::new(1.5_f32, accent_c32)
-        } else if is_hovered {
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent_c32.r(), accent_c32.g(), accent_c32.b(), 160))
-        } else {
-            Stroke::new(1.0_f32, design::HAIRLINE)
-        };
-
-        painter.rect(rect, 5.0, bg_fill, stroke);
+            painter.rect_stroke(rect, rounding, Stroke::new(1.0, design::HAIRLINE));
+        }
 
         // Vector icon, vertically centred in the row.
         let icon_rect = Rect::from_min_size(
-            egui::pos2(rect.min.x + 7.0, rect.center().y - 9.0),
+            egui::pos2(rect.min.x + 10.0, rect.center().y - 9.0),
             Vec2::new(18.0, 18.0),
         );
         let icon_color = if is_selected {
             accent_c32
-        } else if is_hovered {
-            design::TEXT
         } else {
-            design::TEXT_DIM
+            design::mix(design::TEXT_DIM, design::TEXT, hover)
         };
         draw_tool_icon(painter, icon_rect, tool, icon_color, is_selected);
 
-        let text_color = if is_selected { accent_c32 } else { design::TEXT };
+        let text_color = if is_selected {
+            accent_c32
+        } else {
+            design::mix(design::TEXT_DIM, design::TEXT, hover.max(0.35))
+        };
         painter.text(
-            egui::pos2(rect.min.x + 31.0, rect.center().y),
+            egui::pos2(rect.min.x + 34.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             label,
             egui::FontId::proportional(11.5),
@@ -111,10 +152,42 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .frame(design::bar_frame(design::INK_PANEL))
             .show(ctx, |ui| {
                 state.header_h = ui.max_rect().height() + 10.0; // bar_frame pads 5 px top/bottom
+                // A shallow gradient under the bar reads as a lit edge rather than a border.
+                let bar_rect = ui.max_rect();
+                design::vgradient(
+                    ui.painter(),
+                    bar_rect,
+                    design::INK_PANEL_TOP,
+                    design::INK_PANEL_BOTTOM,
+                );
                 ui.horizontal(|ui| {
-                    // Left: wordmark + version
-                    ui.label(RichText::new("✦ Aurelia").size(14.0).strong().color(design::TEXT));
-                    ui.label(RichText::new(format!("v{}", crate::APP_VERSION)).size(10.5).color(design::TEXT_MUTED));
+                    // Left: lamp mark, wordmark, version chip
+                    let (mark, _) =
+                        ui.allocate_exact_size(egui::vec2(15.0, 15.0), egui::Sense::hover());
+                    let centre = mark.center();
+                    ui.painter()
+                        .circle_filled(centre, 7.0, design::GOLD.linear_multiply(0.14));
+                    ui.painter().circle_filled(centre, 3.4, design::GOLD);
+                    ui.painter().circle_filled(
+                        centre - egui::vec2(0.9, 0.9),
+                        1.3,
+                        Color32::from_white_alpha(190),
+                    );
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new("Aurelia")
+                            .size(16.0)
+                            .family(fonts::brand())
+                            .color(design::TEXT),
+                    );
+                    ui.add_space(2.0);
+                    design::chip(
+                        ui,
+                        RichText::new(format!("v{}", crate::APP_VERSION))
+                            .size(9.5)
+                            .color(design::GOLD),
+                        design::GOLD,
+                    );
 
                     ui.add_space(6.0);
                     ui.separator();
@@ -697,6 +770,13 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .frame(design::bar_frame(design::INK_SUNKEN))
             .show(ctx, |ui| {
                 state.footer_h = ui.max_rect().height() + 10.0;
+                let bar_rect = ui.max_rect();
+                design::vgradient(
+                    ui.painter(),
+                    bar_rect,
+                    design::INK_PANEL_BOTTOM,
+                    design::INK_SUNKEN,
+                );
                 ui.horizontal(|ui| {
                     let dot_color = if state.is_dirty() { design::AMBER } else { design::TEAL };
                     ui.label(RichText::new("●").size(8.0).color(dot_color));
@@ -745,6 +825,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .frame(crate::design::panel_frame(crate::design::INK_PANEL))
             .show(ctx, |ui| {
                 state.left_panel_w = ui.max_rect().width() + 2.0 * design::PANEL_PAD;
+                let panel_rect = ui.max_rect();
+                design::vgradient(ui.painter(), panel_rect, design::INK_PANEL_TOP, design::INK_PANEL_BOTTOM);
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     let content_w = ui.available_width().clamp(220.0, 320.0);
                     ui.set_min_width(content_w);
@@ -790,7 +872,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         if group_idx > 0 {
                             ui.add_space(4.0);
                         }
-                        ui.label(RichText::new(*group_name).size(9.0).strong().color(design::TEXT_MUTED));
+                        ui.label(
+                            RichText::new(design::spaced(group_name))
+                                .size(9.5)
+                                .family(fonts::display())
+                                .color(design::CAPTION),
+                        );
                         egui::Grid::new(format!("tools_grid_{group_idx}")).num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                             for (i, (t, label)) in items.iter().enumerate() {
                                 let is_selected = state.brush.tool == *t;
@@ -827,11 +914,16 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             if label.chars().count() > 18 {
                                 label = label.chars().take(17).collect::<String>() + "…";
                             }
-                            let btn = egui::Button::new(RichText::new(label).size(11.0))
-                                .fill(if is_active { accent_c32.linear_multiply(0.30) } else { design::INK_RAISED })
-                                .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else { design::HAIRLINE }))
-                                .min_size(Vec2::new(col_w, 26.0));
-                            if ui.add(btn).on_hover_text(&p.description).clicked() {
+                            let resp = design::gloss_button(
+                                ui,
+                                &format!("preset_{i}"),
+                                &label,
+                                col_w,
+                                26.0,
+                                is_active,
+                                accent_c32,
+                            );
+                            if resp.on_hover_text(&p.description).clicked() {
                                 state.select_preset(i);
                             }
                             if i % 2 == 1 {
@@ -1224,6 +1316,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .frame(crate::design::panel_frame(crate::design::INK_PANEL))
             .show(ctx, |ui| {
                 state.right_panel_w = ui.max_rect().width() + 2.0 * design::PANEL_PAD;
+                let panel_rect = ui.max_rect();
+                design::vgradient(ui.painter(), panel_rect, design::INK_PANEL_TOP, design::INK_PANEL_BOTTOM);
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     // A stable content width keeps rows from pushing the panel
                     // out to its maximum width (which used to clip the controls).
@@ -1232,10 +1326,23 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     // ── 🧭 VIEWPORT / NAVIGATOR ──
                     if state.show_navigator {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("NAVIGATOR").size(10.0).strong().color(crate::design::TEXT_MUTED));
+                            let (tick, _) = ui.allocate_exact_size(egui::vec2(2.0, 11.0), egui::Sense::hover());
+                            ui.painter().rect_filled(tick, 1.0, design::GOLD.linear_multiply(0.85));
+                            ui.add_space(1.0);
+                            ui.label(
+                                RichText::new(design::spaced("navigator"))
+                                    .size(10.0)
+                                    .family(fonts::display())
+                                    .color(design::CAPTION),
+                            );
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let pct = (state.zoom * 100.0).round() as i32;
-                                ui.label(RichText::new(format!("{}%", pct)).size(9.5).strong().color(accent_c32));
+                                ui.label(
+                                    RichText::new(format!("{}%", pct))
+                                        .size(10.5)
+                                        .family(fonts::display())
+                                        .color(accent_c32),
+                                );
                             });
                         });
                         ui.add_space(2.0);
@@ -1351,10 +1458,45 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             let active = state.color_slot_is_secondary == secondary;
                             let (rect, resp) = ui.allocate_exact_size(Vec2::splat(36.0), egui::Sense::click());
                             let painter = ui.painter();
-                            painter.rect_filled(rect, 7.0, Color32::from_rgb(r, g, b));
+                            let rr = egui::Rounding::same(8.0);
+                            // Shadow, body, top sheen and (when active) a soft outer glow.
+                            painter.rect_filled(
+                                rect.translate(egui::vec2(0.0, 1.5)),
+                                rr,
+                                Color32::from_black_alpha(70),
+                            );
+                            if active {
+                                painter.rect_stroke(
+                                    rect.expand(2.0),
+                                    egui::Rounding::same(10.0),
+                                    egui::Stroke::new(
+                                        1.0,
+                                        Color32::from_rgba_unmultiplied(
+                                            accent_c32.r(),
+                                            accent_c32.g(),
+                                            accent_c32.b(),
+                                            70,
+                                        ),
+                                    ),
+                                );
+                            }
+                            painter.rect_filled(rect, rr, Color32::from_rgb(r, g, b));
+                            painter.rect_filled(
+                                egui::Rect::from_min_max(
+                                    rect.min,
+                                    egui::pos2(rect.max.x, rect.top() + 16.0),
+                                ),
+                                egui::Rounding {
+                                    nw: 8.0,
+                                    ne: 8.0,
+                                    sw: 0.0,
+                                    se: 0.0,
+                                },
+                                Color32::from_white_alpha(20),
+                            );
                             painter.rect_stroke(
                                 rect,
-                                7.0,
+                                rr,
                                 egui::Stroke::new(
                                     if active { 2.0 } else { 1.0 },
                                     if active { accent_c32 } else { design::HAIRLINE },
@@ -1378,8 +1520,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         });
 
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui
-                                .add(egui::Button::new(RichText::new("⇄ Swap").size(11.0)).min_size(Vec2::new(62.0, 28.0)))
+                            if design::gloss_button(ui, "swap_colors", "⇄  Swap", 64.0, 30.0, false, accent_c32)
                                 .on_hover_text("Swap primary and secondary (X)")
                                 .clicked()
                             {
@@ -1406,16 +1547,46 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             let Some(c) = Color::from_hex(hex) else { continue };
                             let [r, g, b, _] = c.to_rgba8();
                             let (rect, resp) = ui.allocate_exact_size(Vec2::splat(design::SWATCH), egui::Sense::click());
+                            let hover = ui
+                                .ctx()
+                                .animate_bool_with_time(ui.id().with(("swatch", i)), resp.hovered(), 0.10);
                             let painter = ui.painter();
-                            painter.rect_filled(rect, 5.0, Color32::from_rgb(r, g, b));
+                            let rr = egui::Rounding::same(5.0);
+                            // Drop shadow + body + top sheen reads as a glossy tile.
+                            painter.rect_filled(
+                                rect.translate(egui::vec2(0.0, 1.0)),
+                                rr,
+                                Color32::from_black_alpha(55),
+                            );
+                            painter.rect_filled(rect, rr, Color32::from_rgb(r, g, b));
+                            let sheen = egui::Rect::from_min_max(
+                                rect.min,
+                                egui::pos2(rect.max.x, rect.top() + design::SWATCH * 0.5),
+                            );
+                            painter.rect_filled(
+                                sheen,
+                                egui::Rounding {
+                                    nw: 5.0,
+                                    ne: 5.0,
+                                    sw: 0.0,
+                                    se: 0.0,
+                                },
+                                Color32::from_white_alpha(16),
+                            );
+                            let ring = if hover > 0.01 {
+                                Color32::from_rgba_unmultiplied(
+                                    accent_c32.r(),
+                                    accent_c32.g(),
+                                    accent_c32.b(),
+                                    (210.0 * hover) as u8,
+                                )
+                            } else {
+                                design::HAIRLINE
+                            };
                             painter.rect_stroke(
                                 rect,
-                                5.0,
-                                if resp.hovered() {
-                                    egui::Stroke::new(2.0, accent_c32)
-                                } else {
-                                    egui::Stroke::new(1.0, design::HAIRLINE)
-                                },
+                                rr,
+                                Stroke::new(if hover > 0.5 { 1.5 } else { 1.0 }, ring),
                             );
                             if resp.clicked() {
                                 if state.color_slot_is_secondary {
@@ -1438,7 +1609,15 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     // ── LAYERS PANEL ──
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("LAYERS").size(10.0).strong().color(design::TEXT_MUTED));
+                        let (layers_tick, _) = ui.allocate_exact_size(egui::vec2(2.0, 11.0), egui::Sense::hover());
+                        ui.painter().rect_filled(layers_tick, 1.0, design::GOLD.linear_multiply(0.85));
+                        ui.add_space(1.0);
+                        ui.label(
+                            RichText::new(design::spaced("layers"))
+                                .size(10.0)
+                                .family(fonts::display())
+                                .color(design::CAPTION),
+                        );
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             egui::ComboBox::from_id_source("add_adj_layer_combo")
                                 .selected_text("+ Adj")
@@ -1539,21 +1718,33 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 ui.add_space(indent_px);
                             }
 
+                            // Quietly colour-coded: a soft tint marks the active layer and
+                            // each layer kind keeps a hint of its own hue.
+                            let kind_tint = if is_group {
+                                Color32::from_rgb(104, 132, 204)
+                            } else if is_adj {
+                                Color32::from_rgb(156, 122, 210)
+                            } else if is_text {
+                                Color32::from_rgb(110, 172, 216)
+                            } else {
+                                design::GOLD_DEEP
+                            };
+                            let fill = if is_active {
+                                design::mix(design::INK_RAISED, kind_tint, 0.12)
+                            } else {
+                                design::mix(design::INK_PANEL_TOP, kind_tint, 0.05)
+                            };
+                            let stroke = if is_active {
+                                egui::Stroke::new(1.0, kind_tint.linear_multiply(0.80))
+                            } else {
+                                egui::Stroke::new(1.0, design::HAIRLINE)
+                            };
+
                             egui::Frame::none()
-                                .fill(if is_active {
-                                    if is_group { Color32::from_rgba_unmultiplied(ar, ag, ab, 55) } else if is_adj { Color32::from_rgba_unmultiplied(ar, ag, ab, 48) } else if is_text { Color32::from_rgba_unmultiplied(ar, ag, ab, 52) } else { Color32::from_rgba_unmultiplied(ar, ag, ab, 42) }
-                                } else if is_group {
-                                    Color32::from_rgba_unmultiplied(24, 32, 58, 210)
-                                } else if is_adj {
-                                    Color32::from_rgba_unmultiplied(28, 22, 52, 190)
-                                } else if is_text {
-                                    Color32::from_rgba_unmultiplied(20, 36, 56, 185)
-                                } else {
-                                    Color32::from_rgba_unmultiplied(18, 25, 46, 180)
-                                })
-                                .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else if is_group { Color32::from_rgb(100, 87, 48) } else if is_adj { Color32::from_rgb(110, 99, 52) } else if is_text { Color32::from_rgb(95, 77, 32) } else { Color32::from_rgb(78, 67, 36) }))
-                                .rounding(4.0)
-                                .inner_margin(egui::vec2(5.0, 4.0))
+                                .fill(fill)
+                                .stroke(stroke)
+                                .rounding(design::RADIUS)
+                                .inner_margin(egui::vec2(7.0, 5.0))
                                 .show(ui, |ui| {
                                     let inner_w = (content_w - indent_px - 14.0).max(150.0);
                                     ui.set_min_width(inner_w);
@@ -1764,8 +1955,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     let op_col = ((content_w - 16.0) / 3.0).max(74.0);
                     let op = |ui: &mut egui::Ui, text: &str| -> bool {
-                        ui.add(egui::Button::new(RichText::new(text).size(11.0)).min_size(Vec2::new(op_col, 26.0)))
-                            .clicked()
+                        design::gloss_button(ui, text, text, op_col, 26.0, false, accent_c32).clicked()
                     };
 
                     ui.horizontal(|ui| {

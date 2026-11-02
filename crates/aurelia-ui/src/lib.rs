@@ -1,5 +1,6 @@
 pub mod design;
 pub mod dialogs;
+pub mod fonts;
 pub mod icons;
 pub mod shell;
 pub mod state;

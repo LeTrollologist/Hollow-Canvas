@@ -108,10 +108,24 @@ impl SoftwareRenderer {
         ];
 
         let bg_val = doc.background_value;
-        let dark_app_bg = 0xFF0B0806;
 
-        // Clear frame to deep Aurelia background
-        buffer.fill(dark_app_bg);
+        // Studio backdrop: a soft vertical gradient (lamplight above, deep ink below)
+        // so the artboard reads as paper resting on a lit surface rather than floating
+        // in a void. Panels and the canvas paint over this.
+        let top = (20.0_f32, 16.0, 12.0);
+        let bottom = (7.0_f32, 5.0, 4.0);
+        for y in 0..win_h {
+            let t = y as f32 / (win_h.max(1) - 1) as f32;
+            let r = (top.0 + (bottom.0 - top.0) * t).round() as u32;
+            let g = (top.1 + (bottom.1 - top.1) * t).round() as u32;
+            let b = (top.2 + (bottom.2 - top.2) * t).round() as u32;
+            let color = 0xFF00_0000 | (r << 16) | (g << 8) | b;
+            let row_start = y * win_w;
+            let row_end = row_start + win_w;
+            if row_end <= buffer.len() {
+                buffer[row_start..row_end].fill(color);
+            }
+        }
 
         let doc_w = doc.width as f32;
         let doc_h = doc.height as f32;
@@ -136,8 +150,8 @@ impl SoftwareRenderer {
         }
 
         // 1. Soft Drop Shadow around canvas boundary (strictly clipped to viewport)
-        let shadow_blur = 14isize;
-        let shadow_offset_y = 5isize;
+        let shadow_blur = 18isize;
+        let shadow_offset_y = 6isize;
         let s_x0 = (x0 - shadow_blur).max(vp_min_x as isize).min(vp_max_x as isize) as usize;
         let s_x1 = (x1 + shadow_blur).max(vp_min_x as isize).min(vp_max_x as isize) as usize;
         let s_y0 = (y0 - shadow_blur + shadow_offset_y).max(vp_min_y as isize).min(vp_max_y as isize) as usize;
