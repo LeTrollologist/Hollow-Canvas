@@ -883,7 +883,7 @@ mod tests {
 
         let mut doc = Document::new(200, 100);
         let config = TextLayerConfig {
-            content: "Hello Hollow Canvas".to_string(),
+            content: "Hello Aurelia".to_string(),
             font_family: "System Default".to_string(),
             font_size: 28.0,
             color: [255, 100, 50, 255],
@@ -902,7 +902,7 @@ mod tests {
         let layer = doc.get_layer(text_layer_id).unwrap();
         assert!(layer.is_text());
         assert_eq!(layer.name, "Greeting");
-        assert_eq!(layer.text.as_ref().unwrap().content, "Hello Hollow Canvas");
+        assert_eq!(layer.text.as_ref().unwrap().content, "Hello Aurelia");
 
         // 2. Render text onto text layer
         if let Some(font) = StrokeRasterizer::load_font(None, None) {
@@ -917,7 +917,7 @@ mod tests {
             let dup_id = doc.duplicate_active_layer().unwrap();
             let dup_layer = doc.get_layer(dup_id).unwrap();
             assert!(dup_layer.is_text());
-            assert_eq!(dup_layer.text.as_ref().unwrap().content, "Hello Hollow Canvas");
+            assert_eq!(dup_layer.text.as_ref().unwrap().content, "Hello Aurelia");
 
             // 4. Rasterize Text Layer converts to standard paintable pixel layer
             assert!(doc.rasterize_text_layer(text_layer_id));

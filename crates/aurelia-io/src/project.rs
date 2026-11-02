@@ -1,16 +1,17 @@
 use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
 use flate2::Compression;
-use hollow_core::blend::BlendMode;
-use hollow_core::color::ThemeMode;
-use hollow_core::document::Document;
-use hollow_core::layer::Layer;
+use aurelia_core::blend::BlendMode;
+use aurelia_core::color::ThemeMode;
+use aurelia_core::document::Document;
+use aurelia_core::layer::Layer;
 use image::{ImageBuffer, ImageFormat, Rgba};
 use std::fs::File;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use thiserror::Error;
 
+const AUR_MAGIC_V1: &[u8; 4] = b"AUR\x01";
 const HCV_MAGIC_V2: &[u8; 4] = b"HCV\x02";
 const HCV_MAGIC_V3: &[u8; 4] = b"HCV\x03";
 const HCV_MAGIC_V4: &[u8; 4] = b"HCV\x04";
@@ -22,14 +23,14 @@ pub enum ProjectError {
     Io(#[from] std::io::Error),
     #[error("Image encode error: {0}")]
     Image(#[from] image::ImageError),
-    #[error("Invalid .hcv binary container signature")]
+    #[error("Invalid .aur binary container signature")]
     InvalidMagic,
-    #[error("Corrupt or unsupported .hcv project data")]
+    #[error("Corrupt or unsupported .aur project data")]
     CorruptData,
 }
 
 pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result<(), ProjectError> {
-    writer.write_all(HCV_MAGIC_V5)?;
+    writer.write_all(AUR_MAGIC_V1)?;
     writer.write_all(&doc.width.to_le_bytes())?;
     writer.write_all(&doc.height.to_le_bytes())?;
     writer.write_all(&doc.active_layer_id.to_le_bytes())?;
@@ -37,9 +38,9 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
     writer.write_all(&[if doc.is_transparent { 1 } else { 0 }])?;
 
     let theme_byte = match doc.theme {
-        ThemeMode::DeepMist => 0u8,
-        ThemeMode::Moonlit => 1u8,
-        ThemeMode::EmberGlow => 2u8,
+        ThemeMode::Dawn => 0u8,
+        ThemeMode::Dusk => 1u8,
+        ThemeMode::Ember => 2u8,
     };
     writer.write_all(&[theme_byte])?;
 
@@ -56,10 +57,10 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
 
         // Kind (0 = Raster, 1 = Group, 2 = Adjustment, 3 = Text)
         let kind_byte = match layer.kind {
-            hollow_core::layer::LayerKind::Raster => 0u8,
-            hollow_core::layer::LayerKind::Group => 1u8,
-            hollow_core::layer::LayerKind::Adjustment => 2u8,
-            hollow_core::layer::LayerKind::Text => 3u8,
+            aurelia_core::layer::LayerKind::Raster => 0u8,
+            aurelia_core::layer::LayerKind::Group => 1u8,
+            aurelia_core::layer::LayerKind::Adjustment => 2u8,
+            aurelia_core::layer::LayerKind::Text => 3u8,
         };
         writer.write_all(&[kind_byte])?;
 
@@ -77,9 +78,9 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
             writer.write_all(&txt.color)?;
 
             let align_byte = match txt.align {
-                hollow_core::brush::TextAlign::Left => 0u8,
-                hollow_core::brush::TextAlign::Center => 1u8,
-                hollow_core::brush::TextAlign::Right => 2u8,
+                aurelia_core::brush::TextAlign::Left => 0u8,
+                aurelia_core::brush::TextAlign::Center => 1u8,
+                aurelia_core::brush::TextAlign::Right => 2u8,
             };
             writer.write_all(&[align_byte])?;
             writer.write_all(&txt.line_spacing.to_le_bytes())?;
@@ -93,35 +94,35 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
         // If adjustment, serialize adjustment parameters
         if let Some(adj) = &layer.adjustment {
             match &adj.adjustment_type {
-                hollow_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast } => {
+                aurelia_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast } => {
                     writer.write_all(&[0u8])?;
                     writer.write_all(&brightness.to_le_bytes())?;
                     writer.write_all(&contrast.to_le_bytes())?;
                 }
-                hollow_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness } => {
+                aurelia_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness } => {
                     writer.write_all(&[1u8])?;
                     writer.write_all(&hue_shift.to_le_bytes())?;
                     writer.write_all(&saturation.to_le_bytes())?;
                     writer.write_all(&lightness.to_le_bytes())?;
                 }
-                hollow_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue } => {
+                aurelia_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue } => {
                     writer.write_all(&[2u8])?;
                     writer.write_all(&cyan_red.to_le_bytes())?;
                     writer.write_all(&magenta_green.to_le_bytes())?;
                     writer.write_all(&yellow_blue.to_le_bytes())?;
                 }
-                hollow_core::layer::AdjustmentType::Invert => {
+                aurelia_core::layer::AdjustmentType::Invert => {
                     writer.write_all(&[3u8])?;
                 }
-                hollow_core::layer::AdjustmentType::Posterize { levels } => {
+                aurelia_core::layer::AdjustmentType::Posterize { levels } => {
                     writer.write_all(&[4u8])?;
                     writer.write_all(&levels.to_le_bytes())?;
                 }
-                hollow_core::layer::AdjustmentType::Threshold { cutoff } => {
+                aurelia_core::layer::AdjustmentType::Threshold { cutoff } => {
                     writer.write_all(&[5u8])?;
                     writer.write_all(&[*cutoff])?;
                 }
-                hollow_core::layer::AdjustmentType::Sepia { strength } => {
+                aurelia_core::layer::AdjustmentType::Sepia { strength } => {
                     writer.write_all(&[6u8])?;
                     writer.write_all(&strength.to_le_bytes())?;
                 }
@@ -195,7 +196,7 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
 }
 
 /// Writes a project file atomically: the stream is written to a sibling
-/// `.hcv.tmp` file and renamed over the target only after it is fully flushed,
+/// `.aur.tmp` file and renamed over the target only after it is fully flushed,
 /// so an interrupted save can never truncate an existing artwork.
 pub fn save_project_file(doc: &Document, path: impl AsRef<Path>) -> Result<(), ProjectError> {
     let path = path.as_ref();
@@ -219,11 +220,13 @@ pub fn save_project_file(doc: &Document, path: impl AsRef<Path>) -> Result<(), P
 pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, ProjectError> {
     let mut magic = [0u8; 4];
     reader.read_exact(&mut magic)?;
-    let is_v5 = &magic == HCV_MAGIC_V5;
+    let is_aur = &magic == AUR_MAGIC_V1;
+    // AUR v1 reuses the legacy HCV v5 body layout, so legacy files stay readable.
+    let is_v5 = &magic == HCV_MAGIC_V5 || is_aur;
     let is_v4 = &magic == HCV_MAGIC_V4;
     let is_v3 = &magic == HCV_MAGIC_V3;
     let is_v2 = &magic == HCV_MAGIC_V2;
-    if !is_v5 && !is_v4 && !is_v3 && !is_v2 {
+    if !is_aur && !is_v5 && !is_v4 && !is_v3 && !is_v2 {
         return Err(ProjectError::InvalidMagic);
     }
 
@@ -248,9 +251,9 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
 
     reader.read_exact(&mut buf1)?;
     let theme = match buf1[0] {
-        1 => ThemeMode::Moonlit,
-        2 => ThemeMode::EmberGlow,
-        _ => ThemeMode::DeepMist,
+        1 => ThemeMode::Dusk,
+        2 => ThemeMode::Ember,
+        _ => ThemeMode::Dawn,
     };
 
     reader.read_exact(&mut buf4)?;
@@ -280,7 +283,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         let (kind, parent_id, visible, locked, alpha_locked, clipping_mask, is_reference, is_expanded, pass_through) = if is_v5 {
             reader.read_exact(&mut buf1)?;
             let kind = match buf1[0] {
-                1 => hollow_core::layer::LayerKind::Group,
+                1 => aurelia_core::layer::LayerKind::Group,
                 2 => {
                     reader.read_exact(&mut buf1)?;
                     let adj_type = match buf1[0] {
@@ -289,7 +292,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
                             let brightness = f32::from_le_bytes(buf4);
                             reader.read_exact(&mut buf4)?;
                             let contrast = f32::from_le_bytes(buf4);
-                            hollow_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast }
+                            aurelia_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast }
                         }
                         1 => {
                             reader.read_exact(&mut buf4)?;
@@ -298,7 +301,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
                             let saturation = f32::from_le_bytes(buf4);
                             reader.read_exact(&mut buf4)?;
                             let lightness = f32::from_le_bytes(buf4);
-                            hollow_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness }
+                            aurelia_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness }
                         }
                         2 => {
                             reader.read_exact(&mut buf4)?;
@@ -307,28 +310,28 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
                             let magenta_green = f32::from_le_bytes(buf4);
                             reader.read_exact(&mut buf4)?;
                             let yellow_blue = f32::from_le_bytes(buf4);
-                            hollow_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue }
+                            aurelia_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue }
                         }
-                        3 => hollow_core::layer::AdjustmentType::Invert,
+                        3 => aurelia_core::layer::AdjustmentType::Invert,
                         4 => {
                             reader.read_exact(&mut buf4)?;
                             let levels = u32::from_le_bytes(buf4);
-                            hollow_core::layer::AdjustmentType::Posterize { levels }
+                            aurelia_core::layer::AdjustmentType::Posterize { levels }
                         }
                         5 => {
                             reader.read_exact(&mut buf1)?;
                             let cutoff = buf1[0];
-                            hollow_core::layer::AdjustmentType::Threshold { cutoff }
+                            aurelia_core::layer::AdjustmentType::Threshold { cutoff }
                         }
                         6 => {
                             reader.read_exact(&mut buf4)?;
                             let strength = f32::from_le_bytes(buf4);
-                            hollow_core::layer::AdjustmentType::Sepia { strength }
+                            aurelia_core::layer::AdjustmentType::Sepia { strength }
                         }
-                        _ => hollow_core::layer::AdjustmentType::Invert,
+                        _ => aurelia_core::layer::AdjustmentType::Invert,
                     };
-                    adjustment = Some(hollow_core::layer::AdjustmentConfig { adjustment_type: adj_type });
-                    hollow_core::layer::LayerKind::Adjustment
+                    adjustment = Some(aurelia_core::layer::AdjustmentConfig { adjustment_type: adj_type });
+                    aurelia_core::layer::LayerKind::Adjustment
                 }
                 3 => {
                     reader.read_exact(&mut buf4)?;
@@ -351,9 +354,9 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
 
                     reader.read_exact(&mut buf1)?;
                     let align = match buf1[0] {
-                        1 => hollow_core::brush::TextAlign::Center,
-                        2 => hollow_core::brush::TextAlign::Right,
-                        _ => hollow_core::brush::TextAlign::Left,
+                        1 => aurelia_core::brush::TextAlign::Center,
+                        2 => aurelia_core::brush::TextAlign::Right,
+                        _ => aurelia_core::brush::TextAlign::Left,
                     };
 
                     reader.read_exact(&mut buf4)?;
@@ -374,7 +377,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
                     reader.read_exact(&mut buf4)?;
                     let pos_y = f32::from_le_bytes(buf4);
 
-                    text_config = Some(hollow_core::layer::TextLayerConfig {
+                    text_config = Some(aurelia_core::layer::TextLayerConfig {
                         content,
                         font_family,
                         font_size,
@@ -388,9 +391,9 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
                         pos_y,
                     });
 
-                    hollow_core::layer::LayerKind::Text
+                    aurelia_core::layer::LayerKind::Text
                 }
-                _ => hollow_core::layer::LayerKind::Raster,
+                _ => aurelia_core::layer::LayerKind::Raster,
             };
 
             reader.read_exact(&mut buf8)?;
@@ -411,7 +414,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         } else if is_v4 {
             reader.read_exact(&mut buf1)?;
             let kind = match buf1[0] {
-                1 => hollow_core::layer::LayerKind::Group,
+                1 => aurelia_core::layer::LayerKind::Group,
                 2 => {
                     reader.read_exact(&mut buf1)?;
                     let adj_type = match buf1[0] {
@@ -420,7 +423,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
                             let brightness = f32::from_le_bytes(buf4);
                             reader.read_exact(&mut buf4)?;
                             let contrast = f32::from_le_bytes(buf4);
-                            hollow_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast }
+                            aurelia_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast }
                         }
                         1 => {
                             reader.read_exact(&mut buf4)?;
@@ -429,7 +432,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
                             let saturation = f32::from_le_bytes(buf4);
                             reader.read_exact(&mut buf4)?;
                             let lightness = f32::from_le_bytes(buf4);
-                            hollow_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness }
+                            aurelia_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness }
                         }
                         2 => {
                             reader.read_exact(&mut buf4)?;
@@ -438,30 +441,30 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
                             let magenta_green = f32::from_le_bytes(buf4);
                             reader.read_exact(&mut buf4)?;
                             let yellow_blue = f32::from_le_bytes(buf4);
-                            hollow_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue }
+                            aurelia_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue }
                         }
-                        3 => hollow_core::layer::AdjustmentType::Invert,
+                        3 => aurelia_core::layer::AdjustmentType::Invert,
                         4 => {
                             reader.read_exact(&mut buf4)?;
                             let levels = u32::from_le_bytes(buf4);
-                            hollow_core::layer::AdjustmentType::Posterize { levels }
+                            aurelia_core::layer::AdjustmentType::Posterize { levels }
                         }
                         5 => {
                             reader.read_exact(&mut buf1)?;
                             let cutoff = buf1[0];
-                            hollow_core::layer::AdjustmentType::Threshold { cutoff }
+                            aurelia_core::layer::AdjustmentType::Threshold { cutoff }
                         }
                         6 => {
                             reader.read_exact(&mut buf4)?;
                             let strength = f32::from_le_bytes(buf4);
-                            hollow_core::layer::AdjustmentType::Sepia { strength }
+                            aurelia_core::layer::AdjustmentType::Sepia { strength }
                         }
-                        _ => hollow_core::layer::AdjustmentType::Invert,
+                        _ => aurelia_core::layer::AdjustmentType::Invert,
                     };
-                    adjustment = Some(hollow_core::layer::AdjustmentConfig { adjustment_type: adj_type });
-                    hollow_core::layer::LayerKind::Adjustment
+                    adjustment = Some(aurelia_core::layer::AdjustmentConfig { adjustment_type: adj_type });
+                    aurelia_core::layer::LayerKind::Adjustment
                 }
-                _ => hollow_core::layer::LayerKind::Raster,
+                _ => aurelia_core::layer::LayerKind::Raster,
             };
 
             reader.read_exact(&mut buf8)?;
@@ -482,9 +485,9 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         } else if is_v3 {
             reader.read_exact(&mut buf1)?;
             let kind = if buf1[0] == 1 {
-                hollow_core::layer::LayerKind::Group
+                aurelia_core::layer::LayerKind::Group
             } else {
-                hollow_core::layer::LayerKind::Raster
+                aurelia_core::layer::LayerKind::Raster
             };
 
             reader.read_exact(&mut buf8)?;
@@ -509,7 +512,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
             reader.read_exact(&mut buf1)?;
             let locked = buf1[0] != 0;
 
-            (hollow_core::layer::LayerKind::Raster, None, visible, locked, false, false, false, true, false)
+            (aurelia_core::layer::LayerKind::Raster, None, visible, locked, false, false, false, true, false)
         };
 
         reader.read_exact(&mut buf4)?;
@@ -541,15 +544,15 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         reader.read_exact(&mut buf4)?;
         let comp_len = u32::from_le_bytes(buf4) as usize;
 
-        let mut layer = if kind == hollow_core::layer::LayerKind::Adjustment {
+        let mut layer = if kind == aurelia_core::layer::LayerKind::Adjustment {
             let adj_type = adjustment
                 .as_ref()
                 .map(|a| a.adjustment_type.clone())
-                .unwrap_or(hollow_core::layer::AdjustmentType::Invert);
+                .unwrap_or(aurelia_core::layer::AdjustmentType::Invert);
             let mut adj_layer = Layer::new_adjustment(id, name, adj_type);
             adj_layer.is_expanded = is_expanded;
             adj_layer
-        } else if kind == hollow_core::layer::LayerKind::Group {
+        } else if kind == aurelia_core::layer::LayerKind::Group {
             let mut group = Layer::new_group(id, name);
             group.is_expanded = is_expanded;
             group.pass_through = pass_through;

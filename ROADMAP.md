@@ -1,13 +1,24 @@
-# Hollow Canvas · Roadmap
+# Aurelia · Roadmap
 
-Tracks what shipped in `v1.0.4-alpha`, what is deliberately next, and what is
+Tracks what shipped in `v2.0.0`, what is deliberately next, and what is
 explicitly out of scope for the Windows-native build.
 
 Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs design work)
 
 ---
 
-## Shipped in v1.0.4-alpha
+## Shipped in v2.0.0
+
+### Rebrand: Hollow Canvas → Aurelia
+
+| Item | Status | Notes |
+| :--- | :--- | :--- |
+| Product, docs and code renamed | ✅ | Crates `aurelia-{core,render,io,ui,app}`, binary `aurelia.exe`, `Aurelia` window class |
+| New project format | ✅ | `.aur` with `AUR\x01` signature; legacy `.hcv` v2–v5 still readable |
+| Explorer associations | ✅ | `.aur` + `.hcv`, `Aurelia.Project` ProgID, pre-2.0 keys auto-removed |
+| Settings relocation | ✅ | `%LOCALAPPDATA%\Aurelia` (preferences + autosave) |
+| New branding graphics | ✅ | Gold "A" prism icon (PNG/ICO regenerated), new banner and icon SVG |
+| Aurelia Dawn / Dusk / Ember themes | ✅ | Warm-ink studio retheme across panels, rulers, guides and graders |
 
 ### Save safety (was: silent data loss)
 
@@ -16,10 +27,10 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
 | Unsaved-changes guard on window close | ✅ | `WM_CLOSE` → Save / Discard / Cancel |
 | Project path tracking + quick save | ✅ | `Ctrl+S` writes straight to the known path |
 | Save As | ✅ | `Ctrl+Shift+S` |
-| Recent projects menu | ✅ | Persisted in `%LOCALAPPDATA%\HollowCanvas\preferences.txt` |
-| Atomic project writes | ✅ | `art.hcv.tmp` → rename over target |
+| Recent projects menu | ✅ | Persisted in `%LOCALAPPDATA%\Aurelia\preferences.txt` |
+| Atomic project writes | ✅ | `art.aur.tmp` → rename over target |
 | Autosave + crash recovery | ✅ | Snapshot every 120 s of dirty edits; restore prompt on launch |
-| Dirty marker in the title bar | ✅ | `Hollow Canvas · art.hcv *` |
+| Dirty marker in the title bar | ✅ | `Aurelia · art.aur *` |
 
 ### Input
 
@@ -55,7 +66,7 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
 | TIFF / TGA / ICO decoding | ✅ | Now matches the extensions registered in the Explorer context menu |
 | Sprite-sheet export | ✅ | Grid columns configurable |
 | Animated GIF + PNG sequence | ✅ | Pre-existing |
-| HCV v5 project format | ✅ | Deflate-compressed, reads v2–v5 |
+| AUR v1 project format | ✅ | Deflate-compressed, reads legacy HCV v2–v5 |
 
 ### Platform & scale
 
@@ -70,7 +81,7 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
 
 ## Next (ordered)
 
-1. ⏳ **Layer raster masks** — per-layer `Option<Vec<u8>>` mask, paint-mode toggle, HCV v6 bump with v5 fallback.
+1. ⏳ **Layer raster masks** — per-layer `Option<Vec<u8>>` mask, paint-mode toggle, AUR v2 bump with AUR v1 fallback.
 2. ⏳ **Layer styles** — stroke, glow, drop shadow as composite-time effects.
 3. ⏳ **Tilt-aware brush dynamics** — consume `pen_tilt` for size/opacity curves.
 4. ⏳ **Selection combine modes** — Replace / Union / Subtract / Intersect applied to new selections (wand, marquee, lasso).
@@ -80,7 +91,7 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
 
 ## Deferred (needs an architecture decision)
 
-- 💤 **Cross-platform port** — the app is Win32 + GDI (`SetDIBitsToDevice`) with a hand-rolled message loop; moving to `eframe`/`winit`/`wgpu` is a rewrite of `hollow-app`, not a patch. Until then the README claims Windows only.
+- 💤 **Cross-platform port** — the app is Win32 + GDI (`SetDIBitsToDevice`) with a hand-rolled message loop; moving to `eframe`/`winit`/`wgpu` is a rewrite of `aurelia-app`, not a patch. Until then the README claims Windows only.
 - 💤 **ICC colour management / 16-bit pipelines** — every layer is 8-bit sRGB `Vec<u8>`; a colour-managed float pipeline touches the rasterizer, filters, blend modes and the project format.
 - 💤 **PSD import/export**, **APNG / animated WebP / MP4 export** — need third-party codecs (the `image` crate cannot write animated WebP).
 - 💤 **`render_ui` split** — 3.4k-line function; panel extraction is mechanical but touch-heavy, best done behind the new tests.

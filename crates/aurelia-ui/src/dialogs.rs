@@ -2,16 +2,17 @@ use std::path::PathBuf;
 
 pub fn open_project_dialog() -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .set_title("Open Hollow Canvas Project")
-        .add_filter("Hollow Canvas Project (*.hcv)", &["hcv"])
+        .set_title("Open Aurelia Project")
+        .add_filter("Aurelia Project (*.aur)", &["aur"])
+        .add_filter("Legacy Hollow Canvas Project (*.hcv)", &["hcv"])
         .pick_file()
 }
 
 pub fn save_project_dialog() -> Option<PathBuf> {
     rfd::FileDialog::new()
-        .set_title("Save Hollow Canvas Project")
-        .add_filter("Hollow Canvas Project (*.hcv)", &["hcv"])
-        .set_file_name("artwork.hcv")
+        .set_title("Save Aurelia Project")
+        .add_filter("Aurelia Project (*.aur)", &["aur"])
+        .set_file_name("artwork.aur")
         .save_file()
 }
 

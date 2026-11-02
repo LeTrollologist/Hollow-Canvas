@@ -1,10 +1,10 @@
 use crate::icons::draw_tool_icon;
 use crate::state::{ActiveFilterModal, AppState, CanvasPreset, PendingFileAction};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Stroke, Vec2};
-use hollow_core::brush::{EraserMode, GradientType, ShapeFillMode, ToolType};
-use hollow_core::color::{Color, DEFAULT_PALETTE};
-use hollow_core::selection::SelectionMask;
-use hollow_core::symmetry::SymmetryMode;
+use aurelia_core::brush::{EraserMode, GradientType, ShapeFillMode, ToolType};
+use aurelia_core::color::{Color, DEFAULT_PALETTE};
+use aurelia_core::selection::SelectionMask;
+use aurelia_core::symmetry::SymmetryMode;
 
 /// Helper to render a custom studio tool button with a crisp vector-drawn icon
 fn render_tool_button(
@@ -46,9 +46,9 @@ fn render_tool_button(
         let icon_color = if is_selected {
             accent_c32
         } else if is_hovered {
-            Color32::from_rgb(240, 245, 255)
+            Color32::from_rgb(254, 251, 241)
         } else {
-            Color32::from_rgb(180, 195, 225)
+            Color32::from_rgb(225, 213, 180)
         };
         draw_tool_icon(painter, icon_rect, tool, icon_color, is_selected);
 
@@ -56,9 +56,9 @@ fn render_tool_button(
         let text_color = if is_selected {
             accent_c32
         } else if is_hovered {
-            Color32::from_rgb(245, 248, 255)
+            Color32::from_rgb(254, 252, 246)
         } else {
-            Color32::from_rgb(195, 205, 228)
+            Color32::from_rgb(228, 220, 195)
         };
 
         let text_pos = rect.min + egui::vec2(28.0, 5.0);
@@ -114,12 +114,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     // ── 1. TOP STUDIO MENU BAR & HEADER ──
     if state.show_ui_panels {
         egui::TopBottomPanel::top("header_panel")
-            .frame(egui::Frame::none().fill(Color32::from_rgb(8, 12, 24)).stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(25, 34, 58))).inner_margin(egui::Margin::symmetric(8.0, 3.5)))
+            .frame(egui::Frame::none().fill(Color32::from_rgb(24, 20, 8)).stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(58, 50, 25))).inner_margin(egui::Margin::symmetric(8.0, 3.5)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     // Left Brand & Version
-                    ui.label(RichText::new("✦ HOLLOW CANVAS").size(12.5).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("v1.0.3-alpha").size(9.0).color(Color32::from_rgb(115, 130, 165)));
+                    ui.label(RichText::new("✦ AURELIA").size(12.5).strong().color(Color32::from_rgb(253, 249, 236)));
+                    ui.label(RichText::new("v1.0.3-alpha").size(9.0).color(Color32::from_rgb(165, 152, 115)));
 
                     ui.add_space(4.0);
                     ui.separator();
@@ -158,7 +158,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                             .on_hover_text(path.display().to_string())
                                             .clicked()
                                         {
-                                            match hollow_io::project::load_project_file(&path) {
+                                            match aurelia_io::project::load_project_file(&path) {
                                                 Ok(doc) => {
                                                     state.document = doc;
                                                     state.history.clear();
@@ -348,7 +348,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         });
 
                         ui.menu_button("Filter", |ui| {
-                            ui.label(RichText::new("COLOR ADJUSTMENTS").size(8.5).strong().color(Color32::from_rgb(120, 135, 170)));
+                            ui.label(RichText::new("COLOR ADJUSTMENTS").size(8.5).strong().color(Color32::from_rgb(170, 157, 120)));
                             if ui.button("🎨 HSL Adjustments...").clicked() {
                                 state.begin_filter_modal(ActiveFilterModal::Hsl);
                                 ui.close_menu();
@@ -372,8 +372,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 let sel = state.selection.clone();
                                 if let Some(layer) = state.document.active_layer_mut() {
                                     let before = layer.pixels.clone();
-                                    hollow_core::filter::filter_invert(&mut layer.pixels, w, h, sel.as_ref());
-                                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                                    aurelia_core::filter::filter_invert(&mut layer.pixels, w, h, sel.as_ref());
+                                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                                         layer_id: layer.id,
                                         description: "Invert Colors",
                                         before_pixels: before,
@@ -390,8 +390,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 let sel = state.selection.clone();
                                 if let Some(layer) = state.document.active_layer_mut() {
                                     let before = layer.pixels.clone();
-                                    hollow_core::filter::filter_grayscale(&mut layer.pixels, w, h, sel.as_ref());
-                                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                                    aurelia_core::filter::filter_grayscale(&mut layer.pixels, w, h, sel.as_ref());
+                                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                                         layer_id: layer.id,
                                         description: "Grayscale",
                                         before_pixels: before,
@@ -408,8 +408,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 let sel = state.selection.clone();
                                 if let Some(layer) = state.document.active_layer_mut() {
                                     let before = layer.pixels.clone();
-                                    hollow_core::filter::filter_sepia(&mut layer.pixels, w, h, sel.as_ref());
-                                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                                    aurelia_core::filter::filter_sepia(&mut layer.pixels, w, h, sel.as_ref());
+                                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                                         layer_id: layer.id,
                                         description: "Sepia",
                                         before_pixels: before,
@@ -422,7 +422,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             }
 
                             ui.separator();
-                            ui.label(RichText::new("ARTISTIC & BLUR FX").size(8.5).strong().color(Color32::from_rgb(120, 135, 170)));
+                            ui.label(RichText::new("ARTISTIC & BLUR FX").size(8.5).strong().color(Color32::from_rgb(170, 157, 120)));
                             if ui.button("💧 Gaussian Blur...").clicked() {
                                 state.begin_filter_modal(ActiveFilterModal::GaussianBlur);
                                 ui.close_menu();
@@ -440,7 +440,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 ui.close_menu();
                             }
                             ui.separator();
-                            ui.label(RichText::new("TONE & STYLIZE").size(8.5).strong().color(Color32::from_rgb(120, 135, 170)));
+                            ui.label(RichText::new("TONE & STYLIZE").size(8.5).strong().color(Color32::from_rgb(170, 157, 120)));
                             if ui.button("📊 Levels...").clicked() {
                                 state.begin_filter_modal(ActiveFilterModal::Levels);
                                 ui.close_menu();
@@ -519,7 +519,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 state.show_help = true;
                                 ui.close_menu();
                             }
-                            if ui.button("ℹ About Hollow Canvas").clicked() {
+                            if ui.button("ℹ About Aurelia").clicked() {
                                 state.show_about_dialog = true;
                                 ui.close_menu();
                             }
@@ -530,7 +530,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(3.0, 0.0);
 
-                        if ui.button("ℹ").on_hover_text("About Hollow Canvas (v1.0.2-alpha)").clicked() {
+                        if ui.button("ℹ").on_hover_text("About Aurelia (v1.0.2-alpha)").clicked() {
                             state.show_about_dialog = true;
                         }
 
@@ -572,8 +572,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         // S-Level Stabilizer quick chip
                         let s_lvl_txt = format!("S-{}", state.brush.stabilization_level);
                         let s_btn = egui::Button::new(RichText::new(s_lvl_txt).size(9.5).strong().color(accent_c32))
-                            .fill(if state.brush.stabilization_level > 0 { accent_dim_c32 } else { Color32::from_rgb(18, 24, 40) })
-                            .stroke(egui::Stroke::new(1.0_f32, if state.brush.stabilization_level > 0 { accent_c32 } else { Color32::from_rgb(45, 55, 80) }));
+                            .fill(if state.brush.stabilization_level > 0 { accent_dim_c32 } else { Color32::from_rgb(40, 34, 18) })
+                            .stroke(egui::Stroke::new(1.0_f32, if state.brush.stabilization_level > 0 { accent_c32 } else { Color32::from_rgb(80, 71, 45) }));
                         if ui.add(s_btn).on_hover_text(format!("{}: Click to cycle stabilizer (S-0..S-7)", state.brush.stabilization_label())).clicked() {
                             state.brush.stabilization_level = (state.brush.stabilization_level + 1) % 8;
                             state.set_status(format!("Stabilizer: {}", state.brush.stabilization_label()));
@@ -618,12 +618,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     // ── 2. BOTTOM TIMELINE STRIP PANEL ──
     if state.show_ui_panels && state.timeline.is_enabled {
         egui::TopBottomPanel::bottom("animation_timeline_panel")
-            .frame(egui::Frame::none().fill(Color32::from_rgb(8, 11, 22)).stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(25, 34, 58))).inner_margin(egui::Margin::symmetric(8.0, 6.0)))
+            .frame(egui::Frame::none().fill(Color32::from_rgb(22, 19, 8)).stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(58, 50, 25))).inner_margin(egui::Margin::symmetric(8.0, 6.0)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     // Playback Controls
                     let play_icon = if state.timeline.is_playing { "⏸ Pause" } else { "▶ Play" };
-                    if ui.button(RichText::new(play_icon).size(11.0).strong().color(if state.timeline.is_playing { Color32::from_rgb(255, 200, 80) } else { Color32::from_rgb(100, 240, 150) })).clicked() {
+                    if ui.button(RichText::new(play_icon).size(11.0).strong().color(if state.timeline.is_playing { Color32::from_rgb(255, 200, 80) } else { Color32::from_rgb(117, 223, 209) })).clicked() {
                         state.toggle_animation_playback();
                     }
                     if ui.button("⏮").on_hover_text("Previous Frame ([)").clicked() {
@@ -639,15 +639,15 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.separator();
 
                     // FPS slider
-                    ui.label(RichText::new("FPS:").size(10.5).color(Color32::from_rgb(150, 165, 195)));
+                    ui.label(RichText::new("FPS:").size(10.5).color(Color32::from_rgb(195, 183, 150)));
                     ui.add(egui::DragValue::new(&mut state.timeline.fps).range(1..=60).speed(0.5));
 
                     ui.separator();
 
                     // Onion Skin toggle & settings
                     let onion_active = state.timeline.onion_skin_enabled;
-                    let onion_btn = egui::Button::new(RichText::new("🧅 Onion Skin (O)").size(10.5).color(if onion_active { accent_c32 } else { Color32::from_rgb(140, 150, 175) }))
-                        .fill(if onion_active { accent_c32.linear_multiply(0.2) } else { Color32::from_rgb(20, 26, 44) });
+                    let onion_btn = egui::Button::new(RichText::new("🧅 Onion Skin (O)").size(10.5).color(if onion_active { accent_c32 } else { Color32::from_rgb(169, 157, 146) }))
+                        .fill(if onion_active { accent_c32.linear_multiply(0.2) } else { Color32::from_rgb(44, 38, 20) });
                     if ui.add(onion_btn).on_hover_text("Toggle Ghost Onion Skinning (O)").clicked() {
                         state.toggle_onion_skin();
                     }
@@ -655,9 +655,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     if onion_active {
                         ui.label(RichText::new("Prev:").size(9.5).color(Color32::from_rgb(255, 120, 120)));
                         ui.add(egui::DragValue::new(&mut state.timeline.onion_skin_prev_count).range(1..=5).speed(0.1));
-                        ui.label(RichText::new("Next:").size(9.5).color(Color32::from_rgb(120, 255, 150)));
+                        ui.label(RichText::new("Next:").size(9.5).color(Color32::from_rgb(146, 229, 218)));
                         ui.add(egui::DragValue::new(&mut state.timeline.onion_skin_next_count).range(1..=5).speed(0.1));
-                        ui.label(RichText::new("Opacity:").size(9.5).color(Color32::from_rgb(160, 170, 195)));
+                        ui.label(RichText::new("Opacity:").size(9.5).color(Color32::from_rgb(195, 186, 160)));
                         ui.add(egui::Slider::new(&mut state.timeline.onion_skin_opacity, 0.1..=1.0).show_value(false));
                     }
 
@@ -688,8 +688,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             let is_current = i == state.timeline.current_frame_idx;
                             let frame_name = format!("{}: {}", i + 1, state.timeline.frames[i].name);
                             let chip = egui::Button::new(RichText::new(frame_name).size(10.5).strong())
-                                .fill(if is_current { accent_c32.linear_multiply(0.4) } else { Color32::from_rgb(16, 22, 36) })
-                                .stroke(egui::Stroke::new(1.0_f32, if is_current { accent_c32 } else { Color32::from_rgb(40, 50, 75) }))
+                                .fill(if is_current { accent_c32.linear_multiply(0.4) } else { Color32::from_rgb(36, 31, 16) })
+                                .stroke(egui::Stroke::new(1.0_f32, if is_current { accent_c32 } else { Color32::from_rgb(75, 66, 40) }))
                                 .min_size(Vec2::new(76.0, 24.0));
                             if ui.add(chip).clicked() {
                                 state.select_animation_frame(i);
@@ -714,17 +714,17 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     // ── 2. BOTTOM STATUS BAR ──
     if state.show_ui_panels {
         egui::TopBottomPanel::bottom("status_bar")
-            .frame(egui::Frame::none().fill(Color32::from_rgb(5, 7, 15)).stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(25, 34, 58))).inner_margin(4.0))
+            .frame(egui::Frame::none().fill(Color32::from_rgb(15, 13, 5)).stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(58, 50, 25))).inner_margin(4.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("●").size(8.0).color(accent_c32));
-                    ui.label(RichText::new(&state.status_message).size(10.5).color(Color32::from_rgb(170, 182, 210)));
+                    ui.label(RichText::new(&state.status_message).size(10.5).color(Color32::from_rgb(210, 200, 170)));
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{} × {} px", state.document.width, state.document.height))
                                 .size(10.0)
-                                .color(Color32::from_rgb(130, 142, 172)),
+                                .color(Color32::from_rgb(172, 161, 130)),
                         );
                         ui.add_space(12.0);
                         ui.label(
@@ -734,7 +734,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 state.cursor_canvas_pos.y.round() as i32
                             ))
                             .size(10.0)
-                            .color(Color32::from_rgb(130, 142, 172)),
+                            .color(Color32::from_rgb(172, 161, 130)),
                         );
                         ui.add_space(12.0);
                         ui.label(
@@ -753,14 +753,14 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         egui::SidePanel::left("left_tools_panel")
             .exact_width(220.0)
             .resizable(false)
-            .frame(egui::Frame::none().fill(Color32::from_rgb(10, 14, 26)).stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(25, 34, 58))).inner_margin(8.0))
+            .frame(egui::Frame::none().fill(Color32::from_rgb(26, 22, 10)).stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(58, 50, 25))).inner_margin(8.0))
             .show(ctx, |ui| {
                 ui.set_max_width(220.0);
                 ui.set_width(220.0);
                 ScrollArea::vertical().max_width(220.0).show(ui, |ui| {
                     ui.set_max_width(204.0);
                     ui.set_width(204.0);
-                    ui.label(RichText::new("STUDIO TOOLS").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
+                    ui.label(RichText::new("STUDIO TOOLS").size(9.5).strong().color(Color32::from_rgb(158, 146, 110)));
 
                     let tools = [
                         (ToolType::Brush, "Brush"),
@@ -806,7 +806,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     // ── PRESET SHELF ──
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("PRESET SHELF").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
+                        ui.label(RichText::new("PRESET SHELF").size(9.5).strong().color(Color32::from_rgb(158, 146, 110)));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("＋ Save").on_hover_text("Save current brush settings as a new custom preset").clicked() {
                                 state.show_save_preset_dialog = true;
@@ -822,8 +822,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             let p = &state.presets[i];
                             let label = format!("{} {}", p.icon, p.name);
                             let btn = egui::Button::new(RichText::new(label).size(10.0))
-                                .fill(if is_active { accent_c32.linear_multiply(0.35) } else { Color32::from_rgb(18, 24, 40) })
-                                .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else { Color32::from_rgb(45, 55, 80) }))
+                                .fill(if is_active { accent_c32.linear_multiply(0.35) } else { Color32::from_rgb(40, 34, 18) })
+                                .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else { Color32::from_rgb(80, 71, 45) }))
                                 .min_size(Vec2::new(94.0, 22.0));
                             if ui.add(btn).on_hover_text(&p.description).clicked() {
                                 state.select_preset(i);
@@ -838,17 +838,17 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.separator();
 
                     // Tool-specific properties
-                    ui.label(RichText::new("TOOL PROPERTIES").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
+                    ui.label(RichText::new("TOOL PROPERTIES").size(9.5).strong().color(Color32::from_rgb(158, 146, 110)));
 
                     match state.brush.tool {
                         ToolType::Text => {
-                            ui.label(RichText::new("LIVE TEXT CONTENT:").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                            ui.label(RichText::new("LIVE TEXT CONTENT:").size(9.0).color(Color32::from_rgb(172, 161, 130)));
                             if ui.add(egui::TextEdit::multiline(&mut state.text.content).desired_width(190.0).desired_rows(3)).changed() {
                                 state.sync_active_text_layer();
                             }
 
                             ui.add_space(3.0);
-                            ui.label(RichText::new("FONT FAMILY:").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                            ui.label(RichText::new("FONT FAMILY:").size(9.0).color(Color32::from_rgb(172, 161, 130)));
                             ui.label(RichText::new(&state.text.font_name).size(10.0).strong().color(accent_c32));
 
                             if ui.button("📂 Load Custom Font (.ttf / .otf)...").on_hover_text("Browse computer for any custom TrueType or OpenType font file").clicked() {
@@ -873,7 +873,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                             ui.horizontal(|ui| {
                                 ui.label("Align:");
-                                for &align in hollow_core::brush::TextAlign::ALL {
+                                for &align in aurelia_core::brush::TextAlign::ALL {
                                     if ui.selectable_label(state.text.align == align, format!("{} {}", align.icon(), align.label())).clicked() {
                                         state.text.align = align;
                                         state.sync_active_text_layer();
@@ -883,7 +883,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
-                                let new_txt_btn = egui::Button::new(RichText::new("➕ New Text Layer").size(10.0).strong().color(Color32::from_rgb(15, 20, 35)))
+                                let new_txt_btn = egui::Button::new(RichText::new("➕ New Text Layer").size(10.0).strong().color(Color32::from_rgb(35, 30, 15)))
                                     .fill(accent_c32)
                                     .min_size(Vec2::new(92.0, 24.0));
                                 if ui.add(new_txt_btn).on_hover_text("Create a new interactive Text Layer at the current position").clicked() {
@@ -902,7 +902,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 }
                             });
 
-                            ui.label(RichText::new("💡 Click & drag canvas to create or resize text box.").size(8.5).color(Color32::from_rgb(120, 135, 165)));
+                            ui.label(RichText::new("💡 Click & drag canvas to create or resize text box.").size(8.5).color(Color32::from_rgb(165, 153, 120)));
                         }
                         ToolType::Gradient => {
                             ui.horizontal(|ui| {
@@ -914,7 +914,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 }
                             });
                             ui.checkbox(&mut state.brush.gradient_dither, "Dither Smoothing");
-                            ui.label(RichText::new("Drag on canvas: blends Primary to Secondary").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                            ui.label(RichText::new("Drag on canvas: blends Primary to Secondary").size(9.0).color(Color32::from_rgb(172, 161, 130)));
                         }
                         ToolType::Wand => {
                             ui.add(egui::Slider::new(&mut state.wand_tolerance, 0..=128).text("Tolerance"));
@@ -956,7 +956,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             });
                             if state.brush.eraser_mode == EraserMode::ColorErase {
                                 ui.add(egui::Slider::new(&mut state.brush.color_erase_tolerance, 0..=128).text("Color Tol"));
-                                ui.label(RichText::new("Erases pixels matching Secondary color").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                                ui.label(RichText::new("Erases pixels matching Secondary color").size(9.0).color(Color32::from_rgb(172, 161, 130)));
                             }
                         }
                         ToolType::Line | ToolType::Rect | ToolType::Ellipse | ToolType::Polygon => {
@@ -1000,7 +1000,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     });
                                 }
                             } else {
-                                ui.label(RichText::new("Drag on canvas to select area").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                                ui.label(RichText::new("Drag on canvas to select area").size(9.0).color(Color32::from_rgb(172, 161, 130)));
                             }
                             if do_invert {
                                 if let Some(mask) = &mut state.selection {
@@ -1013,7 +1013,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             }
                         }
                         ToolType::Lasso => {
-                            ui.label(RichText::new("Draw freehand loop to select").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                            ui.label(RichText::new("Draw freehand loop to select").size(9.0).color(Color32::from_rgb(172, 161, 130)));
                             ui.label(RichText::new("Shift: Add · Alt: Subtract").size(8.5).color(accent_c32));
                             if let Some(mask) = &state.selection {
                                 if mask.has_selection() {
@@ -1055,7 +1055,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     }
                                 });
                             } else {
-                                ui.label(RichText::new("Drag box to crop canvas").size(9.0).color(Color32::from_rgb(130, 142, 172)));
+                                ui.label(RichText::new("Drag box to crop canvas").size(9.0).color(Color32::from_rgb(172, 161, 130)));
                             }
                         }
                         ToolType::Transform => {
@@ -1065,7 +1065,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 }
                             } else {
                                 ui.horizontal(|ui| {
-                                    if ui.button(RichText::new("✓ Apply (Enter)").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                                    if ui.button(RichText::new("✓ Apply (Enter)").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
                                         state.commit_transform_session();
                                     }
                                     if ui.button(RichText::new("✕ Cancel (Esc)").strong().color(Color32::from_rgb(250, 120, 120))).clicked() {
@@ -1096,21 +1096,21 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 });
                                 egui::ComboBox::from_label("Filter")
                                     .selected_text(match state.transform_session.interpolation {
-                                        hollow_core::transform::InterpolationMode::Nearest => "Nearest",
-                                        hollow_core::transform::InterpolationMode::Bilinear => "Bilinear",
-                                        hollow_core::transform::InterpolationMode::Bicubic => "Bicubic",
+                                        aurelia_core::transform::InterpolationMode::Nearest => "Nearest",
+                                        aurelia_core::transform::InterpolationMode::Bilinear => "Bilinear",
+                                        aurelia_core::transform::InterpolationMode::Bicubic => "Bicubic",
                                     })
                                     .show_ui(ui, |ui| {
-                                        if ui.selectable_label(state.transform_session.interpolation == hollow_core::transform::InterpolationMode::Bicubic, "Bicubic").clicked() {
-                                            state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Bicubic;
+                                        if ui.selectable_label(state.transform_session.interpolation == aurelia_core::transform::InterpolationMode::Bicubic, "Bicubic").clicked() {
+                                            state.transform_session.interpolation = aurelia_core::transform::InterpolationMode::Bicubic;
                                             state.update_transform_preview();
                                         }
-                                        if ui.selectable_label(state.transform_session.interpolation == hollow_core::transform::InterpolationMode::Bilinear, "Bilinear").clicked() {
-                                            state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Bilinear;
+                                        if ui.selectable_label(state.transform_session.interpolation == aurelia_core::transform::InterpolationMode::Bilinear, "Bilinear").clicked() {
+                                            state.transform_session.interpolation = aurelia_core::transform::InterpolationMode::Bilinear;
                                             state.update_transform_preview();
                                         }
-                                        if ui.selectable_label(state.transform_session.interpolation == hollow_core::transform::InterpolationMode::Nearest, "Nearest").clicked() {
-                                            state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Nearest;
+                                        if ui.selectable_label(state.transform_session.interpolation == aurelia_core::transform::InterpolationMode::Nearest, "Nearest").clicked() {
+                                            state.transform_session.interpolation = aurelia_core::transform::InterpolationMode::Nearest;
                                             state.update_transform_preview();
                                         }
                                     });
@@ -1120,7 +1120,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     }
 
                     ui.add_space(6.0);
-                    ui.label(RichText::new("BRUSH DYNAMICS").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
+                    ui.label(RichText::new("BRUSH DYNAMICS").size(9.5).strong().color(Color32::from_rgb(158, 146, 110)));
                     ui.add(egui::Slider::new(&mut state.brush.size, 1.0..=180.0).text("Size"));
                     ui.add(egui::Slider::new(&mut state.brush.opacity, 0.02..=1.0).text("Opacity"));
                     ui.add(egui::Slider::new(&mut state.brush.smoothing, 0.0..=0.95).text("Smoothing"));
@@ -1132,7 +1132,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("🎯 STABILIZATION").size(9.5).strong().color(accent_c32));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new(state.brush.stabilization_label()).size(9.0).color(Color32::from_rgb(170, 190, 230)));
+                            ui.label(RichText::new(state.brush.stabilization_label()).size(9.0).color(Color32::from_rgb(230, 214, 170)));
                         });
                     });
                     ui.add(egui::Slider::new(&mut state.brush.stabilization_level, 0..=7).text("S-Level"));
@@ -1142,8 +1142,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         for (lvl, lbl) in s_presets {
                             let is_sel = state.brush.stabilization_level == lvl;
                             let btn = egui::Button::new(RichText::new(lbl).size(9.0))
-                                .fill(if is_sel { accent_c32.linear_multiply(0.35) } else { Color32::from_rgb(18, 24, 40) })
-                                .stroke(egui::Stroke::new(1.0_f32, if is_sel { accent_c32 } else { Color32::from_rgb(45, 55, 80) }))
+                                .fill(if is_sel { accent_c32.linear_multiply(0.35) } else { Color32::from_rgb(40, 34, 18) })
+                                .stroke(egui::Stroke::new(1.0_f32, if is_sel { accent_c32 } else { Color32::from_rgb(80, 71, 45) }))
                                 .min_size(Vec2::new(21.0, 18.0));
                             if ui.add(btn).on_hover_text(state.brush.stabilization_description(lvl)).clicked() {
                                 state.brush.stabilization_level = lvl;
@@ -1173,7 +1173,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     ui.add_space(8.0);
                     ui.separator();
-                    ui.label(RichText::new("SYMMETRY & GRID").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
+                    ui.label(RichText::new("SYMMETRY & GRID").size(9.5).strong().color(Color32::from_rgb(158, 146, 110)));
                     ui.horizontal(|ui| {
                         let modes = [
                             (SymmetryMode::None, "None"),
@@ -1208,7 +1208,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         egui::SidePanel::right("right_layers_panel")
             .exact_width(240.0)
             .resizable(false)
-            .frame(egui::Frame::none().fill(Color32::from_rgb(10, 14, 26)).stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(25, 34, 58))).inner_margin(8.0))
+            .frame(egui::Frame::none().fill(Color32::from_rgb(26, 22, 10)).stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(58, 50, 25))).inner_margin(8.0))
             .show(ctx, |ui| {
                 ui.set_max_width(240.0);
                 ui.set_width(240.0);
@@ -1218,7 +1218,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     // ── 🧭 VIEWPORT / NAVIGATOR ──
                     if state.show_navigator {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("🧭 VIEWPORT / NAVIGATOR").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
+                            ui.label(RichText::new("🧭 VIEWPORT / NAVIGATOR").size(9.5).strong().color(Color32::from_rgb(158, 146, 110)));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let pct = (state.zoom * 100.0).round() as i32;
                                 ui.label(RichText::new(format!("{}%", pct)).size(9.5).strong().color(accent_c32));
@@ -1237,13 +1237,13 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         let painter = ui.painter_at(rect);
                         // Background paper frame
                         let bg_c = if state.document.is_transparent {
-                            Color32::from_rgb(18, 24, 38)
+                            Color32::from_rgb(38, 33, 18)
                         } else {
                             let v = state.document.background_value;
                             Color32::from_rgb(v, v, v)
                         };
                         painter.rect_filled(rect, 4.0, bg_c);
-                        painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0_f32, Color32::from_rgb(45, 60, 95)));
+                        painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0_f32, Color32::from_rgb(95, 82, 45)));
 
                         // Draw live active viewport framing box inside the thumbnail
                         let canvas_center_x = doc_w * 0.5 - state.pan.x / state.zoom;
@@ -1276,7 +1276,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         );
 
                         painter.rect_filled(vp_rect, 2.0, Color32::from_rgba_unmultiplied(92, 224, 216, 35));
-                        painter.rect_stroke(vp_rect, 2.0, egui::Stroke::new(1.5_f32, Color32::from_rgb(92, 224, 216)));
+                        painter.rect_stroke(vp_rect, 2.0, egui::Stroke::new(1.5_f32, Color32::from_rgb(224, 180, 92)));
 
                         // Interactive: Click / Drag in Navigator to pan canvas immediately
                         if response.clicked() || response.dragged() {
@@ -1322,7 +1322,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     }
 
                     // ── PALETTE & COLOR PICKER ──
-                    ui.label(RichText::new("COLOR PALETTE").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
+                    ui.label(RichText::new("COLOR PALETTE").size(9.5).strong().color(Color32::from_rgb(158, 146, 110)));
 
                     ui.horizontal(|ui| {
                         let [pr, pg, pb, _] = state.brush.primary_color.to_rgba8();
@@ -1385,42 +1385,42 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     // ── LAYERS PANEL ──
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("LAYERS").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
+                        ui.label(RichText::new("LAYERS").size(9.5).strong().color(Color32::from_rgb(158, 146, 110)));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             egui::ComboBox::from_id_source("add_adj_layer_combo")
                                 .selected_text("✨+ Adj")
                                 .show_ui(ui, |ui| {
                                     if ui.selectable_label(false, "☀️ Brightness / Contrast").clicked() {
-                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::BrightnessContrast { brightness: 0.0, contrast: 0.0 }, None);
+                                        let id = state.document.add_adjustment_layer(aurelia_core::layer::AdjustmentType::BrightnessContrast { brightness: 0.0, contrast: 0.0 }, None);
                                         state.active_adjustment_modal = Some(id);
                                         state.set_status(format!("Added Brightness/Contrast Adjustment Layer {}", id));
                                     }
                                     if ui.selectable_label(false, "🎨 HSL").clicked() {
-                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::Hsl { hue_shift: 0.0, saturation: 1.0, lightness: 0.0 }, None);
+                                        let id = state.document.add_adjustment_layer(aurelia_core::layer::AdjustmentType::Hsl { hue_shift: 0.0, saturation: 1.0, lightness: 0.0 }, None);
                                         state.active_adjustment_modal = Some(id);
                                         state.set_status(format!("Added HSL Adjustment Layer {}", id));
                                     }
                                     if ui.selectable_label(false, "⚖️ Color Balance").clicked() {
-                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::ColorBalance { cyan_red: 0.0, magenta_green: 0.0, yellow_blue: 0.0 }, None);
+                                        let id = state.document.add_adjustment_layer(aurelia_core::layer::AdjustmentType::ColorBalance { cyan_red: 0.0, magenta_green: 0.0, yellow_blue: 0.0 }, None);
                                         state.active_adjustment_modal = Some(id);
                                         state.set_status(format!("Added Color Balance Adjustment Layer {}", id));
                                     }
                                     if ui.selectable_label(false, "🔄 Invert").clicked() {
-                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::Invert, None);
+                                        let id = state.document.add_adjustment_layer(aurelia_core::layer::AdjustmentType::Invert, None);
                                         state.set_status(format!("Added Invert Adjustment Layer {}", id));
                                     }
                                     if ui.selectable_label(false, "🎚️ Posterize").clicked() {
-                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::Posterize { levels: 6 }, None);
+                                        let id = state.document.add_adjustment_layer(aurelia_core::layer::AdjustmentType::Posterize { levels: 6 }, None);
                                         state.active_adjustment_modal = Some(id);
                                         state.set_status(format!("Added Posterize Adjustment Layer {}", id));
                                     }
                                     if ui.selectable_label(false, "🌓 Threshold").clicked() {
-                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::Threshold { cutoff: 128 }, None);
+                                        let id = state.document.add_adjustment_layer(aurelia_core::layer::AdjustmentType::Threshold { cutoff: 128 }, None);
                                         state.active_adjustment_modal = Some(id);
                                         state.set_status(format!("Added Threshold Adjustment Layer {}", id));
                                     }
                                     if ui.selectable_label(false, "🎞️ Sepia").clicked() {
-                                        let id = state.document.add_adjustment_layer(hollow_core::layer::AdjustmentType::Sepia { strength: 1.0 }, None);
+                                        let id = state.document.add_adjustment_layer(aurelia_core::layer::AdjustmentType::Sepia { strength: 1.0 }, None);
                                         state.active_adjustment_modal = Some(id);
                                         state.set_status(format!("Added Sepia Adjustment Layer {}", id));
                                     }
@@ -1498,7 +1498,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 } else {
                                     Color32::from_rgba_unmultiplied(18, 25, 46, 180)
                                 })
-                                .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else if is_group { Color32::from_rgb(48, 64, 100) } else if is_adj { Color32::from_rgb(70, 52, 110) } else if is_text { Color32::from_rgb(32, 70, 95) } else { Color32::from_rgb(36, 48, 78) }))
+                                .stroke(egui::Stroke::new(1.0_f32, if is_active { accent_c32 } else if is_group { Color32::from_rgb(100, 87, 48) } else if is_adj { Color32::from_rgb(110, 99, 52) } else if is_text { Color32::from_rgb(95, 77, 32) } else { Color32::from_rgb(78, 67, 36) }))
                                 .rounding(4.0)
                                 .inner_margin(egui::vec2(5.0, 4.0))
                                 .show(ui, |ui| {
@@ -1519,7 +1519,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                             let folder_icon = if state.document.layers[i].is_expanded { "📂" } else { "📁" };
                                             ui.label(RichText::new(folder_icon).size(11.0));
                                         } else if depth > 0 {
-                                            ui.label(RichText::new("└").size(10.0).color(Color32::from_rgb(100, 115, 145)));
+                                            ui.label(RichText::new("└").size(10.0).color(Color32::from_rgb(145, 133, 100)));
                                         }
 
                                         if is_clip {
@@ -1590,11 +1590,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     if is_active {
                                         if !is_adj && !is_group {
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new("Blend:").size(9.5).color(Color32::from_rgb(130, 142, 172)));
+                                                ui.label(RichText::new("Blend:").size(9.5).color(Color32::from_rgb(172, 161, 130)));
                                                 egui::ComboBox::from_id_source(format!("blend_mode_{}", layer_id))
                                                     .selected_text(state.document.layers[i].blend_mode.label())
                                                     .show_ui(ui, |ui| {
-                                                        for &mode in hollow_core::blend::BlendMode::ALL {
+                                                        for &mode in aurelia_core::blend::BlendMode::ALL {
                                                             if ui.selectable_value(&mut state.document.layers[i].blend_mode, mode, mode.label()).clicked() {
                                                                 ctx.request_repaint();
                                                             }
@@ -1620,7 +1620,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                             // Folder parent assignment selector
                                             if !group_options.is_empty() {
                                                 ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("📁 In:").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                                                    ui.label(RichText::new("📁 In:").size(10.0).color(Color32::from_rgb(172, 161, 130)));
                                                     let current_parent_id = state.document.layers[i].parent_id;
                                                     let current_name = current_parent_id
                                                         .and_then(|pid| group_options.iter().find(|(gid, _)| *gid == pid).map(|(_, n)| n.as_str()))
@@ -1665,7 +1665,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                             // Folder parent assignment selector
                                             if !group_options.is_empty() {
                                                 ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("📁 In:").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                                                    ui.label(RichText::new("📁 In:").size(10.0).color(Color32::from_rgb(172, 161, 130)));
                                                     let current_parent_id = state.document.layers[i].parent_id;
                                                     let current_name = current_parent_id
                                                         .and_then(|pid| group_options.iter().find(|(gid, _)| *gid == pid).map(|(_, n)| n.as_str()))
@@ -1698,7 +1698,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.separator();
 
                     // ── REAL-TIME CANVAS OPERATIONS ──
-                    ui.label(RichText::new("CANVAS OPERATIONS").size(9.5).strong().color(Color32::from_rgb(110, 125, 158)));
+                    ui.label(RichText::new("CANVAS OPERATIONS").size(9.5).strong().color(Color32::from_rgb(158, 146, 110)));
 
                     ui.horizontal(|ui| {
                         if ui.add_sized([102.0, 20.0], egui::Button::new("Resize / Scale...")).clicked() {
@@ -1758,7 +1758,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .default_pos(ctx.screen_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
-                ui.label(RichText::new("Choose a preset or configure custom canvas dimensions:").size(11.0).color(Color32::from_rgb(170, 182, 210)));
+                ui.label(RichText::new("Choose a preset or configure custom canvas dimensions:").size(11.0).color(Color32::from_rgb(210, 200, 170)));
                 ui.add_space(6.0);
 
                 ui.label(RichText::new("PRESETS").size(9.5).strong().color(accent_c32));
@@ -1919,7 +1919,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .show(ctx, |ui| {
                 // Mode Switcher Segmented Bar
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Mode:").strong().color(Color32::from_rgb(150, 165, 195)));
+                    ui.label(RichText::new("Mode:").strong().color(Color32::from_rgb(195, 183, 150)));
                     ui.selectable_value(&mut state.reference_mode, crate::state::ReferenceMode::CanvasTracing, "📐 Canvas Tracing Paper");
                     ui.selectable_value(&mut state.reference_mode, crate::state::ReferenceMode::FloatingWindow, "🖼 Floating Lightbox");
                 });
@@ -1964,7 +1964,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                                     ui.add_space(6.0);
                                     ui.separator();
-                                    ui.label(RichText::new("TRANSFORM & POSITION").size(9.0).strong().color(Color32::from_rgb(120, 135, 170)));
+                                    ui.label(RichText::new("TRANSFORM & POSITION").size(9.0).strong().color(Color32::from_rgb(170, 157, 120)));
 
                                     ui.add(egui::Slider::new(&mut state.tracing_scale, 0.05..=4.0).text("Scale"));
 
@@ -2011,12 +2011,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             let bg_color = match state.ref_backlight_mode {
                                 1 => Color32::from_rgb(250, 250, 250), // Pure White Lightbox
                                 2 => Color32::from_rgb(120, 120, 120), // Neutral Checker / Gray
-                                _ => Color32::from_rgb(10, 14, 25),    // Dark studio
+                                _ => Color32::from_rgb(25, 21, 10),    // Dark studio
                             };
 
                             egui::Frame::none()
                                 .fill(bg_color)
-                                .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(40, 50, 80)))
+                                .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(80, 70, 40)))
                                 .rounding(4.0)
                                 .inner_margin(4.0)
                                 .show(ui, |ui| {
@@ -2032,9 +2032,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 } else {
                     ui.add_space(20.0);
                     ui.vertical_centered(|ui| {
-                        ui.label(RichText::new("No reference image loaded.").size(12.0).color(Color32::from_rgb(180, 190, 220)));
+                        ui.label(RichText::new("No reference image loaded.").size(12.0).color(Color32::from_rgb(220, 210, 180)));
                         ui.add_space(4.0);
-                        ui.label(RichText::new("Click '📂 Load Image...' to load a character sketch, lineart, anatomy reference, or color moodboard.").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                        ui.label(RichText::new("Click '📂 Load Image...' to load a character sketch, lineart, anatomy reference, or color moodboard.").size(10.0).color(Color32::from_rgb(172, 161, 130)));
                     });
                 }
             });
@@ -2090,11 +2090,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Size:").size(10.0).color(Color32::from_rgb(150, 165, 195)));
+                    ui.label(RichText::new("Size:").size(10.0).color(Color32::from_rgb(195, 183, 150)));
                     ui.add(egui::Slider::new(&mut state.scratchpad_brush_size, 2.0..=64.0).suffix("px"));
 
                     ui.separator();
-                    ui.label(RichText::new("Canvas:").size(10.0).color(Color32::from_rgb(150, 165, 195)));
+                    ui.label(RichText::new("Canvas:").size(10.0).color(Color32::from_rgb(195, 183, 150)));
                     if ui.selectable_label(state.scratchpad_bg_mode == 0, "Dark").clicked() {
                         state.clear_scratchpad(0);
                     }
@@ -2117,7 +2117,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 if let Some(tex) = &state.scratchpad_texture {
                     let painter = ui.painter_at(rect);
                     // Draw background frame
-                    painter.rect_filled(rect, 4.0, Color32::from_rgb(16, 20, 32));
+                    painter.rect_filled(rect, 4.0, Color32::from_rgb(32, 28, 16));
                     // Paint scratchpad texture
                     painter.image(
                         tex.id(),
@@ -2125,7 +2125,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                         Color32::WHITE,
                     );
-                    painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0_f32, Color32::from_rgb(50, 65, 100)));
+                    painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0_f32, Color32::from_rgb(100, 87, 50)));
                 }
 
                 // Interaction Handling
@@ -2205,7 +2205,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                     layer.pixels = orig.clone();
                     if state.filter_preview_active {
-                        hollow_core::filter::adjust_hsl(
+                        aurelia_core::filter::adjust_hsl(
                             &mut layer.pixels,
                             doc_w,
                             doc_h,
@@ -2258,7 +2258,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                     layer.pixels = orig.clone();
                     if state.filter_preview_active {
-                        hollow_core::filter::adjust_brightness_contrast(
+                        aurelia_core::filter::adjust_brightness_contrast(
                             &mut layer.pixels,
                             doc_w,
                             doc_h,
@@ -2311,7 +2311,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                     layer.pixels = orig.clone();
                     if state.filter_preview_active {
-                        hollow_core::filter::adjust_color_balance(
+                        aurelia_core::filter::adjust_color_balance(
                             &mut layer.pixels,
                             doc_w,
                             doc_h,
@@ -2357,7 +2357,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         if ui.button(RichText::new("Apply Threshold").strong()).clicked() {
                             if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                                 layer.pixels = orig.clone();
-                                hollow_core::filter::filter_threshold(&mut layer.pixels, doc_w, doc_h, state.filter_threshold_val, sel_mask.as_ref());
+                                aurelia_core::filter::filter_threshold(&mut layer.pixels, doc_w, doc_h, state.filter_threshold_val, sel_mask.as_ref());
                             }
                             state.apply_filter_modal("Threshold");
                             return;
@@ -2372,7 +2372,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                     layer.pixels = orig.clone();
                     if state.filter_preview_active {
-                        hollow_core::filter::filter_posterize(
+                        aurelia_core::filter::filter_posterize(
                             &mut layer.pixels,
                             doc_w,
                             doc_h,
@@ -2422,7 +2422,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                     layer.pixels = orig.clone();
                     if state.filter_preview_active {
-                        hollow_core::filter::filter_gaussian_blur(
+                        aurelia_core::filter::filter_gaussian_blur(
                             &mut layer.pixels,
                             doc_w,
                             doc_h,
@@ -2472,7 +2472,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         if ui.button(RichText::new("Apply Unsharp Mask").strong()).clicked() {
                             if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                                 layer.pixels = orig.clone();
-                                hollow_core::filter::filter_unsharp_mask(
+                                aurelia_core::filter::filter_unsharp_mask(
                                     &mut layer.pixels,
                                     doc_w,
                                     doc_h,
@@ -2495,7 +2495,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                     layer.pixels = orig.clone();
                     if state.filter_preview_active {
-                        hollow_core::filter::filter_sharpen(
+                        aurelia_core::filter::filter_sharpen(
                             &mut layer.pixels,
                             doc_w,
                             doc_h,
@@ -2546,7 +2546,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                     layer.pixels = orig.clone();
                     if state.filter_preview_active {
-                        hollow_core::filter::filter_film_grain(
+                        aurelia_core::filter::filter_film_grain(
                             &mut layer.pixels,
                             doc_w,
                             doc_h,
@@ -2598,7 +2598,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         if ui.button(RichText::new("Apply Chromatic Aberration").strong()).clicked() {
                             if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                                 layer.pixels = orig.clone();
-                                hollow_core::filter::filter_chromatic_aberration(
+                                aurelia_core::filter::filter_chromatic_aberration(
                                     &mut layer.pixels,
                                     doc_w,
                                     doc_h,
@@ -2620,7 +2620,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                     layer.pixels = orig.clone();
                     if state.filter_preview_active {
-                        hollow_core::filter::filter_vignette(
+                        aurelia_core::filter::filter_vignette(
                             &mut layer.pixels,
                             doc_w,
                             doc_h,
@@ -2688,7 +2688,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 );
                 restore_and_preview(state, |pixels, w, h| {
                     if preview {
-                        hollow_core::filter::filter_levels(pixels, w, h, black, white, gamma, sel.as_ref());
+                        aurelia_core::filter::filter_levels(pixels, w, h, black, white, gamma, sel.as_ref());
                     }
                 });
             }
@@ -2741,7 +2741,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 let (hue, sat) = (state.filter_colorize_hue, state.filter_colorize_saturation);
                 restore_and_preview(state, |pixels, w, h| {
                     if preview {
-                        hollow_core::filter::filter_colorize(pixels, w, h, hue, sat, sel.as_ref());
+                        aurelia_core::filter::filter_colorize(pixels, w, h, hue, sat, sel.as_ref());
                     }
                 });
             }
@@ -2791,7 +2791,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 let block = state.filter_pixelate_block;
                 restore_and_preview(state, |pixels, w, h| {
                     if preview {
-                        hollow_core::filter::filter_pixelate(pixels, w, h, block, sel.as_ref());
+                        aurelia_core::filter::filter_pixelate(pixels, w, h, block, sel.as_ref());
                     }
                 });
             }
@@ -2844,7 +2844,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 let (dist, angle) = (state.filter_motion_distance, state.filter_motion_angle);
                 restore_and_preview(state, |pixels, w, h| {
                     if preview {
-                        hollow_core::filter::filter_motion_blur(pixels, w, h, dist, angle, sel.as_ref());
+                        aurelia_core::filter::filter_motion_blur(pixels, w, h, dist, angle, sel.as_ref());
                     }
                 });
             }
@@ -2913,17 +2913,17 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         // Render Gizmo lines & handles using foreground painter
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("transform_gizmo_layer")));
 
-        let border_stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255));
+        let border_stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(236, 167, 19));
         painter.line_segment([screen_corners[0], screen_corners[1]], border_stroke);
         painter.line_segment([screen_corners[1], screen_corners[2]], border_stroke);
         painter.line_segment([screen_corners[2], screen_corners[3]], border_stroke);
         painter.line_segment([screen_corners[3], screen_corners[0]], border_stroke);
 
-        let stem_stroke = egui::Stroke::new(1.2_f32, Color32::from_rgb(0, 200, 255));
+        let stem_stroke = egui::Stroke::new(1.2_f32, Color32::from_rgb(236, 170, 19));
         painter.line_segment([screen_tc, screen_stem], stem_stroke);
 
-        let handle_fill = Color32::from_rgb(10, 18, 36);
-        let handle_stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255));
+        let handle_fill = Color32::from_rgb(36, 29, 10);
+        let handle_stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(236, 167, 19));
         let handle_size = 8.0_f32;
 
         let draw_square_handle = |p: egui::Pos2| {
@@ -2942,7 +2942,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         draw_square_handle(screen_ml);
 
         // Rotation Handle (Circle)
-        painter.circle_filled(screen_stem, 5.5_f32, Color32::from_rgb(0, 240, 255));
+        painter.circle_filled(screen_stem, 5.5_f32, Color32::from_rgb(236, 167, 19));
         painter.circle_stroke(screen_stem, 5.5_f32, egui::Stroke::new(1.5_f32, Color32::from_rgb(255, 255, 255)));
 
         // Pivot Handle (Crosshair circle)
@@ -2964,15 +2964,15 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .show(ctx, |ui| {
                 egui::Frame::none()
                     .fill(Color32::from_rgba_unmultiplied(10, 14, 28, 245))
-                    .stroke(egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)))
+                    .stroke(egui::Stroke::new(1.5_f32, Color32::from_rgb(236, 167, 19)))
                     .rounding(8.0)
                     .inner_margin(8.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("✦ TRANSFORM").strong().color(Color32::from_rgb(0, 240, 255)));
+                            ui.label(RichText::new("✦ TRANSFORM").strong().color(Color32::from_rgb(236, 167, 19)));
                             ui.separator();
 
-                            if ui.button(RichText::new("✓ Apply (Enter)").strong().color(Color32::from_rgb(80, 240, 140))).clicked() {
+                            if ui.button(RichText::new("✓ Apply (Enter)").strong().color(Color32::from_rgb(101, 219, 203))).clicked() {
                                 state.commit_transform_session();
                                 return;
                             }
@@ -3019,7 +3019,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
             let time = ctx.input(|i| i.time);
             let phase = (time * 6.0).fract() as f32;
-            let c_pri = Color32::from_rgb(0, 240, 255);
+            let c_pri = Color32::from_rgb(236, 167, 19);
             let c_sec = Color32::from_rgb(255, 255, 255);
 
             for (i, &(p0, p1)) in mask.cached_boundary.iter().enumerate() {
@@ -3040,14 +3040,14 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     .show(ctx, |ui| {
                         egui::Frame::none()
                             .fill(Color32::from_rgba_unmultiplied(10, 14, 28, 240))
-                            .stroke(egui::Stroke::new(1.2_f32, Color32::from_rgb(0, 240, 255)))
+                            .stroke(egui::Stroke::new(1.2_f32, Color32::from_rgb(236, 167, 19)))
                             .rounding(7.0)
                             .inner_margin(6.0)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("✦ SELECTION").size(10.5).strong().color(Color32::from_rgb(0, 240, 255)));
+                                    ui.label(RichText::new("✦ SELECTION").size(10.5).strong().color(Color32::from_rgb(236, 167, 19)));
                                     ui.separator();
-                                    if ui.button(RichText::new("Fill").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                                    if ui.button(RichText::new("Fill").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
                                         state.fill_selection_active_layer();
                                     }
                                     if ui.button("Stroke...").clicked() {
@@ -3074,7 +3074,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         let win_w = win_size.x;
         let win_h = win_size.y;
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("lasso_preview_layer")));
-        let stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255));
+        let stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(236, 167, 19));
 
         for i in 0..state.lasso_points.len() - 1 {
             let p0 = state.canvas_to_screen(state.lasso_points[i], win_w, win_h);
@@ -3114,14 +3114,14 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             // Compute canvas bounds of the text box
             let font = state.text_font.as_ref();
             let (measured_w, measured_h) = if let Some(f) = font {
-                let lines = hollow_core::rasterizer::StrokeRasterizer::wrap_text_lines(
+                let lines = aurelia_core::rasterizer::StrokeRasterizer::wrap_text_lines(
                     &config.content,
                     f,
                     config.font_size,
                     config.letter_spacing,
                     config.box_w,
                 );
-                hollow_core::rasterizer::StrokeRasterizer::measure_text_lines(
+                aurelia_core::rasterizer::StrokeRasterizer::measure_text_lines(
                     &lines,
                     f,
                     config.font_size,
@@ -3146,7 +3146,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             painter.rect_stroke(
                 screen_rect,
                 2.0,
-                egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)),
+                egui::Stroke::new(1.5_f32, Color32::from_rgb(236, 167, 19)),
             );
 
             // Draw 4 corner handles
@@ -3161,7 +3161,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             for &corner in &corners {
                 let handle_rect = egui::Rect::from_center_size(corner, egui::vec2(handle_size, handle_size));
                 painter.rect_filled(handle_rect, 1.5, Color32::from_rgb(255, 255, 255));
-                painter.rect_stroke(handle_rect, 1.5, egui::Stroke::new(1.0_f32, Color32::from_rgb(0, 240, 255)));
+                painter.rect_stroke(handle_rect, 1.5, egui::Stroke::new(1.0_f32, Color32::from_rgb(236, 167, 19)));
             }
 
             // Interactive On-Canvas Editable Text Box Frame
@@ -3202,12 +3202,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     .show(ctx, |ui| {
                         egui::Frame::none()
                             .fill(Color32::from_rgba_unmultiplied(10, 14, 28, 248))
-                            .stroke(egui::Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)))
+                            .stroke(egui::Stroke::new(1.5_f32, Color32::from_rgb(236, 167, 19)))
                             .rounding(7.0)
                             .inner_margin(6.0)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("🔤 TEXT").size(10.5).strong().color(Color32::from_rgb(0, 240, 255)));
+                                    ui.label(RichText::new("🔤 TEXT").size(10.5).strong().color(Color32::from_rgb(236, 167, 19)));
                                     ui.separator();
 
                                     // Inline Text Editor
@@ -3239,7 +3239,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     ui.separator();
 
                                     // Alignment
-                                    for &align in hollow_core::brush::TextAlign::ALL {
+                                    for &align in aurelia_core::brush::TextAlign::ALL {
                                         if ui.selectable_label(state.text.align == align, align.icon()).on_hover_text(align.label()).clicked() {
                                             state.text.align = align;
                                             state.sync_active_text_layer();
@@ -3264,7 +3264,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                         state.rasterize_active_text_layer();
                                     }
 
-                                    if ui.button(RichText::new("✓ Done").strong().color(Color32::from_rgb(80, 240, 140))).clicked() {
+                                    if ui.button(RichText::new("✓ Done").strong().color(Color32::from_rgb(101, 219, 203))).clicked() {
                                         state.active_text_layer_id = None;
                                     }
                                 });
@@ -3284,11 +3284,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .default_pos(ctx.screen_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
-                ui.label(RichText::new("Feather Radius (px):").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.label(RichText::new("Feather Radius (px):").size(11.0).color(Color32::from_rgb(240, 231, 205)));
                 ui.add(egui::Slider::new(&mut state.feather_radius, 1..=50).text("px"));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("✓ Apply Feather").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                    if ui.button(RichText::new("✓ Apply Feather").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
                         let r = state.feather_radius;
                         state.feather_selection(r);
                         state.show_feather_dialog = false;
@@ -3309,11 +3309,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .default_pos(ctx.screen_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
-                ui.label(RichText::new("Expand By (px):").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.label(RichText::new("Expand By (px):").size(11.0).color(Color32::from_rgb(240, 231, 205)));
                 ui.add(egui::Slider::new(&mut state.expand_radius, 1..=50).text("px"));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("✓ Apply Expand").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                    if ui.button(RichText::new("✓ Apply Expand").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
                         let r = state.expand_radius;
                         state.expand_selection(r);
                         state.show_expand_dialog = false;
@@ -3334,11 +3334,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .default_pos(ctx.screen_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
-                ui.label(RichText::new("Contract By (px):").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.label(RichText::new("Contract By (px):").size(11.0).color(Color32::from_rgb(240, 231, 205)));
                 ui.add(egui::Slider::new(&mut state.contract_radius, 1..=50).text("px"));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("✓ Apply Contract").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                    if ui.button(RichText::new("✓ Apply Contract").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
                         let r = state.contract_radius;
                         state.contract_selection(r);
                         state.show_contract_dialog = false;
@@ -3359,10 +3359,10 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .default_pos(ctx.screen_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
-                ui.label(RichText::new("Stroke Width (px):").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.label(RichText::new("Stroke Width (px):").size(11.0).color(Color32::from_rgb(240, 231, 205)));
                 ui.add(egui::Slider::new(&mut state.stroke_width, 1..=50).text("px"));
                 ui.add_space(6.0);
-                ui.label(RichText::new("Location:").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.label(RichText::new("Location:").size(11.0).color(Color32::from_rgb(240, 231, 205)));
                 ui.horizontal(|ui| {
                     ui.radio_value(&mut state.stroke_position, 0, "Center");
                     ui.radio_value(&mut state.stroke_position, 1, "Inside");
@@ -3370,7 +3370,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("✓ Apply Stroke").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                    if ui.button(RichText::new("✓ Apply Stroke").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
                         let w = state.stroke_width;
                         let pos = state.stroke_position;
                         state.stroke_selection_active_layer(w, pos);
@@ -3392,11 +3392,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .default_pos(ctx.screen_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
-                ui.label(RichText::new("Preset Name:").size(11.0).color(Color32::from_rgb(205, 215, 240)));
+                ui.label(RichText::new("Preset Name:").size(11.0).color(Color32::from_rgb(240, 231, 205)));
                 ui.text_edit_singleline(&mut state.new_preset_name);
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("✓ Save Preset").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                    if ui.button(RichText::new("✓ Save Preset").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
                         let name = state.new_preset_name.clone();
                         state.save_current_as_preset(&name);
                         state.show_save_preset_dialog = false;
@@ -3417,21 +3417,21 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .default_pos(ctx.screen_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
-                ui.label(RichText::new("Export Multi-Frame Animation").size(12.0).strong().color(Color32::from_rgb(235, 242, 255)));
+                ui.label(RichText::new("Export Multi-Frame Animation").size(12.0).strong().color(Color32::from_rgb(253, 249, 236)));
                 ui.add_space(6.0);
 
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Total Frames:").size(11.0).color(Color32::from_rgb(180, 190, 215)));
+                    ui.label(RichText::new("Total Frames:").size(11.0).color(Color32::from_rgb(215, 206, 180)));
                     ui.label(RichText::new(format!("{}", state.timeline.frames.len())).strong().color(accent_c32));
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Playback FPS:").size(11.0).color(Color32::from_rgb(180, 190, 215)));
+                    ui.label(RichText::new("Playback FPS:").size(11.0).color(Color32::from_rgb(215, 206, 180)));
                     ui.add(egui::DragValue::new(&mut state.export_anim_fps).range(1..=60).suffix(" fps"));
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Format:").size(11.0).color(Color32::from_rgb(180, 190, 215)));
+                    ui.label(RichText::new("Format:").size(11.0).color(Color32::from_rgb(215, 206, 180)));
                     ui.radio_value(&mut state.export_anim_format, 0, "GIF (.gif)");
                     ui.radio_value(&mut state.export_anim_format, 1, "Sprite Sheet (.png)");
                     ui.radio_value(&mut state.export_anim_format, 2, "PNG Sequence");
@@ -3439,7 +3439,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                 if state.export_anim_format == 1 {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Columns:").size(11.0).color(Color32::from_rgb(180, 190, 215)));
+                        ui.label(RichText::new("Columns:").size(11.0).color(Color32::from_rgb(215, 206, 180)));
                         ui.add(egui::DragValue::new(&mut state.sprite_columns).range(1..=32));
                     });
                 }
@@ -3450,7 +3450,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.add_space(6.0);
 
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("✓ Export Animation").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                    if ui.button(RichText::new("✓ Export Animation").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
                         state.timeline.sync_from_document(&state.document);
                         let w = state.document.width;
                         let h = state.document.height;
@@ -3468,13 +3468,13 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                         if state.export_anim_format == 0 {
                             let out_path = out_dir.join("animation.gif");
-                            match hollow_io::export_animated_gif(&frames_rgba, w, h, state.export_anim_fps, state.export_anim_loop, &out_path) {
+                            match aurelia_io::export_animated_gif(&frames_rgba, w, h, state.export_anim_fps, state.export_anim_loop, &out_path) {
                                 Ok(_) => state.set_status(format!("Exported animated GIF to {}", out_path.display())),
                                 Err(e) => state.set_status(format!("Export failed: {}", e)),
                             }
                         } else if state.export_anim_format == 1 {
                             let out_path = out_dir.join("spritesheet.png");
-                            match hollow_io::export_sprite_sheet(&frames_rgba, w, h, state.sprite_columns, &out_path) {
+                            match aurelia_io::export_sprite_sheet(&frames_rgba, w, h, state.sprite_columns, &out_path) {
                                 Ok((sw, sh)) => state.set_status(format!(
                                     "Exported {}×{} sprite sheet ({} frames) to {}",
                                     sw, sh, frames_rgba.len(), out_path.display()
@@ -3482,7 +3482,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 Err(e) => state.set_status(format!("Export sprite sheet failed: {}", e)),
                             }
                         } else {
-                            match hollow_io::export_frame_sequence(&frames_rgba, w, h, &out_dir, "frame", hollow_io::ExportFormat::Png) {
+                            match aurelia_io::export_frame_sequence(&frames_rgba, w, h, &out_dir, "frame", aurelia_io::ExportFormat::Png) {
                                 Ok(paths) => state.set_status(format!("Exported {} frames to {}", paths.len(), out_dir.display())),
                                 Err(e) => state.set_status(format!("Export sequence failed: {}", e)),
                             }
@@ -3517,7 +3517,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 if let Some(layer) = state.document.get_layer_mut(adj_id) {
                     if let Some(adj) = &mut layer.adjustment {
                         match &mut adj.adjustment_type {
-                            hollow_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast } => {
+                            aurelia_core::layer::AdjustmentType::BrightnessContrast { brightness, contrast } => {
                                 ui.label(RichText::new("BRIGHTNESS & CONTRAST").size(9.0).strong().color(accent_c32));
                                 ui.add(egui::Slider::new(brightness, -100.0..=100.0).text("Brightness"));
                                 ui.add(egui::Slider::new(contrast, -100.0..=100.0).text("Contrast"));
@@ -3526,7 +3526,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     *contrast = 0.0;
                                 }
                             }
-                            hollow_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness } => {
+                            aurelia_core::layer::AdjustmentType::Hsl { hue_shift, saturation, lightness } => {
                                 ui.label(RichText::new("HUE / SATURATION / LIGHTNESS").size(9.0).strong().color(accent_c32));
                                 ui.add(egui::Slider::new(hue_shift, -180.0..=180.0).text("Hue (°)"));
                                 ui.add(egui::Slider::new(saturation, 0.0..=3.0).text("Saturation (x)"));
@@ -3537,7 +3537,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     *lightness = 0.0;
                                 }
                             }
-                            hollow_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue } => {
+                            aurelia_core::layer::AdjustmentType::ColorBalance { cyan_red, magenta_green, yellow_blue } => {
                                 ui.label(RichText::new("RGB COLOR BALANCE").size(9.0).strong().color(accent_c32));
                                 ui.add(egui::Slider::new(cyan_red, -100.0..=100.0).text("Cyan / Red"));
                                 ui.add(egui::Slider::new(magenta_green, -100.0..=100.0).text("Magenta / Green"));
@@ -3548,19 +3548,19 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     *yellow_blue = 0.0;
                                 }
                             }
-                            hollow_core::layer::AdjustmentType::Invert => {
+                            aurelia_core::layer::AdjustmentType::Invert => {
                                 ui.label(RichText::new("INVERT COLORS").size(9.0).strong().color(accent_c32));
                                 ui.label("Inverts all RGB chromatic channels beneath this layer in real time.");
                             }
-                            hollow_core::layer::AdjustmentType::Posterize { levels } => {
+                            aurelia_core::layer::AdjustmentType::Posterize { levels } => {
                                 ui.label(RichText::new("POSTERIZATION").size(9.0).strong().color(accent_c32));
                                 ui.add(egui::Slider::new(levels, 2..=32).text("Tonal Levels"));
                             }
-                            hollow_core::layer::AdjustmentType::Threshold { cutoff } => {
+                            aurelia_core::layer::AdjustmentType::Threshold { cutoff } => {
                                 ui.label(RichText::new("BINARY THRESHOLD").size(9.0).strong().color(accent_c32));
                                 ui.add(egui::Slider::new(cutoff, 0..=255).text("Cutoff"));
                             }
-                            hollow_core::layer::AdjustmentType::Sepia { strength } => {
+                            aurelia_core::layer::AdjustmentType::Sepia { strength } => {
                                 ui.label(RichText::new("VINTAGE SEPIA TONE").size(9.0).strong().color(accent_c32));
                                 ui.add(egui::Slider::new(strength, 0.0..=1.0).text("Sepia Strength"));
                             }
@@ -3594,21 +3594,21 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.label(RichText::new("PERSPECTIVE PROJECTION MODE").size(9.0).strong().color(accent_c32));
                     ui.horizontal(|ui| {
                         let cur_type = state.perspective.p_type;
-                        if ui.selectable_label(cur_type == hollow_core::perspective::PerspectiveType::None, "Off").clicked() {
-                            state.perspective.p_type = hollow_core::perspective::PerspectiveType::None;
+                        if ui.selectable_label(cur_type == aurelia_core::perspective::PerspectiveType::None, "Off").clicked() {
+                            state.perspective.p_type = aurelia_core::perspective::PerspectiveType::None;
                         }
-                        if ui.selectable_label(cur_type == hollow_core::perspective::PerspectiveType::OnePoint, "1-Point").clicked() {
-                            state.perspective.reset_preset(hollow_core::perspective::PerspectiveType::OnePoint, state.document.width, state.document.height);
+                        if ui.selectable_label(cur_type == aurelia_core::perspective::PerspectiveType::OnePoint, "1-Point").clicked() {
+                            state.perspective.reset_preset(aurelia_core::perspective::PerspectiveType::OnePoint, state.document.width, state.document.height);
                         }
-                        if ui.selectable_label(cur_type == hollow_core::perspective::PerspectiveType::TwoPoint, "2-Point").clicked() {
-                            state.perspective.reset_preset(hollow_core::perspective::PerspectiveType::TwoPoint, state.document.width, state.document.height);
+                        if ui.selectable_label(cur_type == aurelia_core::perspective::PerspectiveType::TwoPoint, "2-Point").clicked() {
+                            state.perspective.reset_preset(aurelia_core::perspective::PerspectiveType::TwoPoint, state.document.width, state.document.height);
                         }
-                        if ui.selectable_label(cur_type == hollow_core::perspective::PerspectiveType::ThreePoint, "3-Point").clicked() {
-                            state.perspective.reset_preset(hollow_core::perspective::PerspectiveType::ThreePoint, state.document.width, state.document.height);
+                        if ui.selectable_label(cur_type == aurelia_core::perspective::PerspectiveType::ThreePoint, "3-Point").clicked() {
+                            state.perspective.reset_preset(aurelia_core::perspective::PerspectiveType::ThreePoint, state.document.width, state.document.height);
                         }
                     });
 
-                    if state.perspective.p_type != hollow_core::perspective::PerspectiveType::None {
+                    if state.perspective.p_type != aurelia_core::perspective::PerspectiveType::None {
                         ui.add_space(6.0);
                         ui.separator();
                         ui.label(RichText::new("CONSTRAINT SNAPPING ENGINE").size(9.0).strong().color(accent_c32));
@@ -3630,23 +3630,23 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         ui.add(egui::Slider::new(&mut state.perspective.horizon_angle, -45.0..=45.0).text("Horizon Tilt (°)"));
 
                         ui.add_space(4.0);
-                        ui.label(RichText::new("VP 1 (Primary / Center)").size(8.5).color(Color32::from_rgb(100, 200, 255)));
+                        ui.label(RichText::new("VP 1 (Primary / Center)").size(8.5).color(Color32::from_rgb(243, 205, 112)));
                         ui.horizontal(|ui| {
                             ui.add(egui::DragValue::new(&mut state.perspective.vp1.x).prefix("X: ").speed(1.0));
                             ui.add(egui::DragValue::new(&mut state.perspective.vp1.y).prefix("Y: ").speed(1.0));
                         });
 
-                        if state.perspective.p_type == hollow_core::perspective::PerspectiveType::TwoPoint
-                            || state.perspective.p_type == hollow_core::perspective::PerspectiveType::ThreePoint
+                        if state.perspective.p_type == aurelia_core::perspective::PerspectiveType::TwoPoint
+                            || state.perspective.p_type == aurelia_core::perspective::PerspectiveType::ThreePoint
                         {
-                            ui.label(RichText::new("VP 2 (Right Vanishing Point)").size(8.5).color(Color32::from_rgb(80, 230, 180)));
+                            ui.label(RichText::new("VP 2 (Right Vanishing Point)").size(8.5).color(Color32::from_rgb(93, 217, 200)));
                             ui.horizontal(|ui| {
                                 ui.add(egui::DragValue::new(&mut state.perspective.vp2.x).prefix("X: ").speed(1.0));
                                 ui.add(egui::DragValue::new(&mut state.perspective.vp2.y).prefix("Y: ").speed(1.0));
                             });
                         }
 
-                        if state.perspective.p_type == hollow_core::perspective::PerspectiveType::ThreePoint {
+                        if state.perspective.p_type == aurelia_core::perspective::PerspectiveType::ThreePoint {
                             ui.label(RichText::new("VP 3 (Vertical / Nadir Point)").size(8.5).color(Color32::from_rgb(230, 120, 240)));
                             ui.horizontal(|ui| {
                                 ui.add(egui::DragValue::new(&mut state.perspective.vp3.x).prefix("X: ").speed(1.0));
@@ -3673,17 +3673,17 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     let cur_mode = state.transform_session.mode;
-                    if ui.selectable_label(cur_mode == hollow_core::transform::TransformMode::Affine, "⛶ Free").on_hover_text("Standard Affine Box (Scale, Rotate, Skew, Translate)").clicked() {
-                        state.set_transform_mode(hollow_core::transform::TransformMode::Affine);
+                    if ui.selectable_label(cur_mode == aurelia_core::transform::TransformMode::Affine, "⛶ Free").on_hover_text("Standard Affine Box (Scale, Rotate, Skew, Translate)").clicked() {
+                        state.set_transform_mode(aurelia_core::transform::TransformMode::Affine);
                     }
-                    if ui.selectable_label(cur_mode == hollow_core::transform::TransformMode::PerspectiveQuad, "☖ Quad").on_hover_text("4-Corner Perspective Quad Warping").clicked() {
-                        state.set_transform_mode(hollow_core::transform::TransformMode::PerspectiveQuad);
+                    if ui.selectable_label(cur_mode == aurelia_core::transform::TransformMode::PerspectiveQuad, "☖ Quad").on_hover_text("4-Corner Perspective Quad Warping").clicked() {
+                        state.set_transform_mode(aurelia_core::transform::TransformMode::PerspectiveQuad);
                     }
-                    if ui.selectable_label(cur_mode == hollow_core::transform::TransformMode::MeshGrid, "▦ Mesh").on_hover_text("Bicubic Mesh Grid Deformation").clicked() {
-                        state.set_transform_mode(hollow_core::transform::TransformMode::MeshGrid);
+                    if ui.selectable_label(cur_mode == aurelia_core::transform::TransformMode::MeshGrid, "▦ Mesh").on_hover_text("Bicubic Mesh Grid Deformation").clicked() {
+                        state.set_transform_mode(aurelia_core::transform::TransformMode::MeshGrid);
                     }
-                    if ui.selectable_label(cur_mode == hollow_core::transform::TransformMode::ThinPlateSpline, "✦ TPS Pins").on_hover_text("Thin Plate Spline Multi-Pin Landmark Warping").clicked() {
-                        state.set_transform_mode(hollow_core::transform::TransformMode::ThinPlateSpline);
+                    if ui.selectable_label(cur_mode == aurelia_core::transform::TransformMode::ThinPlateSpline, "✦ TPS Pins").on_hover_text("Thin Plate Spline Multi-Pin Landmark Warping").clicked() {
+                        state.set_transform_mode(aurelia_core::transform::TransformMode::ThinPlateSpline);
                     }
                 });
 
@@ -3691,7 +3691,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.separator();
 
                 match state.transform_session.mode {
-                    hollow_core::transform::TransformMode::Affine => {
+                    aurelia_core::transform::TransformMode::Affine => {
                         let mut rot_deg = state.transform_session.transform.rotation_rad.to_degrees();
                         if ui.add(egui::Slider::new(&mut rot_deg, -180.0..=180.0).text("Angle (°)")).changed() {
                             state.transform_session.transform.rotation_rad = rot_deg.to_radians();
@@ -3715,13 +3715,13 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             ui.checkbox(&mut state.transform_session.lock_aspect, "Lock Ratio");
                         });
                     }
-                    hollow_core::transform::TransformMode::PerspectiveQuad => {
-                        ui.label(RichText::new("Drag the 4 corner handles on canvas to create perspective planes.").size(9.5).color(Color32::from_rgb(170, 185, 220)));
+                    aurelia_core::transform::TransformMode::PerspectiveQuad => {
+                        ui.label(RichText::new("Drag the 4 corner handles on canvas to create perspective planes.").size(9.5).color(Color32::from_rgb(220, 207, 170)));
                         if ui.button("↺ Reset Quad Corners").clicked() {
                             state.reset_transform_deformation();
                         }
                     }
-                    hollow_core::transform::TransformMode::MeshGrid => {
+                    aurelia_core::transform::TransformMode::MeshGrid => {
                         ui.horizontal(|ui| {
                             ui.label("Density:");
                             let densities = [(3, 3, "3×3"), (4, 4, "4×4"), (5, 5, "5×5"), (6, 6, "6×6"), (8, 8, "8×8")];
@@ -3736,7 +3736,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             state.reset_transform_deformation();
                         }
                     }
-                    hollow_core::transform::TransformMode::ThinPlateSpline => {
+                    aurelia_core::transform::TransformMode::ThinPlateSpline => {
                         ui.label(RichText::new(format!("Active Landmark Pins: {}", state.transform_session.tps_target_pins.len())).size(9.5).color(accent_c32));
                         ui.horizontal(|ui| {
                             if ui.button("+ Add Center Pin").clicked() {
@@ -3757,16 +3757,16 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.horizontal(|ui| {
                     ui.label("Interpolation:");
                     let interp = state.transform_session.interpolation;
-                    if ui.selectable_label(interp == hollow_core::transform::InterpolationMode::Bicubic, "Bicubic").on_hover_text("High-quality smooth Catmull-Rom cubic sampling").clicked() {
-                        state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Bicubic;
+                    if ui.selectable_label(interp == aurelia_core::transform::InterpolationMode::Bicubic, "Bicubic").on_hover_text("High-quality smooth Catmull-Rom cubic sampling").clicked() {
+                        state.transform_session.interpolation = aurelia_core::transform::InterpolationMode::Bicubic;
                         state.update_transform_preview();
                     }
-                    if ui.selectable_label(interp == hollow_core::transform::InterpolationMode::Bilinear, "Bilinear").clicked() {
-                        state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Bilinear;
+                    if ui.selectable_label(interp == aurelia_core::transform::InterpolationMode::Bilinear, "Bilinear").clicked() {
+                        state.transform_session.interpolation = aurelia_core::transform::InterpolationMode::Bilinear;
                         state.update_transform_preview();
                     }
-                    if ui.selectable_label(interp == hollow_core::transform::InterpolationMode::Nearest, "Nearest").on_hover_text("Crisp pixel art nearest neighbor").clicked() {
-                        state.transform_session.interpolation = hollow_core::transform::InterpolationMode::Nearest;
+                    if ui.selectable_label(interp == aurelia_core::transform::InterpolationMode::Nearest, "Nearest").on_hover_text("Crisp pixel art nearest neighbor").clicked() {
+                        state.transform_session.interpolation = aurelia_core::transform::InterpolationMode::Nearest;
                         state.update_transform_preview();
                     }
                 });
@@ -3774,7 +3774,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.add_space(4.0);
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("✓ Apply (Enter)").strong().color(Color32::from_rgb(100, 240, 150))).clicked() {
+                    if ui.button(RichText::new("✓ Apply (Enter)").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
                         state.commit_transform_session();
                     }
                     if ui.button(RichText::new("✕ Cancel (Esc)").strong().color(Color32::from_rgb(250, 120, 120))).clicked() {
@@ -3791,9 +3791,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         render_transform_gizmos(&painter, state, screen_rect.width(), screen_rect.height(), accent_c32);
     }
 
-    // ── 11. ABOUT HOLLOW CANVAS MODAL ──
+    // ── 11. ABOUT AURELIA MODAL ──
     if state.show_about_dialog {
-        egui::Window::new("About Hollow Canvas")
+        egui::Window::new("About Aurelia")
             .fixed_size(Vec2::new(430.0, 340.0))
             .collapsible(false)
             .resizable(false)
@@ -3801,27 +3801,27 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("HOLLOW CANVAS").size(18.0).strong().color(Color32::from_rgb(235, 242, 255)));
-                    ui.label(RichText::new("Digital Illustration & Graphics Studio").size(11.0).color(accent_c32));
-                    ui.label(RichText::new("Version 1.0.2-alpha · Pure Native Rust").size(10.0).color(Color32::from_rgb(130, 142, 172)));
+                    ui.label(RichText::new("AURELIA").size(18.0).strong().color(Color32::from_rgb(253, 249, 236)));
+                    ui.label(RichText::new("Illustration · Animation · Painting Studio").size(11.0).color(accent_c32));
+                    ui.label(RichText::new("Version 1.0.2-alpha · Pure Native Rust").size(10.0).color(Color32::from_rgb(172, 161, 130)));
                 });
 
                 ui.add_space(8.0);
                 ui.separator();
                 ui.add_space(6.0);
 
-                ui.label(RichText::new("Features & Guarantees:").size(10.0).strong().color(Color32::from_rgb(205, 215, 240)));
-                ui.label(RichText::new("• 🔤 Custom Typography & Text Engine: TrueType (.ttf) & OpenType (.otf) subpixel rasterizer with custom tracking & alignment\n• 🪟 Windows File Explorer Integration: Instant context menu launch for PNG, JPG, GIF, WebP, BMP, HCV\n• ⛶ Free Transform & Mesh Warp: Affine, Perspective Quad, Bicubic Mesh Grid & Thin Plate Splines (TPS)\n• 📐 Visual Perspective Rulers: 1, 2, and 3-Point Vanishing Guides with Dynamic Stroke Constraint Snapping\n• ✨ Real-Time Non-Destructive Adjustment Layers (Brightness/Contrast, HSL, Color Balance, Invert, Posterize, Threshold, Sepia)\n• 🎨 Floating Mixing Scratchpad: Off-canvas color mixing, pigment smudging, and eyedropper dock\n• 🎯 Subpixel-Antialiased Stroke Engine with True Tangent Catmull-Rom Curvature\n• ⚡ S-Level Stroke Stabilization (S-0 .. S-7 Lazy Rope & Tremor Filtering)\n• 📁 Collapsible Nested Layer Groups & Clipping Masks\n• 🪄 Magic Wand, Gradients, Shapes, Multi-Axis Symmetry\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Signed VPack 2.0.1 & Zip portable distribution (Ed25519 Chain of Trust)").size(10.0).color(Color32::from_rgb(155, 165, 195)));
+                ui.label(RichText::new("Features & Guarantees:").size(10.0).strong().color(Color32::from_rgb(240, 231, 205)));
+                ui.label(RichText::new("• 🔤 Custom Typography & Text Engine: TrueType (.ttf) & OpenType (.otf) subpixel rasterizer with custom tracking & alignment\n• 🪟 Windows File Explorer Integration: Instant context menu launch for PNG, JPG, GIF, WebP, BMP, HCV\n• ⛶ Free Transform & Mesh Warp: Affine, Perspective Quad, Bicubic Mesh Grid & Thin Plate Splines (TPS)\n• 📐 Visual Perspective Rulers: 1, 2, and 3-Point Vanishing Guides with Dynamic Stroke Constraint Snapping\n• ✨ Real-Time Non-Destructive Adjustment Layers (Brightness/Contrast, HSL, Color Balance, Invert, Posterize, Threshold, Sepia)\n• 🎨 Floating Mixing Scratchpad: Off-canvas color mixing, pigment smudging, and eyedropper dock\n• 🎯 Subpixel-Antialiased Stroke Engine with True Tangent Catmull-Rom Curvature\n• ⚡ S-Level Stroke Stabilization (S-0 .. S-7 Lazy Rope & Tremor Filtering)\n• 📁 Collapsible Nested Layer Groups & Clipping Masks\n• 🪄 Magic Wand, Gradients, Shapes, Multi-Axis Symmetry\n• 🔒 100% Local-First: Completely offline, zero telemetry, zero trackers\n• 📦 Signed VPack 2.0.1 & Zip portable distribution (Ed25519 Chain of Trust)").size(10.0).color(Color32::from_rgb(195, 185, 155)));
 
                 ui.add_space(8.0);
                 ui.separator();
 
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("License:").size(10.0).color(Color32::from_rgb(120, 130, 160)));
-                    ui.label(RichText::new("GNU General Public License v3.0 (GPL-3.0)").size(10.0).color(Color32::from_rgb(185, 195, 225)));
+                    ui.label(RichText::new("License:").size(10.0).color(Color32::from_rgb(154, 139, 126)));
+                    ui.label(RichText::new("GNU General Public License v3.0 (GPL-3.0)").size(10.0).color(Color32::from_rgb(225, 215, 185)));
                 });
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Author:").size(10.0).color(Color32::from_rgb(120, 130, 160)));
+                    ui.label(RichText::new("Author:").size(10.0).color(Color32::from_rgb(154, 139, 126)));
                     ui.label(RichText::new("LeTrollologist").size(10.0).strong().color(accent_c32));
                 });
 
@@ -3836,7 +3836,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
     // ── 12. HELP & SHORTCUTS MODAL ──
     if state.show_help {
-        egui::Window::new("Hollow Canvas Studio · Shortcuts & Help")
+        egui::Window::new("Aurelia Studio · Shortcuts & Help")
             .fixed_size(Vec2::new(420.0, 400.0))
             .collapsible(false)
             .show(ctx, |ui| {
@@ -3861,7 +3861,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         ("Space + Drag", "Pan Canvas Viewport"),
                         ("Mouse Wheel", "Zoom Canvas In / Out"),
                         ("Ctrl + N", "Create New Canvas"),
-                        ("Ctrl + S", "Save Project File (.hcv)"),
+                        ("Ctrl + S", "Save Project File (.aur)"),
                         ("Ctrl + O", "Open Project or Image"),
                         ("Ctrl + E", "Export Flat PNG Image"),
                         ("Ctrl + T", "Free Transform / Warp"),
@@ -3877,8 +3877,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     egui::Grid::new("help_grid").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
                         for (k, desc) in shortcuts {
-                            ui.label(RichText::new(k).strong().color(Color32::from_rgb(225, 235, 255)));
-                            ui.label(RichText::new(desc).color(Color32::from_rgb(165, 175, 205)));
+                            ui.label(RichText::new(k).strong().color(Color32::from_rgb(253, 246, 227)));
+                            ui.label(RichText::new(desc).color(Color32::from_rgb(205, 195, 165)));
                             ui.end_row();
                         }
                     });
@@ -3898,9 +3898,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .default_pos(ctx.screen_rect().center())
             .pivot(egui::Align2::CENTER_CENTER)
             .show(ctx, |ui| {
-                ui.label(RichText::new("Add 'Open with Hollow Canvas' to File Explorer").size(12.0).strong().color(Color32::from_rgb(235, 242, 255)));
+                ui.label(RichText::new("Add 'Open with Aurelia' to File Explorer").size(12.0).strong().color(Color32::from_rgb(253, 249, 236)));
                 ui.add_space(4.0);
-                ui.label(RichText::new("Allows opening any image (.png, .jpg, .jpeg, .gif, .webp, .bmp, .ico, .tga, .tiff) or project (.hcv) directly from Windows Explorer.").size(10.0).color(Color32::from_rgb(160, 175, 205)));
+                ui.label(RichText::new("Allows opening any image (.png, .jpg, .jpeg, .gif, .webp, .bmp, .ico, .tga, .tiff) or project (.aur) directly from Windows Explorer.").size(10.0).color(Color32::from_rgb(205, 193, 160)));
 
                 ui.add_space(8.0);
                 ui.separator();
@@ -3908,9 +3908,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                 let is_reg = crate::shell::is_shell_registered();
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Current Status:").size(10.5).strong().color(Color32::from_rgb(180, 190, 215)));
+                    ui.label(RichText::new("Current Status:").size(10.5).strong().color(Color32::from_rgb(215, 206, 180)));
                     if is_reg {
-                        ui.label(RichText::new("● Registered in Explorer").size(10.5).strong().color(Color32::from_rgb(80, 220, 140)));
+                        ui.label(RichText::new("● Registered in Explorer").size(10.5).strong().color(Color32::from_rgb(85, 215, 198)));
                     } else {
                         ui.label(RichText::new("○ Not Registered").size(10.5).color(Color32::from_rgb(220, 140, 80)));
                     }
@@ -3923,7 +3923,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.add_sized([200.0, 26.0], egui::Button::new(RichText::new("✅ Register Context Menu").strong().color(Color32::from_rgb(15, 20, 35))).fill(accent_c32)).clicked() {
+                    if ui.add_sized([200.0, 26.0], egui::Button::new(RichText::new("✅ Register Context Menu").strong().color(Color32::from_rgb(35, 30, 15))).fill(accent_c32)).clicked() {
                         match crate::shell::register_shell_associations() {
                             Ok(msg) => state.show_shell_status_modal = Some(msg),
                             Err(err) => state.show_shell_status_modal = Some(format!("Error: {}", err)),
@@ -3963,10 +3963,10 @@ fn render_transform_gizmos(
     let session = &state.transform_session;
     let white = Color32::from_rgb(255, 255, 255);
     let shadow = Color32::from_rgba_unmultiplied(0, 0, 0, 180);
-    let cyan = Color32::from_rgb(80, 230, 255);
+    let cyan = Color32::from_rgb(242, 196, 93);
 
     match session.mode {
-        hollow_core::transform::TransformMode::Affine => {
+        aurelia_core::transform::TransformMode::Affine => {
             let origin = session.patch_origin;
             let pw = session.patch_w as f32;
             let ph = session.patch_h as f32;
@@ -4025,7 +4025,7 @@ fn render_transform_gizmos(
             painter.circle_stroke(egui::pos2(pivot_sp.x, pivot_sp.y), 6.0, Stroke::new(1.5_f32, white));
             painter.circle_filled(egui::pos2(pivot_sp.x, pivot_sp.y), 2.0, accent_c32);
         }
-        hollow_core::transform::TransformMode::PerspectiveQuad => {
+        aurelia_core::transform::TransformMode::PerspectiveQuad => {
             let corners_screen: Vec<egui::Pos2> = session
                 .quad
                 .dst_corners
@@ -4046,7 +4046,7 @@ fn render_transform_gizmos(
 
             // Draw 4 corner handles with glowing cyan rings
             for (i, &cp) in corners_screen.iter().enumerate() {
-                painter.circle_filled(cp, 7.0, Color32::from_rgb(15, 25, 45));
+                painter.circle_filled(cp, 7.0, Color32::from_rgb(45, 37, 15));
                 painter.circle_stroke(cp, 7.0, Stroke::new(2.0_f32, cyan));
                 painter.circle_filled(cp, 3.5, white);
                 painter.text(
@@ -4058,7 +4058,7 @@ fn render_transform_gizmos(
                 );
             }
         }
-        hollow_core::transform::TransformMode::MeshGrid => {
+        aurelia_core::transform::TransformMode::MeshGrid => {
             let mesh = &session.mesh_grid;
             let rows = mesh.rows;
             let cols = mesh.cols;
@@ -4096,7 +4096,7 @@ fn render_transform_gizmos(
                 }
             }
         }
-        hollow_core::transform::TransformMode::ThinPlateSpline => {
+        aurelia_core::transform::TransformMode::ThinPlateSpline => {
             for (i, (&src_can, &tgt_can)) in session.tps_source_pins.iter().zip(session.tps_target_pins.iter()).enumerate() {
                 let src_sp = state.canvas_to_screen(src_can, win_w, win_h);
                 let tgt_sp = state.canvas_to_screen(tgt_can, win_w, win_h);
@@ -4108,7 +4108,7 @@ fn render_transform_gizmos(
                     painter.circle_stroke(p_src, 3.0, Stroke::new(1.0_f32, Color32::from_rgb(180, 180, 180)));
                 }
 
-                painter.circle_filled(p_tgt, 6.0, Color32::from_rgb(20, 25, 45));
+                painter.circle_filled(p_tgt, 6.0, Color32::from_rgb(45, 39, 20));
                 painter.circle_stroke(p_tgt, 6.0, Stroke::new(2.0_f32, Color32::from_rgb(255, 180, 40)));
                 painter.circle_filled(p_tgt, 3.0, white);
                 painter.text(

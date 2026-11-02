@@ -215,7 +215,7 @@ pub struct TextSettings {
 impl Default for TextSettings {
     fn default() -> Self {
         Self {
-            content: "Hollow Canvas".to_string(),
+            content: "Aurelia".to_string(),
             font_name: "Default Sans (Segoe UI / Arial)".to_string(),
             font_path: None,
             font_bytes: None,
@@ -285,7 +285,7 @@ impl Default for BrushSettings {
             smoothing: 0.5,
             hardness: 0.7,
             spacing: 0.25,
-            primary_color: Color::HOLLOW_PURPLE,
+            primary_color: Color::BRAND_GOLD,
             secondary_color: Color::from_hex("#130f30").unwrap_or(Color::BLACK),
             eraser_mode: EraserMode::Soft,
             color_erase_tolerance: 32,

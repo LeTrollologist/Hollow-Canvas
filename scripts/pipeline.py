@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Hollow Canvas — Local Release Orchestration Pipeline
+Aurelia — Local Release Orchestration Pipeline
 Replaces CI/CD services with a deterministic, local-first release process.
 
 Stages:
   1. preflight   Check tools (rustc, cargo, gh, vpack)
-  2. build       cargo build --release -p hollow-app
+  2. build       cargo build --release -p aurelia-app
   3. test        cargo test --workspace
   4. security    Dependency advisory & integrity audit
   5. package     Create zip and .vpack archives with canonical naming
@@ -30,14 +30,14 @@ try:
 except Exception:
     pass
 
-PROJECT_NAME = "hollow-canvas"
-REPO_GH = "LeTrollologist/Hollow-Canvas"
-APP_CRATE = "hollow-app"
+PROJECT_NAME = "aurelia"
+REPO_GH = "LeTrollologist/Aurelia"
+APP_CRATE = "aurelia-app"
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT_DIR / "dist"
 
 CANONICAL_ASSET_REGEX = re.compile(
-    r"^(hollow-canvas-v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?-(windows|linux|macos)-(x86_64|aarch64)\.(zip|vpack|tar\.gz)|hollow-publisher\.pub)$"
+    r"^(aurelia-v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?-(windows|linux|macos)-(x86_64|aarch64)\.(zip|vpack|tar\.gz)|aurelia-publisher\.pub)$"
 )
 
 
@@ -90,7 +90,7 @@ def stage_preflight():
 
 
 def stage_build():
-    log("build", "Building optimized release binary (cargo build --release -p hollow-app)...")
+    log("build", "Building optimized release binary (cargo build --release -p aurelia-app)...")
     run_cmd(["cargo", "build", "--release", "-p", APP_CRATE])
 
 
@@ -132,7 +132,7 @@ def stage_security(tag_dir: Path):
         f.write(audit_output)
 
     with open(audit_file, "w", encoding="utf-8") as f:
-        f.write("Hollow Canvas Security & Integrity Audit\n")
+        f.write("Aurelia Security & Integrity Audit\n")
         f.write("=========================================\n")
         f.write("Memory Safety: 100% pure Rust compiled with release optimizations\n")
         f.write("Local-First: Zero outbound network connections or telemetry\n")
@@ -154,36 +154,36 @@ def stage_package(version: str, tag_dir: Path, vpack_exe: str):
         shutil.rmtree(staging_dir)
     staging_dir.mkdir(parents=True, exist_ok=True)
 
-    release_bin = ROOT_DIR / "target" / "release" / "hollow-app.exe"
+    release_bin = ROOT_DIR / "target" / "release" / "aurelia-app.exe"
     if not release_bin.exists():
         print(f"\033[1;31mError: {release_bin} not found. Run build first.\033[0m")
         sys.exit(1)
 
     # Copy files into staging
-    shutil.copy2(release_bin, staging_dir / "hollow-canvas.exe")
+    shutil.copy2(release_bin, staging_dir / "aurelia.exe")
     shutil.copy2(ROOT_DIR / "README.md", staging_dir / "README.md")
     shutil.copy2(ROOT_DIR / "LICENSE.md", staging_dir / "LICENSE.md")
     shutil.copy2(ROOT_DIR / "PRIVACY.md", staging_dir / "PRIVACY.md")
     shutil.copy2(ROOT_DIR / "SECURITY.md", staging_dir / "SECURITY.md")
 
     # 1. Create ZIP Archive
-    zip_name = f"hollow-canvas-{version}-windows-x86_64.zip"
+    zip_name = f"aurelia-{version}-windows-x86_64.zip"
     zip_path = tag_dir / zip_name
     print(f"  Creating {zip_name}...")
     if zip_path.exists():
         zip_path.unlink()
-    shutil.make_archive(str(tag_dir / f"hollow-canvas-{version}-windows-x86_64"), "zip", staging_dir)
+    shutil.make_archive(str(tag_dir / f"aurelia-{version}-windows-x86_64"), "zip", staging_dir)
 
     # 2. Check for Ed25519 Publisher Signing Key
     signing_key = os.environ.get("VPACK_SIGNING_KEY")
     key_path = None
     if signing_key and Path(signing_key).exists():
         key_path = Path(signing_key)
-    elif (ROOT_DIR / "keys" / "hollow-publisher.priv").exists():
-        key_path = ROOT_DIR / "keys" / "hollow-publisher.priv"
+    elif (ROOT_DIR / "keys" / "aurelia-publisher.priv").exists():
+        key_path = ROOT_DIR / "keys" / "aurelia-publisher.priv"
 
     # 3. Create Signed VPACK Archive
-    vpack_name = f"hollow-canvas-{version}-windows-x86_64.vpack"
+    vpack_name = f"aurelia-{version}-windows-x86_64.vpack"
     vpack_path = tag_dir / vpack_name
     print(f"  Creating {vpack_name}...")
     if vpack_path.exists():
@@ -201,7 +201,7 @@ def stage_package(version: str, tag_dir: Path, vpack_exe: str):
 
     vpack_cmd.extend([
         str(vpack_path),
-        str(staging_dir / "hollow-canvas.exe"),
+        str(staging_dir / "aurelia.exe"),
         str(staging_dir / "README.md"),
         str(staging_dir / "LICENSE.md"),
         str(staging_dir / "PRIVACY.md"),
@@ -214,10 +214,10 @@ def stage_package(version: str, tag_dir: Path, vpack_exe: str):
     run_cmd([vpack_exe or "vpack", "test", str(vpack_path)])
 
     # 5. Export public key to release folder if available
-    pub_key_path = ROOT_DIR / "keys" / "hollow-publisher.pub"
+    pub_key_path = ROOT_DIR / "keys" / "aurelia-publisher.pub"
     created_assets = [zip_path, vpack_path]
     if pub_key_path.exists():
-        dest_pub = tag_dir / "hollow-publisher.pub"
+        dest_pub = tag_dir / "aurelia-publisher.pub"
         shutil.copy2(pub_key_path, dest_pub)
         created_assets.append(dest_pub)
 
@@ -273,7 +273,7 @@ def upload_to_virustotal(zip_path: Path, api_key: str) -> dict:
         headers={
             "x-apikey": api_key,
             "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "HollowCanvas-ReleasePipeline/1.0",
+            "User-Agent": "Aurelia-ReleasePipeline/1.0",
         },
         method="POST",
     )
@@ -297,7 +297,7 @@ def request_virustotal_reanalyse(sha256_hash: str, api_key: str) -> dict:
         headers={
             "x-apikey": api_key,
             "Content-Length": "0",
-            "User-Agent": "HollowCanvas-ReleasePipeline/1.0",
+            "User-Agent": "Aurelia-ReleasePipeline/1.0",
         },
         method="POST",
     )
@@ -315,7 +315,7 @@ def poll_virustotal_analysis(analysis_id: str, api_key: str, max_retries: int = 
         url,
         headers={
             "x-apikey": api_key,
-            "User-Agent": "HollowCanvas-ReleasePipeline/1.0",
+            "User-Agent": "Aurelia-ReleasePipeline/1.0",
         },
     )
     for attempt in range(max_retries):
@@ -342,7 +342,7 @@ def get_virustotal_file_report(sha256_hash: str, api_key: str) -> dict:
         url,
         headers={
             "x-apikey": api_key,
-            "User-Agent": "HollowCanvas-ReleasePipeline/1.0",
+            "User-Agent": "Aurelia-ReleasePipeline/1.0",
         },
     )
     try:
@@ -501,39 +501,32 @@ def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draf
     else:
         vt_status_text = "⚪ Not Scanned via API (No VIRUSTOTAL_API_KEY configured — Manual lookup link available)"
 
-    pub_key_file = ROOT_DIR / "keys" / "hollow-publisher.pub"
+    pub_key_file = ROOT_DIR / "keys" / "aurelia-publisher.pub"
     publisher_key = pub_key_file.read_text(encoding="utf-8").strip() if pub_key_file.exists() else "N/A"
 
-    release_body = f"""## 🌟 Hollow Canvas {version} · Studio Release
+    release_body = f"""## 🌟 Aurelia {version} · Studio Release
  
 A modern, high-performance, local-first digital illustration, concept art, and graphics studio built with 100% pure native Rust.
 
 ### ✨ What's New in {version}
 
-* **💾 Crash-Proof Save Pipeline**:
-  - **Unsaved-Changes Guard**: Closing the window now asks *Save / Discard / Cancel* instead of silently dropping the artwork.
+* **🪙 Hollow Canvas is now Aurelia**:
+  - **New identity**: gold-on-ink branding, an all-new application icon, banner and studio theme. Every crate is now `aurelia-*`, the executable is `aurelia.exe`, and settings live under `%LOCALAPPDATA%\\Aurelia`.
+  - **New project format**: projects are saved as `.aur` (signature `AUR\\x01`). Legacy Hollow Canvas `.hcv` files (v2–v5) still open, and the Explorer menu registers both extensions while cleaning up pre-2.0 registry keys.
+
+* **🎨 Aurelia Dawn theme**:
+  - **Warm ink UI**: every panel, dock, ruler, guide and tool surface was re-tinted from cool slate to warm ink with gold, amber, coral and teal accents.
+  - **Three variants**: Aurelia Dawn (gold), Aurelia Dusk (rose) and Aurelia Ember (coral), persisted between sessions.
+
+* **💾 Crash-Proof Save Pipeline** (from 1.0.4):
+  - **Unsaved-Changes Guard**: closing the window asks *Save / Discard / Cancel* instead of silently dropping the artwork.
   - **Quick Save & Save As**: <kbd>Ctrl+S</kbd> writes straight to the known path; <kbd>Ctrl+Shift+S</kbd> saves a copy. The title bar shows `*` while edits are unsaved.
-  - **Atomic Writes**: Projects are written to a `.tmp` sibling and renamed over the target, so an interrupted save can never truncate an existing file.
-  - **Autosave & Crash Recovery**: A recovery snapshot is written every 120 s of unsaved edits and offered back on the next launch. Recent projects are remembered.
+  - **Atomic Writes**: projects are written to a `.tmp` sibling and renamed over the target, so an interrupted save can never truncate an existing file.
+  - **Autosave & Crash Recovery**: a recovery snapshot is written every 120 s of unsaved edits and offered back on the next launch.
 
-* **✍ Stylus Pressure & Tilt**:
-  - **Real Pen Input**: Pressure and tilt are sampled through `WM_POINTER` / `GetPointerPenInfo`; pressure now drives brush size, while mouse input and velocity dynamics keep working exactly as before.
+* **✍ Stylus Pressure & Tilt**: pressure and tilt are sampled through `WM_POINTER` / `GetPointerPenInfo`; pressure drives brush size while mouse input and velocity dynamics keep working as before.
 
-* **📊 Tone & Stylize Filters** (live, non-destructive previews, selection-aware):
-  - **Levels**: black point, white point and midtone gamma.
-  - **Colorize**: single-hue recolouring that preserves luminance.
-  - **Pixelate** and **Motion Blur** with configurable distance/angle.
-
-* **🧠 Memory-Bounded Undo**: The 50-step history now also enforces a 512 MiB budget, evicting the oldest full-layer snapshots first so long sessions cannot balloon into multi-gigabyte RSS.
-
-* **🔗 Interop & Export**:
-  - **JPEG quality control** (1–100) with correct alpha flattening over white.
-  - **Sprite-sheet export** alongside animated GIF and PNG sequences.
-  - **TIFF / TGA / ICO decoding** enabled, so the extensions advertised by the Explorer context menu actually open.
-
-* **🖥 Platform**:
-  - **Per-Monitor V2 DPI Awareness** with `egui` pixels-per-point — crisp UI at 125–200 % scaling.
-  - **Persisted preferences** (theme, JPEG quality, autosave interval, recent files).
+* **📊 Tone & Stylize Filters**: Levels, Colorize, Pixelate and Motion Blur with live, non-destructive, selection-aware previews, plus JPEG quality control and sprite-sheet export.
 
 * **📦 VPack 2.0.1 Cryptographic Trust**:
   - **Ed25519 Publisher Signature**: Verified with official publisher public key (`{publisher_key}`).
@@ -550,9 +543,9 @@ A modern, high-performance, local-first digital illustration, concept art, and g
 ### 📦 Downloads & Assets
 | Asset | Format | Description |
 | :--- | :--- | :--- |
-| `hollow-canvas-{version}-windows-x86_64.vpack` | VPack Archive | Digitally signed, ultra-compact package (inspectable via `vpack`) |
-| `hollow-canvas-{version}-windows-x86_64.zip` | Standard Zip | Full portable studio archive |
-| `hollow-publisher.pub` | Ed25519 Key | Official publisher public key for verifying signatures |
+| `aurelia-{version}-windows-x86_64.vpack` | VPack Archive | Digitally signed, ultra-compact package (inspectable via `vpack`) |
+| `aurelia-{version}-windows-x86_64.zip` | Standard Zip | Full portable studio archive |
+| `aurelia-publisher.pub` | Ed25519 Key | Official publisher public key for verifying signatures |
 | `SHA256SUMS.txt` | SHA-256 | Cryptographic integrity verification checksums |
 | `virustotal-summary.txt` | Security Audit | VirusTotal scan analysis summary |
 
@@ -561,25 +554,25 @@ A modern, high-performance, local-first digital illustration, concept art, and g
 #### Option 1: Install with VPack Archiver (Recommended)
 ```bash
 # Extract all files
-vpack extract hollow-canvas-{version}-windows-x86_64.vpack
+vpack extract aurelia-{version}-windows-x86_64.vpack
 
 # Or extract to a custom directory
-vpack extract hollow-canvas-{version}-windows-x86_64.vpack -o ./HollowCanvas/
+vpack extract aurelia-{version}-windows-x86_64.vpack -o ./Aurelia/
 ```
 
 #### Option 2: Install with Native Zip
 ```powershell
-Expand-Archive -Path .\\hollow-canvas-{version}-windows-x86_64.zip -DestinationPath .\\HollowCanvas
+Expand-Archive -Path .\\aurelia-{version}-windows-x86_64.zip -DestinationPath .\\Aurelia
 ```
 
 ### 🔒 Cryptographic Verification
 Verify all assets against `SHA256SUMS.txt` and check digital signatures:
 ```bash
 # 1. Verify SHA-256
-certutil -hashfile hollow-canvas-{version}-windows-x86_64.zip SHA256
+certutil -hashfile aurelia-{version}-windows-x86_64.zip SHA256
 
 # 2. Test CRC-32 & Verify Ed25519 Publisher Signature
-vpack test hollow-canvas-{version}-windows-x86_64.vpack
+vpack test aurelia-{version}-windows-x86_64.vpack
 ```
 """
 
@@ -594,7 +587,7 @@ vpack test hollow-canvas-{version}-windows-x86_64.vpack
         version,
         *upload_files,
         "--title",
-        f"Hollow Canvas {version} · Studio Release",
+        f"Aurelia {version} · Studio Release",
         "--notes-file",
         str(notes_file),
     ]
@@ -604,14 +597,14 @@ vpack test hollow-canvas-{version}-windows-x86_64.vpack
     res = run_cmd(gh_cmd, check=False)
     if res.returncode != 0:
         print(f"  Release {version} already exists. Updating release notes and assets (--clobber)...")
-        run_cmd(["gh", "release", "edit", version, "--notes-file", str(notes_file), "--title", f"Hollow Canvas {version} · Studio Release"])
+        run_cmd(["gh", "release", "edit", version, "--notes-file", str(notes_file), "--title", f"Aurelia {version} · Studio Release"])
         run_cmd(["gh", "release", "upload", version, *upload_files, "--clobber"])
 
     print(f"\n\033[1;32m[SUCCESS] Successfully published/updated release {version} on GitHub!\033[0m")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Hollow Canvas local release pipeline.")
+    parser = argparse.ArgumentParser(description="Aurelia local release pipeline.")
     parser.add_argument("version", help="Release tag/version (e.g. v0.1.0)")
     parser.add_argument("--draft", action="store_true", help="Create a draft release instead of public")
     parser.add_argument("--no-publish", action="store_true", help="Build and package without publishing")

@@ -1,7 +1,7 @@
 use egui::epaint::Primitive;
 use egui::{ClippedPrimitive, ImageData, Rect, TextureId, TexturesDelta};
 use glam::Vec2;
-use hollow_core::document::Document;
+use aurelia_core::document::Document;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy)]
@@ -108,9 +108,9 @@ impl SoftwareRenderer {
         ];
 
         let bg_val = doc.background_value;
-        let dark_app_bg = 0xFF04060E;
+        let dark_app_bg = 0xFF0B0806;
 
-        // Clear frame to deep Hollow background
+        // Clear frame to deep Aurelia background
         buffer.fill(dark_app_bg);
 
         let doc_w = doc.width as f32;
@@ -207,7 +207,7 @@ impl SoftwareRenderer {
                 let src_idx = src_row_offset + (doc_xi as usize) * 4;
 
                 let (lr, lg, lb, la) = if use_bilinear {
-                    let px = hollow_core::rasterizer::sample_bilinear_rgba(flat_pixels, doc.width, doc.height, doc_xf - 0.5, doc_yf - 0.5);
+                    let px = aurelia_core::rasterizer::sample_bilinear_rgba(flat_pixels, doc.width, doc.height, doc_xf - 0.5, doc_yf - 0.5);
                     (px[0], px[1], px[2], px[3])
                 } else {
                     if src_idx + 3 >= flat_pixels.len() {
@@ -347,7 +347,7 @@ impl SoftwareRenderer {
         }
 
         // 7. Crisp Canvas Border Frame Outline
-        let border_color = 0xFF354468;
+        let border_color = 0xFF3E2F25;
         let top = min_y;
         let btm = if max_y > 0 { max_y - 1 } else { 0 };
         let left = min_x;
@@ -479,9 +479,9 @@ impl SoftwareRenderer {
         zoom: f32,
         center_offset: Vec2,
         viewport_clip: [usize; 4],
-        perspective: &hollow_core::perspective::PerspectiveConfig,
+        perspective: &aurelia_core::perspective::PerspectiveConfig,
     ) {
-        if win_w == 0 || win_h == 0 || !perspective.show_guides || perspective.p_type == hollow_core::perspective::PerspectiveType::None || perspective.guide_opacity <= 0.001 {
+        if win_w == 0 || win_h == 0 || !perspective.show_guides || perspective.p_type == aurelia_core::perspective::PerspectiveType::None || perspective.guide_opacity <= 0.001 {
             return;
         }
 
@@ -522,9 +522,9 @@ impl SoftwareRenderer {
         for (vp_idx, &vp_canvas) in active_vps.iter().enumerate() {
             let rays = perspective.generate_rays_for_vp(vp_canvas, doc_w, doc_h, perspective.guide_density);
             let vp_color = match vp_idx {
-                0 => 0xFF4A90E2, // Left VP: Azure Blue
-                1 => 0xFF50E3C2, // Right VP: Turquoise Green
-                2 => 0xFFE056FD, // Vertical VP: Violet Pink
+                0 => 0xFFF6C45A, // Left VP: Aurelia Gold
+                1 => 0xFF3FA796, // Right VP: Aurelia Teal
+                2 => 0xFFE4705F, // Vertical VP: Aurelia Coral
                 _ => guide_color_u32,
             };
 
@@ -573,10 +573,10 @@ impl SoftwareRenderer {
             viewport_clip[3].min(win_h),
         ];
 
-        let ruler_bg = 0xFF080D1D;
-        let ruler_border = 0xFF24335C;
-        let ruler_tick = 0xFF5C72A0;
-        let ruler_marker = 0xFF5CE0D8;
+        let ruler_bg = 0xFF100C09;
+        let ruler_border = 0xFF3E2F25;
+        let ruler_tick = 0xFF8A7458;
+        let ruler_marker = 0xFFF6C45A;
 
         let top_ruler_h = 16usize;
         let left_ruler_w = 16usize;

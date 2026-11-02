@@ -1,14 +1,14 @@
 use glam::Vec2;
 use std::path::PathBuf;
 use std::time::Instant;
-use hollow_core::blend::BlendMode;
-use hollow_core::brush::BrushSettings;
-use hollow_core::color::{Color, DEFAULT_PALETTE};
-use hollow_core::document::Document;
-use hollow_core::history::HistoryStack;
-use hollow_core::selection::{SelectionMask, StrokePosition};
-use hollow_core::symmetry::SymmetryConfig;
-use hollow_core::transform::{
+use aurelia_core::blend::BlendMode;
+use aurelia_core::brush::BrushSettings;
+use aurelia_core::color::{Color, DEFAULT_PALETTE};
+use aurelia_core::document::Document;
+use aurelia_core::history::HistoryStack;
+use aurelia_core::selection::{SelectionMask, StrokePosition};
+use aurelia_core::symmetry::SymmetryConfig;
+use aurelia_core::transform::{
     render_mesh_warped_patch, render_quad_transformed_patch, render_tps_warped_patch,
     render_transformed_patch, AffineTransform2D, InterpolationMode, MeshWarpGrid,
     PerspectiveQuadTransform, ThinPlateSpline2D, TransformMode,
@@ -183,7 +183,7 @@ pub struct AppState {
     pub show_rulers: bool,
     pub show_navigator: bool,
     pub flip_view_horizontal: bool,
-    pub perspective: hollow_core::perspective::PerspectiveConfig,
+    pub perspective: aurelia_core::perspective::PerspectiveConfig,
     pub show_perspective_dock: bool,
     pub active_adjustment_modal: Option<u64>,
 
@@ -316,13 +316,13 @@ pub struct AppState {
     pub stroke_position: u8, // 0: Center, 1: Inside, 2: Outside
 
     // ── Brush Preset Shelf ──
-    pub presets: Vec<hollow_core::brush::BrushPreset>,
+    pub presets: Vec<aurelia_core::brush::BrushPreset>,
     pub active_preset_idx: Option<usize>,
     pub show_save_preset_dialog: bool,
     pub new_preset_name: String,
 
     // ── Frame Animation & Timeline Strip ──
-    pub timeline: hollow_core::animation::AnimationTimeline,
+    pub timeline: aurelia_core::animation::AnimationTimeline,
     pub show_export_animation_dialog: bool,
     pub export_anim_fps: u32,
     pub export_anim_format: u8, // 0: GIF, 1: WebP, 2: PNG Sequence
@@ -341,11 +341,11 @@ pub struct AppState {
     pub scratchpad_last_pos: Option<Vec2>,
 
     // ── Text Tool & Custom Fonts ──
-    pub text: hollow_core::brush::TextSettings,
+    pub text: aurelia_core::brush::TextSettings,
     pub text_font: Option<ab_glyph::FontArc>,
     pub text_placement_pos: Option<Vec2>,
     pub text_live_preview: bool,
-    pub active_text_layer_id: Option<hollow_core::layer::LayerId>,
+    pub active_text_layer_id: Option<aurelia_core::layer::LayerId>,
     pub text_box_dragging: bool,
     pub text_box_resizing_handle: Option<usize>, // 0: TopLeft, 1: TopRight, 2: BottomRight, 3: BottomLeft
     pub text_drag_start: Option<Vec2>,
@@ -394,7 +394,7 @@ impl AppState {
             show_navigator: true,
             flip_view_horizontal: false,
             perspective: {
-                let mut p = hollow_core::perspective::PerspectiveConfig::default();
+                let mut p = aurelia_core::perspective::PerspectiveConfig::default();
                 p.init_for_canvas(width, height);
                 p
             },
@@ -513,12 +513,12 @@ impl AppState {
             stroke_width: 3,
             stroke_position: 0, // Center
 
-            presets: hollow_core::brush::BrushPreset::default_library(),
+            presets: aurelia_core::brush::BrushPreset::default_library(),
             active_preset_idx: Some(0),
             show_save_preset_dialog: false,
             new_preset_name: String::new(),
 
-            timeline: hollow_core::animation::AnimationTimeline::new(width, height),
+            timeline: aurelia_core::animation::AnimationTimeline::new(width, height),
             show_export_animation_dialog: false,
             export_anim_fps: 12,
             export_anim_format: 0,
@@ -535,8 +535,8 @@ impl AppState {
             scratchpad_bg_mode: 0,
             scratchpad_last_pos: None,
 
-            text: hollow_core::brush::TextSettings::default(),
-            text_font: hollow_core::rasterizer::StrokeRasterizer::load_font(None, None),
+            text: aurelia_core::brush::TextSettings::default(),
+            text_font: aurelia_core::rasterizer::StrokeRasterizer::load_font(None, None),
             text_placement_pos: Some(Vec2::new(50.0, 50.0)),
             text_live_preview: true,
             active_text_layer_id: None,
@@ -555,7 +555,7 @@ impl AppState {
     }
 
     pub fn load_custom_font(&mut self, path: &str) -> bool {
-        if let Some(font) = hollow_core::rasterizer::StrokeRasterizer::load_font(None, Some(path)) {
+        if let Some(font) = aurelia_core::rasterizer::StrokeRasterizer::load_font(None, Some(path)) {
             let filename = std::path::Path::new(path)
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
@@ -572,7 +572,7 @@ impl AppState {
         }
     }
 
-    pub fn select_text_layer(&mut self, id: hollow_core::layer::LayerId) {
+    pub fn select_text_layer(&mut self, id: aurelia_core::layer::LayerId) {
         self.active_text_layer_id = Some(id);
         self.document.active_layer_id = id;
         if let Some(layer) = self.document.get_layer(id) {
@@ -594,12 +594,12 @@ impl AppState {
         }
     }
 
-    pub fn create_text_layer_at(&mut self, pos: Vec2, box_size: Option<Vec2>) -> hollow_core::layer::LayerId {
+    pub fn create_text_layer_at(&mut self, pos: Vec2, box_size: Option<Vec2>) -> aurelia_core::layer::LayerId {
         let (box_w, box_h) = match box_size {
             Some(sz) => (sz.x.max(0.0), sz.y.max(0.0)),
             None => (0.0, 0.0),
         };
-        let mut config = hollow_core::layer::TextLayerConfig {
+        let mut config = aurelia_core::layer::TextLayerConfig {
             content: if self.text.content.trim().is_empty() {
                 "Double-click to edit text".to_string()
             } else {
@@ -616,7 +616,7 @@ impl AppState {
             pos_x: pos.x,
             pos_y: pos.y,
         };
-        if config.content == "Hollow Canvas" {
+        if config.content == "Aurelia" {
             config.content = "Text Layer".to_string();
         }
         let id = self.document.add_text_layer(None, config.clone(), None);
@@ -647,7 +647,7 @@ impl AppState {
 
                     layer.text = Some(config.clone());
                     if let Some(font) = &self.text_font {
-                        hollow_core::rasterizer::StrokeRasterizer::rasterize_text_layer_config(layer, &config, font);
+                        aurelia_core::rasterizer::StrokeRasterizer::rasterize_text_layer_config(layer, &config, font);
                     }
                     self.mark_canvas_dirty();
                 }
@@ -787,14 +787,14 @@ impl AppState {
             return;
         }
         let icon = match self.brush.tool {
-            hollow_core::brush::ToolType::Pencil => "✎",
-            hollow_core::brush::ToolType::Watercolor => "≋",
-            hollow_core::brush::ToolType::Chalk => "░",
-            hollow_core::brush::ToolType::Spray => "⁕",
-            hollow_core::brush::ToolType::Smudge => "≈",
+            aurelia_core::brush::ToolType::Pencil => "✎",
+            aurelia_core::brush::ToolType::Watercolor => "≋",
+            aurelia_core::brush::ToolType::Chalk => "░",
+            aurelia_core::brush::ToolType::Spray => "⁕",
+            aurelia_core::brush::ToolType::Smudge => "≈",
             _ => "✦",
         };
-        let new_preset = hollow_core::brush::BrushPreset {
+        let new_preset = aurelia_core::brush::BrushPreset {
             name: name_trimmed.to_string(),
             icon: icon.to_string(),
             category: "Custom".to_string(),
@@ -807,7 +807,7 @@ impl AppState {
     }
 
     pub fn reset_presets_to_default(&mut self) {
-        self.presets = hollow_core::brush::BrushPreset::default_library();
+        self.presets = aurelia_core::brush::BrushPreset::default_library();
         self.active_preset_idx = Some(0);
         self.select_preset(0);
         self.set_status("Reset preset shelf to factory defaults");
@@ -957,7 +957,7 @@ impl AppState {
         if let Some(before) = self.filter_original_pixels.take() {
             if let Some(layer) = self.document.active_layer() {
                 if before != layer.pixels {
-                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                         layer_id: layer.id,
                         description: filter_name,
                         before_pixels: before,
@@ -1305,7 +1305,7 @@ impl AppState {
                     TransformMode::MeshGrid => "Mesh Grid Warp",
                     TransformMode::ThinPlateSpline => "TPS Landmark Warp",
                 };
-                let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                     layer_id: layer.id,
                     description: mode_name,
                     before_pixels: before,
@@ -1364,7 +1364,7 @@ impl AppState {
                 mask.fill_selection(&mut layer.pixels, doc_w, doc_h, color);
                 let after = layer.pixels.clone();
                 if before != after {
-                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                         layer_id: layer.id,
                         description: "Fill Selection",
                         before_pixels: before,
@@ -1387,7 +1387,7 @@ impl AppState {
                 mask.fill_selection(&mut layer.pixels, doc_w, doc_h, color);
                 let after = layer.pixels.clone();
                 if before != after {
-                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                         layer_id: layer.id,
                         description: "Clear Selection",
                         before_pixels: before,
@@ -1416,7 +1416,7 @@ impl AppState {
                 mask.stroke_selection(&mut layer.pixels, doc_w, doc_h, color, width, pos);
                 let after = layer.pixels.clone();
                 if before != after {
-                    let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                         layer_id: layer.id,
                         description: "Stroke Selection",
                         before_pixels: before,
@@ -1523,7 +1523,7 @@ impl AppState {
                                 let dir = if drag_dist > 0.001 { drag_vec / drag_dist } else { Vec2::ZERO };
                                 let sx = (x as f32 - dir.x * shift).clamp(0.0, w as f32 - 1.0);
                                 let sy = (y as f32 - dir.y * shift).clamp(0.0, h as f32 - 1.0);
-                                let src = hollow_core::rasterizer::sample_bilinear_rgba(&self.scratchpad_pixels, w, h, sx, sy);
+                                let src = aurelia_core::rasterizer::sample_bilinear_rgba(&self.scratchpad_pixels, w, h, sx, sy);
                                 let blended = BlendMode::Normal.composite_pixel(dst, src, alpha * 0.65);
                                 self.scratchpad_pixels[idx..idx + 4].copy_from_slice(&blended);
                             }
@@ -1577,14 +1577,14 @@ impl AppState {
         self.autosave_pending = false;
     }
 
-    /// File name (or `Untitled.hcv`) with a trailing `*` when there are unsaved edits.
+    /// File name (or `Untitled.aur`) with a trailing `*` when there are unsaved edits.
     pub fn document_title(&self) -> String {
         let name = self
             .document_path
             .as_ref()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
-            .unwrap_or("Untitled.hcv")
+            .unwrap_or("Untitled.aur")
             .to_string();
         if self.is_dirty() {
             format!("{} *", name)
@@ -1604,7 +1604,7 @@ impl AppState {
         // Snapshot the recovery path before the document gains its real name, so an
         // untitled document's snapshot is also cleaned up after "Save As".
         let previous_autosave = self.autosave_path();
-        hollow_io::save_project_file(&self.document, path).map_err(|e| e.to_string())?;
+        aurelia_io::save_project_file(&self.document, path).map_err(|e| e.to_string())?;
         self.document_path = Some(path.to_path_buf());
         self.mark_saved();
         let _ = std::fs::remove_file(&previous_autosave);
@@ -1628,15 +1628,15 @@ impl AppState {
         }
     }
 
-    /// `%LOCALAPPDATA%\HollowCanvas\autosave` (temp dir fallback).
+    /// `%LOCALAPPDATA%\Aurelia\autosave` (temp dir fallback).
     pub fn autosave_dir() -> PathBuf {
         let base = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
-        base.join("HollowCanvas").join("autosave")
+        base.join("Aurelia").join("autosave")
     }
 
-    /// `%LOCALAPPDATA%\HollowCanvas\autosave\<stem>-autosave.hcv`.
+    /// `%LOCALAPPDATA%\Aurelia\autosave\<stem>-autosave.aur`.
     pub fn autosave_path(&self) -> PathBuf {
         let stem = self
             .document_path
@@ -1644,7 +1644,7 @@ impl AppState {
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
-        Self::autosave_dir().join(format!("{}-autosave.hcv", stem))
+        Self::autosave_dir().join(format!("{}-autosave.aur", stem))
     }
 
     /// Writes a recovery snapshot if the interval elapsed and there are unsaved edits.
@@ -1662,7 +1662,7 @@ impl AppState {
                 return false;
             }
         }
-        if hollow_io::save_project_file(&self.document, &path).is_ok() {
+        if aurelia_io::save_project_file(&self.document, &path).is_ok() {
             self.autosave_pending = true;
             self.set_status(format!("Auto-saved recovery snapshot: {}", path.display()));
             true
@@ -1685,7 +1685,7 @@ impl AppState {
         Self::autosave_dir()
             .parent()
             .map(|d| d.join("preferences.txt"))
-            .unwrap_or_else(|| std::env::temp_dir().join("hollow-canvas-preferences.txt"))
+            .unwrap_or_else(|| std::env::temp_dir().join("aurelia-preferences.txt"))
     }
 
     pub fn load_preferences(&mut self) {
@@ -1700,9 +1700,9 @@ impl AppState {
             match key.trim() {
                 "theme" => {
                     self.document.theme = match value {
-                        "1" => hollow_core::color::ThemeMode::Moonlit,
-                        "2" => hollow_core::color::ThemeMode::EmberGlow,
-                        _ => hollow_core::color::ThemeMode::DeepMist,
+                        "1" => aurelia_core::color::ThemeMode::Dusk,
+                        "2" => aurelia_core::color::ThemeMode::Ember,
+                        _ => aurelia_core::color::ThemeMode::Dawn,
                     };
                 }
                 "jpeg_quality" => {
@@ -1732,8 +1732,8 @@ impl AppState {
             let _ = std::fs::create_dir_all(dir);
         }
         let theme = match self.document.theme {
-            hollow_core::color::ThemeMode::Moonlit => 1,
-            hollow_core::color::ThemeMode::EmberGlow => 2,
+            aurelia_core::color::ThemeMode::Dusk => 1,
+            aurelia_core::color::ThemeMode::Ember => 2,
             _ => 0,
         };
         let mut out = String::new();

@@ -1,0 +1,18 @@
+[package]
+name = "aurelia-ui"
+version = "2.0.0"
+edition = "2021"
+description = "Immediate-mode user interface, studio panels, palette docks, and modals for Aurelia"
+
+[lib]
+test = false
+
+[dependencies]
+aurelia-core = { path = "../aurelia-core", version = "2.0.0" }
+aurelia-render = { path = "../aurelia-render", version = "2.0.0" }
+aurelia-io = { path = "../aurelia-io", version = "2.0.0" }
+egui = { workspace = true }
+rfd = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }
+ab_glyph = { workspace = true }

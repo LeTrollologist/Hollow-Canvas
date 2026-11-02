@@ -273,6 +273,69 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "aurelia-app"
+version = "2.0.0"
+dependencies = [
+ "aurelia-core",
+ "aurelia-io",
+ "aurelia-render",
+ "aurelia-ui",
+ "egui",
+ "env_logger",
+ "glam",
+ "image",
+ "log",
+]
+
+[[package]]
+name = "aurelia-core"
+version = "2.0.0"
+dependencies = [
+ "ab_glyph",
+ "glam",
+ "image",
+ "rayon",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "aurelia-io"
+version = "2.0.0"
+dependencies = [
+ "aurelia-core",
+ "flate2",
+ "image",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "aurelia-render"
+version = "2.0.0"
+dependencies = [
+ "aurelia-core",
+ "egui",
+ "glam",
+ "image",
+ "log",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "aurelia-ui"
+version = "2.0.0"
+dependencies = [
+ "ab_glyph",
+ "aurelia-core",
+ "aurelia-io",
+ "aurelia-render",
+ "egui",
+ "glam",
+ "log",
+ "rfd",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -812,69 +875,6 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
-name = "hollow-app"
-version = "1.0.4-alpha"
-dependencies = [
- "egui",
- "env_logger",
- "glam",
- "hollow-core",
- "hollow-io",
- "hollow-render",
- "hollow-ui",
- "image",
- "log",
-]
-
-[[package]]
-name = "hollow-core"
-version = "1.0.4-alpha"
-dependencies = [
- "ab_glyph",
- "glam",
- "image",
- "rayon",
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "hollow-io"
-version = "1.0.4-alpha"
-dependencies = [
- "flate2",
- "hollow-core",
- "image",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "hollow-render"
-version = "1.0.4-alpha"
-dependencies = [
- "egui",
- "glam",
- "hollow-core",
- "image",
- "log",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "hollow-ui"
-version = "1.0.4-alpha"
-dependencies = [
- "ab_glyph",
- "egui",
- "glam",
- "hollow-core",
- "hollow-io",
- "hollow-render",
- "log",
- "rfd",
-]
 
 [[package]]
 name = "icu_collections"

@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-We provide security updates and patches for the following versions of **Hollow Canvas**:
+We provide security updates and patches for the following versions of **Aurelia**:
 
 | Version | Supported          |
 | ------- | ------------------ |
@@ -24,10 +24,10 @@ We provide security updates and patches for the following versions of **Hollow C
 Starting in **v0.15.0**, all official `.vpack` release packages are cryptographically signed with our sovereign **Ed25519 publisher keypair** to guarantee supply chain integrity and eliminate tampering:
 
 - **Publisher Public Key**: `3af86cc3d8c5181d12409d73e75dc03bad704fa2946be5e04da4e57044ec5f2f`
-- **Key Asset**: `hollow-publisher.pub` (distributed alongside every release)
+- **Key Asset**: `aurelia-publisher.pub` (distributed alongside every release)
 - **Signature Verification**: VPack 2.0.0 validates the digital signature automatically on testing or extracting:
   ```bash
-  vpack test hollow-canvas-v1.0.0-alpha.1-windows-x86_64.vpack
+  vpack test aurelia-v1.0.0-alpha.1-windows-x86_64.vpack
   ```
 
 ---
@@ -56,7 +56,7 @@ Every official release distribution package (`.zip` and `.vpack`) undergoes auto
 ### How to Verify a Downloaded Release
 ```powershell
 # 1. Compute SHA-256 on Windows
-certutil -hashfile hollow-canvas-v1.0.0-alpha.1-windows-x86_64.zip SHA256
+certutil -hashfile aurelia-v1.0.0-alpha.1-windows-x86_64.zip SHA256
 
 # 2. Check the VirusTotal analysis report directly in your browser:
 # https://www.virustotal.com/gui/file/<SHA256_HASH>
@@ -66,14 +66,14 @@ certutil -hashfile hollow-canvas-v1.0.0-alpha.1-windows-x86_64.zip SHA256
 
 ## Reporting a Vulnerability
 
-The Hollow Canvas team takes the security of our application and our users seriously. If you believe you have discovered a security vulnerability in Hollow Canvas, please follow these steps:
+The Aurelia team takes the security of our application and our users seriously. If you believe you have discovered a security vulnerability in Aurelia, please follow these steps:
 
 1. **Do NOT disclose publicly**: Please do not file public GitHub issues or discuss potential vulnerabilities in public forums.
-2. **Contact Privately**: Send an email directly to the maintainer at `trollologistog@gmail.com` with the subject line `[SECURITY] Hollow Canvas Vulnerability Report`.
+2. **Contact Privately**: Send an email directly to the maintainer at `trollologistog@gmail.com` with the subject line `[SECURITY] Aurelia Vulnerability Report`.
 3. **Include Details**:
    - A detailed description of the vulnerability.
    - Steps or proof-of-concept to reproduce the issue.
-   - The version of Hollow Canvas and your OS environment.
+   - The version of Aurelia and your OS environment.
    - Potential impact of the issue.
 
 ### Response Timeline
@@ -85,9 +85,9 @@ The Hollow Canvas team takes the security of our application and our users serio
 
 ## Security Invariants & Design Principles
 
-Hollow Canvas is engineered with strict local security principles:
+Aurelia is engineered with strict local security principles:
 
-- **Memory Safety**: Hollow Canvas is implemented in 100% Rust, taking full advantage of Rust's compile-time memory safety, thread safety, and boundary checks to prevent buffer overflows and memory corruption.
-- **Offline First**: Hollow Canvas does not make outbound network connections, run background telemetry, or transmit user artwork.
-- **Deterministic File Parsing**: Project archives (`.hcv`) and imported image files are parsed using memory-safe decoders with strict bounds validation to prevent arbitrary execution or corrupted heap allocations.
+- **Memory Safety**: Aurelia is implemented in 100% Rust, taking full advantage of Rust's compile-time memory safety, thread safety, and boundary checks to prevent buffer overflows and memory corruption.
+- **Offline First**: Aurelia does not make outbound network connections, run background telemetry, or transmit user artwork.
+- **Deterministic File Parsing**: Project archives (`.aur`) and imported image files are parsed using memory-safe decoders with strict bounds validation to prevent arbitrary execution or corrupted heap allocations.
 - **Reproducible Local Pipeline**: Release builds are produced locally using the deterministic pipeline in `scripts/pipeline.py` without third-party CI/CD runner vulnerabilities.

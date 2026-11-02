@@ -1,4 +1,4 @@
-use hollow_core::document::Document;
+use aurelia_core::document::Document;
 use image::{ImageBuffer, ImageFormat, Rgba};
 use std::fs::File;
 use std::path::Path;

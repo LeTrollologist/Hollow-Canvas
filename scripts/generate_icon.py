@@ -1,119 +1,169 @@
-import math
-from PIL import Image, ImageDraw, ImageFilter
+"""Renders the Aurelia application icon (PNG master + multi-size ICO).
 
-def create_hollow_canvas_icon(size):
-    # Create image with RGBA
+Brand: golden-hour "A" prism on warm ink. Run from the repo root:
+
+    python scripts/generate_icon.py
+"""
+
+import math
+
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
+
+INK_TOP = (26, 18, 11)
+INK_BOTTOM = (11, 8, 6)
+BORDER = (62, 47, 37)
+GOLD = (246, 196, 90)
+AMBER = (232, 150, 63)
+CORAL = (228, 112, 95)
+TEAL = (63, 167, 150)
+PARCHMENT = (243, 231, 214)
+
+
+def _background(size, scale):
+    """Vertical ink gradient inside a rounded square with a hairline border."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    grad = Image.new("RGBA", (1, size), (0, 0, 0, 0))
+    for y in range(size):
+        t = y / max(1, size - 1)
+        grad.putpixel(
+            (0, y),
+            (
+                round(INK_TOP[0] + (INK_BOTTOM[0] - INK_TOP[0]) * t),
+                round(INK_TOP[1] + (INK_BOTTOM[1] - INK_TOP[1]) * t),
+                round(INK_TOP[2] + (INK_BOTTOM[2] - INK_TOP[2]) * t),
+                255,
+            ),
+        )
+    grad = grad.resize((size, size))
+
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [16 * scale, 16 * scale, size - 16 * scale, size - 16 * scale],
+        radius=108 * scale,
+        fill=255,
+    )
+    img.paste(grad, (0, 0), mask)
+    return img, mask
+
+
+def create_aurelia_icon(size):
+    scale = size / 512.0
+    img, mask = _background(size, scale)
+    draw = ImageDraw.Draw(img)
+    cx = cy = size / 2.0
+
+    # Warm ambient bloom behind the mark.
+    glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    gdraw = ImageDraw.Draw(glow)
+    gdraw.ellipse(
+        [cx - 165 * scale, cy - 150 * scale, cx + 165 * scale, cy + 180 * scale],
+        fill=(GOLD[0], GOLD[1], GOLD[2], 70),
+    )
+    glow = glow.filter(ImageFilter.GaussianBlur(48 * scale))
+    glow.putalpha(ImageChops.multiply(glow.getchannel("A"), img.getchannel("A")))
+    img = Image.alpha_composite(img, glow)
     draw = ImageDraw.Draw(img)
 
-    scale = size / 512.0
+    # Symmetry rings (mandala motif).
+    r_outer = 172 * scale
+    draw.ellipse(
+        [cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer],
+        outline=(GOLD[0], GOLD[1], GOLD[2], 90),
+        width=max(1, int(3 * scale)),
+    )
+    r_inner = 132 * scale
+    for deg in range(0, 360, 24):
+        draw.arc(
+            [cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner],
+            start=deg,
+            end=deg + 12,
+            fill=(AMBER[0], AMBER[1], AMBER[2], 130),
+            width=max(1, int(2 * scale)),
+        )
 
-    # 1. Background rounded rectangle
-    margin = 20 * scale
-    r = 100 * scale
-    box = [margin, margin, size - margin, size - margin]
-    draw.rounded_rectangle(box, radius=r, fill=(10, 15, 30, 255), outline=(35, 48, 80, 255), width=int(max(1, 5 * scale)))
+    # The "A" prism: two legs + crossbar.
+    apex = (cx, cy - 118 * scale)
+    left = (cx - 108 * scale, cy + 104 * scale)
+    right = (cx + 108 * scale, cy + 104 * scale)
+    leg_w = max(2, int(36 * scale))
+    draw.line([left, apex, right], fill=GOLD + (255,), width=leg_w, joint="curve")
+    draw.line(
+        [(cx - 46 * scale, cy + 26 * scale), (cx + 46 * scale, cy + 26 * scale)],
+        fill=AMBER + (255,),
+        width=max(2, int(24 * scale)),
+    )
 
-    # 2. Glowing background rings (Mandala / Studio motif)
-    cx, cy = size / 2, size / 2
-    r_outer = 160 * scale
-    draw.ellipse([cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer], outline=(108, 92, 231, 100), width=int(max(1, 3 * scale)))
+    # Diagonal stylus across the mark, parchment barrel with a gold grip.
+    pen = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    pdraw = ImageDraw.Draw(pen)
+    angle = math.radians(45)
+    ca, sa = math.cos(angle), math.sin(angle)
 
-    r_mid = 120 * scale
-    draw.ellipse([cx - r_mid, cy - r_mid, cx + r_mid, cy + r_mid], outline=(70, 197, 189, 130), width=int(max(1, 2 * scale)))
+    def rot(x, y):
+        dx, dy = x - cx, y - cy
+        return (cx + dx * ca - dy * sa, cy + dx * sa + dy * ca)
 
-    # 3. Dynamic Paint Spline Swoosh
-    swoosh = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    s_draw = ImageDraw.Draw(swoosh)
+    pdraw.line(
+        [rot(cx - 150 * scale, cy + 150 * scale), rot(cx + 96 * scale, cy - 40 * scale)],
+        fill=(PARCHMENT[0], PARCHMENT[1], PARCHMENT[2], 235),
+        width=max(2, int(15 * scale)),
+    )
+    grip_a, grip_b = rot(cx + 62 * scale, cy - 6 * scale), rot(cx + 108 * scale, cy - 46 * scale)
+    pdraw.line([grip_a, grip_b], fill=GOLD + (255,), width=max(2, int(21 * scale)))
+    nib = rot(cx - 178 * scale, cy + 176 * scale)
+    pdraw.polygon(
+        [
+            (nib[0] - 7 * scale, nib[1] - 7 * scale),
+            (nib[0] + 7 * scale, nib[1] + 7 * scale),
+            nib,
+        ],
+        fill=CORAL + (255,),
+    )
+    img = Image.alpha_composite(img, pen)
+    draw = ImageDraw.Draw(img)
 
-    # Cyan Paint Curve
-    points_cyan = []
-    for t in range(0, 100):
-        frac = t / 100.0
-        angle = math.pi * 0.2 + frac * math.pi * 1.2
-        radius = (90 + math.sin(frac * math.pi) * 60) * scale
-        px = cx + math.cos(angle) * radius
-        py = cy + math.sin(angle) * radius
-        points_cyan.append((px, py))
+    # Sparkles (parchment + teal) as four-point stars.
+    def sparkle(px, py, r, color):
+        draw.polygon(
+            [
+                (px, py - r),
+                (px + r * 0.34, py - r * 0.34),
+                (px + r, py),
+                (px + r * 0.34, py + r * 0.34),
+                (px, py + r),
+                (px - r * 0.34, py + r * 0.34),
+                (px - r, py),
+                (px - r * 0.34, py - r * 0.34),
+            ],
+            fill=color,
+        )
 
-    if len(points_cyan) > 1:
-        for i in range(len(points_cyan) - 1):
-            w = int(max(2, (18 - abs(i - 50) * 0.25) * scale))
-            s_draw.line([points_cyan[i], points_cyan[i+1]], fill=(70, 235, 220, 220), width=w)
+    sparkle(cx + 128 * scale, cy - 150 * scale, 26 * scale, PARCHMENT + (255,))
+    sparkle(cx - 150 * scale, cy - 96 * scale, 17 * scale, GOLD + (230,))
+    sparkle(cx + 150 * scale, cy + 118 * scale, 12 * scale, TEAL + (220,))
 
-    img = Image.alpha_composite(img, swoosh)
-
-    # 4. Stylus Pen angled at -45 deg
-    pen_layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    p_draw = ImageDraw.Draw(pen_layer)
-
-    # Calculate rotated coordinates
-    def rot(x, y, angle_rad):
-        cos_a = math.cos(angle_rad)
-        sin_a = math.sin(angle_rad)
-        dx = x - cx
-        dy = y - cy
-        return (cx + dx * cos_a - dy * sin_a, cy + dx * sin_a + dy * cos_a)
-
-    angle = -math.pi / 4.0
-
-    # Pen Body
-    body_poly = [
-        rot(cx - 12 * scale, cy - 140 * scale, angle),
-        rot(cx + 12 * scale, cy - 140 * scale, angle),
-        rot(cx + 10 * scale, cy + 80 * scale, angle),
-        rot(cx - 10 * scale, cy + 80 * scale, angle),
-    ]
-    p_draw.polygon(body_poly, fill=(28, 36, 60, 255), outline=(60, 80, 125, 255))
-
-    # Grip & Gold Ring
-    ring_poly = [
-        rot(cx - 13 * scale, cy + 30 * scale, angle),
-        rot(cx + 13 * scale, cy + 30 * scale, angle),
-        rot(cx + 13 * scale, cy + 38 * scale, angle),
-        rot(cx - 13 * scale, cy + 38 * scale, angle),
-    ]
-    p_draw.polygon(ring_poly, fill=(255, 215, 110, 255))
-
-    grip_poly = [
-        rot(cx - 13 * scale, cy + 40 * scale, angle),
-        rot(cx + 13 * scale, cy + 40 * scale, angle),
-        rot(cx + 11 * scale, cy + 90 * scale, angle),
-        rot(cx - 11 * scale, cy + 90 * scale, angle),
-    ]
-    p_draw.polygon(grip_poly, fill=(15, 20, 35, 255), outline=(70, 235, 220, 200))
-
-    # Nib Cone
-    nib_cone = [
-        rot(cx - 10 * scale, cy + 90 * scale, angle),
-        rot(cx + 10 * scale, cy + 90 * scale, angle),
-        rot(cx, cy + 145 * scale, angle),
-    ]
-    p_draw.polygon(nib_cone, fill=(50, 65, 100, 255))
-
-    # Glowing Cyan Nib Tip
-    tip_cone = [
-        rot(cx - 5 * scale, cy + 125 * scale, angle),
-        rot(cx + 5 * scale, cy + 125 * scale, angle),
-        rot(cx, cy + 152 * scale, angle),
-    ]
-    p_draw.polygon(tip_cone, fill=(120, 255, 245, 255))
-
-    # Sparkle at nib
-    sparkle_pt = rot(cx, cy + 156 * scale, angle)
-    sr = max(1.5, 5 * scale)
-    p_draw.ellipse([sparkle_pt[0] - sr, sparkle_pt[1] - sr, sparkle_pt[0] + sr, sparkle_pt[1] + sr], fill=(255, 255, 255, 255))
-
-    img = Image.alpha_composite(img, pen_layer)
+    # Hairline border on top of everything.
+    draw.rounded_rectangle(
+        [16 * scale, 16 * scale, size - 16 * scale, size - 16 * scale],
+        radius=108 * scale,
+        outline=BORDER + (255,),
+        width=max(1, int(5 * scale)),
+    )
     return img
 
-sizes = [16, 32, 48, 64, 128, 256]
-images = [create_hollow_canvas_icon(s) for s in sizes]
 
-# Save high-res master PNG
-images[-1].save("assets/icon.png", format="PNG")
-print("Saved assets/icon.png")
+def main():
+    sizes = [16, 32, 48, 64, 128, 256]
+    master = create_aurelia_icon(sizes[-1])
 
-# Save multi-res Windows ICO
-images[0].save("assets/icon.ico", format="ICO", sizes=[(s, s) for s in sizes], append_images=images[1:])
-print("Saved assets/icon.ico")
+    master.save("assets/icon.png", format="PNG")
+    print("Saved assets/icon.png (256x256)")
+
+    # Pillow derives every ICO entry from the master; `sizes` must be explicit or
+    # only a single 16x16 image is written.
+    master.save("assets/icon.ico", format="ICO", sizes=[(s, s) for s in sizes])
+    print(f"Saved assets/icon.ico ({len(sizes)} sizes)")
+
+
+if __name__ == "__main__":
+    main()

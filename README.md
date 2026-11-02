@@ -1,77 +1,77 @@
-# Hollow Canvas · Graphics Studio
+# Aurelia · Illustration & Animation Studio
 
 <div align="center">
 
-<img src="assets/banner.svg" alt="Hollow Canvas Banner" width="100%" />
+<img src="assets/banner.svg" alt="Aurelia Banner" width="100%" />
 
-**A modern, high-performance, local-first digital painting and graphics studio built with 100% pure Rust.**
+**A modern, high-performance, local-first digital illustration and animation studio built with 100% pure Rust.**
 
 <br />
 
 <!-- Tier 1: Project Metadata & Quality Assurance Badges -->
 <p align="center">
-  <a href="https://github.com/LeTrollologist/Hollow-Canvas/releases">
-    <img src="https://img.shields.io/badge/Release-v1.0.4--alpha-A89EE0?style=for-the-badge&logo=github&logoColor=0B1021&labelColor=0B1021" alt="Release" />
+  <a href="https://github.com/LeTrollologist/Aurelia/releases">
+    <img src="https://img.shields.io/badge/Release-v2.0.0-F6C45A?style=for-the-badge&logo=github&logoColor=1A120B&labelColor=1A120B" alt="Release" />
   </a>
   <a href="crates/">
-    <img src="https://img.shields.io/badge/Engine-100%25_Pure_Rust-E28BF0?style=for-the-badge&logo=rust&logoColor=0B1021&labelColor=0B1021" alt="Engine" />
+    <img src="https://img.shields.io/badge/Engine-100%25_Pure_Rust-E8963F?style=for-the-badge&logo=rust&logoColor=1A120B&labelColor=1A120B" alt="Engine" />
   </a>
-  <a href="crates/hollow-render/">
-    <img src="https://img.shields.io/badge/Renderer-Zero--Allocation_60%2B_FPS-5CE0D8?style=for-the-badge&logo=opengl&logoColor=0B1021&labelColor=0B1021" alt="Renderer" />
+  <a href="crates/aurelia-render/">
+    <img src="https://img.shields.io/badge/Renderer-Zero--Allocation_60%2B_FPS-E4705F?style=for-the-badge&logo=opengl&logoColor=1A120B&labelColor=1A120B" alt="Renderer" />
   </a>
   <a href="PRIVACY.md">
-    <img src="https://img.shields.io/badge/Privacy-Offline_%26_Zero_Telemetry-7C6EE6?style=for-the-badge&labelColor=0B1021" alt="Privacy" />
+    <img src="https://img.shields.io/badge/Privacy-Offline_%26_Zero_Telemetry-3FA796?style=for-the-badge&labelColor=1A120B" alt="Privacy" />
   </a>
-  <a href="crates/hollow-io/">
-    <img src="https://img.shields.io/badge/Format-HCV_v5_%2B_Image_Export-7EF2E8?style=for-the-badge&labelColor=0B1021" alt="Project Format" />
+  <a href="crates/aurelia-io/">
+    <img src="https://img.shields.io/badge/Format-AUR_v1_%2B_Image_Export-F3E7D6?style=for-the-badge&labelColor=1A120B" alt="Project Format" />
   </a>
   <a href="LICENSE.md">
-    <img src="https://img.shields.io/badge/License-GPL--3.0-FDCB6E?style=for-the-badge&logo=opensourceinitiative&logoColor=0B1021&labelColor=0B1021" alt="License" />
+    <img src="https://img.shields.io/badge/License-GPL--3.0-C9527F?style=for-the-badge&logo=opensourceinitiative&logoColor=1A120B&labelColor=1A120B" alt="License" />
   </a>
-  <a href="crates/hollow-core/src/tests.rs">
-    <img src="https://img.shields.io/badge/Tests-50_Passing-22C55E?style=for-the-badge&labelColor=0B1021" alt="Tests" />
+  <a href="crates/aurelia-core/src/tests.rs">
+    <img src="https://img.shields.io/badge/Tests-50_Passing-F7E08A?style=for-the-badge&labelColor=1A120B" alt="Tests" />
   </a>
 </p>
 
 <!-- Tier 2: Runtime Target & Delivery Stack -->
 <p align="center">
-  <img src="https://img.shields.io/badge/Platform-Windows_10_%2F_11_x86__64-5CE0D8?style=flat-square&labelColor=0B1021" alt="Windows 10/11 x86_64" />
+  <img src="https://img.shields.io/badge/Platform-Windows_10_%2F_11_x86__64-F6C45A?style=flat-square&labelColor=1A120B" alt="Windows 10/11 x86_64" />
   &nbsp;
-  <img src="https://img.shields.io/badge/Toolchain-Rust_1.80%2B-E28BF0?style=flat-square&logo=rust&logoColor=0B1021&labelColor=0B1021" alt="Rust 1.80+" />
+  <img src="https://img.shields.io/badge/Toolchain-Rust_1.80%2B-C9527F?style=flat-square&logo=rust&logoColor=1A120B&labelColor=1A120B" alt="Rust 1.80+" />
   &nbsp;
-  <img src="https://img.shields.io/badge/Undo-Bounded_Memory-7C6EE6?style=flat-square&labelColor=0B1021" alt="Bounded undo memory" />
+  <img src="https://img.shields.io/badge/Undo-Bounded_Memory-3FA796?style=flat-square&labelColor=1A120B" alt="Bounded undo memory" />
 </p>
 
 <p align="center">
   <a href="Cargo.toml">
-    <img src="https://img.shields.io/badge/UI-egui_0.28_%2B_Win32_GDI-7EF2E8?style=flat-square&labelColor=0B1021" alt="UI Stack" />
+    <img src="https://img.shields.io/badge/UI-egui_0.28_%2B_Win32_GDI-F3E7D6?style=flat-square&labelColor=1A120B" alt="UI Stack" />
   </a>
   &nbsp;
   <a href="https://github.com/LeTrollologist/vpack-archiver">
-    <img src="https://img.shields.io/badge/Packager-VPack_2.0.1-7C6EE6?style=flat-square&labelColor=0B1021" alt="Packager" />
+    <img src="https://img.shields.io/badge/Packager-VPack_2.0.1-3FA796?style=flat-square&labelColor=1A120B" alt="Packager" />
   </a>
   &nbsp;
   <a href="RELEASE_PROCESS.md">
-    <img src="https://img.shields.io/badge/Integrity-Ed25519_%2B_CRC--32-FDCB6E?style=flat-square&labelColor=0B1021" alt="Integrity" />
+    <img src="https://img.shields.io/badge/Integrity-Ed25519_%2B_CRC--32-E4705F?style=flat-square&labelColor=1A120B" alt="Integrity" />
   </a>
 </p>
 
 <!-- Tier 3: Interactive Quick Navigation Buttons -->
 <p align="center">
   <a href="#-installation--getting-started">
-    <img src="https://img.shields.io/badge/%E2%9A%A1_Quickstart-Run_Natively-5CE0D8?style=for-the-badge&labelColor=0B1021" alt="Quickstart" />
+    <img src="https://img.shields.io/badge/%E2%9A%A1_Quickstart-Run_Natively-F6C45A?style=for-the-badge&labelColor=1A120B" alt="Quickstart" />
   </a>
   &nbsp;
   <a href="#key-highlights">
-    <img src="https://img.shields.io/badge/%F0%9F%8E%A8_Feature_Tour-Studio_Toolset-A89EE0?style=for-the-badge&labelColor=0B1021" alt="Feature Tour" />
+    <img src="https://img.shields.io/badge/%F0%9F%8E%A8_Feature_Tour-Studio_Toolset-E8963F?style=for-the-badge&labelColor=1A120B" alt="Feature Tour" />
   </a>
   &nbsp;
   <a href="#%EF%B8%8F-keyboard-shortcuts--controls">
-    <img src="https://img.shields.io/badge/%E2%8C%A8%EF%B8%8F_Shortcuts-Full_Reference-E28BF0?style=for-the-badge&labelColor=0B1021" alt="Shortcuts" />
+    <img src="https://img.shields.io/badge/%E2%8C%A8%EF%B8%8F_Shortcuts-Full_Reference-C9527F?style=for-the-badge&labelColor=1A120B" alt="Shortcuts" />
   </a>
   &nbsp;
   <a href="ROADMAP.md">
-    <img src="https://img.shields.io/badge/%F0%9F%97%BA%EF%B8%8F_Roadmap-Whats_Next-FDCB6E?style=for-the-badge&labelColor=0B1021" alt="Roadmap" />
+    <img src="https://img.shields.io/badge/%F0%9F%97%BA%EF%B8%8F_Roadmap-Whats_Next-E4705F?style=for-the-badge&labelColor=1A120B" alt="Roadmap" />
   </a>
 </p>
 
@@ -81,14 +81,14 @@
 
 ## 🌟 Overview
 
-**Hollow Canvas** is a lightweight, studio-grade digital illustration and raster graphics workbench engineered from the ground up in Rust. Designed for artists, concept designers, and technical illustrators who demand absolute precision, low latency, and deterministic offline reliability.
+**Aurelia** is a lightweight, studio-grade digital illustration and raster graphics workbench engineered from the ground up in Rust. Designed for artists, concept designers, and technical illustrators who demand absolute precision, low latency, and deterministic offline reliability.
 
 ### Key Highlights
  
 - 🖥 **Windows-Native Architecture (Win32 + GDI, pure Rust)**: A hand-rolled `GetMessageW` message loop and `SetDIBitsToDevice` blit feed a software framebuffer; `egui` 0.28 supplies widgets and layout on top. No C++ runtime, no GPU driver dependency, no external UI framework.
   - **Zero C++ Dependencies**: 100% memory-safe Rust with instant compilation and zero OS-specific C runtime bottlenecks.
   - **Per-Monitor V2 DPI Awareness**: `SetProcessDpiAwarenessContext` plus `egui` pixels-per-point, so the interface is crisp at 125–200 % scaling instead of bitmap-stretched.
-  - **Portability-Ready Crate Split**: Windowing lives only in `hollow-app`; `hollow-core`, `hollow-render`, `hollow-io` and `hollow-ui` are platform-agnostic, so the `eframe`/`winit` port in `ROADMAP.md` is a front-end swap rather than a rewrite.
+  - **Portability-Ready Crate Split**: Windowing lives only in `aurelia-app`; `aurelia-core`, `aurelia-render`, `aurelia-io` and `aurelia-ui` are platform-agnostic, so the `eframe`/`winit` port in `ROADMAP.md` is a front-end swap rather than a rewrite.
 - 🎨 **Live Interactive Viewport with Real-Time Direct Drawing**:
   - **Direct Viewport Interaction**: Drawing, brushing, and erasing occur directly inside the `egui::CentralPanel` viewport with low-latency GPU texture streaming (`recomposite_canvas`).
   - **Dynamic Viewport Rulers & Overlays**: Real-time pixel rulers with tracking cursor ticks, configurable canvas grid, and symmetry guide axes.
@@ -107,7 +107,7 @@
 - 🎨 **Modern Studio Toolset**: Brush, Pencil, Watercolor (wet edge/falloff simulation), Chalk (grain dispersion), Spray (stochastic scatter), Smudge (directional velocity smear), Linear & Radial Gradients, Magic Wand fuzzy selection, Eraser modes (Soft, Hard 1-Bit, Color-Target), Dual-Color Vector Shapes, and Reference-layer Flood Fill.
 - 🔤 **Custom Typography & Text Engine**: Text layers rendered through `ab_glyph` with the full system font list plus direct `.ttf`/`.otf` file import, real-time font size, line spacing and letter tracking, Left/Center/Right alignment, subpixel-antialiased rasterization, and on-canvas placement/editing with per-edit undo snapshots.
 - 🧅 **Frame Animation Timeline**: Multi-frame timeline with play/pause preview, adjustable FPS and loop playback, frame add/duplicate/delete/reorder, ghost onion skinning (configurable previous/next frame counts and opacity), and <kbd>[</kbd> / <kbd>]</kbd> frame stepping.
-- 🪟 **Windows Shell Integration & Drag-and-Drop**: Registers "Open with Hollow Canvas" in the Explorer context menu for `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.ico`, `.tga`, `.tiff` and `.hcv`, with one-click register/unregister from *File → Windows Context Menu Integration…* or the `--register-shell` / `--unregister-shell` CLI flags, plus native `WM_DROPFILES` drag-and-drop file opening.
+- 🪟 **Windows Shell Integration & Drag-and-Drop**: Registers "Open with Aurelia" in the Explorer context menu for `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.ico`, `.tga`, `.tiff` and `.aur`, with one-click register/unregister from *File → Windows Context Menu Integration…* or the `--register-shell` / `--unregister-shell` CLI flags, plus native `WM_DROPFILES` drag-and-drop file opening.
 - 🔒 **Layer Alpha Lock & Clipping Masks**: Protect layer transparency (`Alpha Lock`) or clip layers directly to underlying art bounds (`Clipping Mask`).
 - 👁 **Zen / Full Canvas Mode**: Toggle all UI docks and toolbars with <kbd>Tab</kbd> for pure, distraction-free illustration with floating restore controls.
 - ✦ **New Canvas Studio**: Pre-loaded potentials (1K/2K/4K Square, 1080p/4K Displays, A4/A5 Print @ 300 DPI, Social Media Banners, Pixel Art) and custom dimensions with aspect-ratio locking.
@@ -119,7 +119,7 @@
 - ✍ **Stylus Pressure & Tilt**: Pen input is sampled through `WM_POINTER` / `GetPointerPenInfo`; real pressure drives brush size while the mouse path (and velocity dynamics) keeps working unchanged.
 - 🧠 **Memory-Bounded Undo**: The 50-step history also enforces a 512 MiB budget, evicting the oldest full-layer snapshots first so long sessions cannot balloon into multi-gigabyte RSS.
 - 📊 **Tone & Stylize Filters**: Levels (black/white/gamma), Colorize, Pixelate and Motion Blur alongside the existing blur/sharpen/grain/vignette/lens set — all with live, non-destructive previews and selection awareness.
-- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.hcv` v5) alongside Ed25519-signed `.vpack` releases.
+- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.aur`, AUR v1) alongside Ed25519-signed `.vpack` releases.
 
 ---
 
@@ -128,40 +128,40 @@
 The workspace is organized into modular, decoupled Rust crates:
 
 ```text
-Hollow Canvas/
+Aurelia/
 ├── assets/           # Application icons (SVG, ICO, PNG) and banner art
 ├── crates/
-│   ├── hollow-core/  # Core domain models, perspective geometry, affine/quad/mesh/TPS deformation, adjustment filters, layers, and rasterizers
-│   ├── hollow-render/ # Software renderer, perspective guides, texture caching, grid/ruler overlays, and UI primitives
-│   ├── hollow-io/    # Binary HCV v5 project serialization, image export, and file parsing
-│   ├── hollow-ui/    # Modern egui-based dock panels, studio viewport, tools shelf, transform studio, perspective dock, and palettes
-│   └── hollow-app/   # Win32 + GDI host: message loop, stylus sampling, autosave ticker, CLI
+│   ├── aurelia-core/  # Core domain models, perspective geometry, affine/quad/mesh/TPS deformation, adjustment filters, layers, and rasterizers
+│   ├── aurelia-render/ # Software renderer, perspective guides, texture caching, grid/ruler overlays, and UI primitives
+│   ├── aurelia-io/    # Binary AUR v1 project serialization, image export, and file parsing
+│   ├── aurelia-ui/    # Modern egui-based dock panels, studio viewport, tools shelf, transform studio, perspective dock, and palettes
+│   └── aurelia-app/   # Win32 + GDI host: message loop, stylus sampling, autosave ticker, CLI
 ```
 
 ---
 
 ## 🚀 Installation & Getting Started
 
-Hollow Canvas can be installed as a portable native binary, via the **VPack Archiver** ecosystem, or compiled directly from source.
+Aurelia can be installed as a portable native binary, via the **VPack Archiver** ecosystem, or compiled directly from source.
 
 ### Option 1: Install with VPack (Recommended)
 
 [**VPack Archiver**](https://github.com/LeTrollologist/vpack-archiver) is the high-performance universal archive manager for `.vpack` packages.
 
-1. Download [`hollow-canvas-v1.0.4-alpha-windows-x86_64.vpack`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) and [`hollow-publisher.pub`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`aurelia-v2.0.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Aurelia/releases/latest) and [`aurelia-publisher.pub`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
 2. Extract the package with `vpack`:
    ```bash
    # Extract all files
-   vpack extract hollow-canvas-v1.0.4-alpha-windows-x86_64.vpack
+   vpack extract aurelia-v2.0.0-windows-x86_64.vpack
 
    # Or extract to a custom directory
-   vpack extract hollow-canvas-v1.0.4-alpha-windows-x86_64.vpack -o ./HollowCanvas/
+   vpack extract aurelia-v2.0.0-windows-x86_64.vpack -o ./Aurelia/
    ```
 3. *(Optional)* Verify Ed25519 signature and CRC-32 integrity:
    ```bash
-   vpack test hollow-canvas-v1.0.4-alpha-windows-x86_64.vpack
+   vpack test aurelia-v2.0.0-windows-x86_64.vpack
    ```
-4. Run `hollow-canvas.exe`.
+4. Run `aurelia.exe`.
 
 ---
 
@@ -169,12 +169,12 @@ Hollow Canvas can be installed as a portable native binary, via the **VPack Arch
 
 No additional archive tools required — works with standard Windows extraction:
 
-1. Download [`hollow-canvas-v1.0.4-alpha-windows-x86_64.zip`](https://github.com/LeTrollologist/Hollow-Canvas/releases/latest) from the latest release.
+1. Download [`aurelia-v2.0.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
 2. Extract the zip file using PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\hollow-canvas-v1.0.4-alpha-windows-x86_64.zip -DestinationPath .\HollowCanvas
+   Expand-Archive -Path .\aurelia-v2.0.0-windows-x86_64.zip -DestinationPath .\Aurelia
    ```
-3. Double-click `HollowCanvas\hollow-canvas.exe` to launch immediately.
+3. Double-click `Aurelia\aurelia.exe` to launch immediately.
 
 ---
 
@@ -188,8 +188,8 @@ If you prefer building from source with full compiler optimizations:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/LeTrollologist/Hollow-Canvas.git
-   cd Hollow-Canvas
+   git clone https://github.com/LeTrollologist/Aurelia.git
+   cd Aurelia
    ```
 
 2. Run the test suite:
@@ -199,7 +199,7 @@ If you prefer building from source with full compiler optimizations:
 
 3. Build and launch:
    ```bash
-   cargo run --release -p hollow-app
+   cargo run --release -p aurelia-app
    ```
 
 ---
@@ -272,16 +272,16 @@ If you prefer building from source with full compiler optimizations:
 
 ## 🖥️ Command-Line Interface
 
-The packaged binary (`hollow-canvas.exe`; `hollow-app.exe` when built with Cargo) also exposes a headless CLI:
+The packaged binary (`aurelia.exe`; `aurelia-app.exe` when built with Cargo) also exposes a headless CLI:
 
 | Command | Description |
 | :--- | :--- |
-| `hollow-canvas.exe [FILE]` | Launch the studio, optionally opening an image or `.hcv` project immediately |
-| `hollow-canvas.exe --register-shell` | Register **Open with Hollow Canvas** in the Windows Explorer context menu |
-| `hollow-canvas.exe --unregister-shell` | Remove the Explorer context-menu association |
-| `hollow-canvas.exe export <INPUT> -o <OUTPUT> [--format png\|jpg\|webp]` | Flatten a project/image to a single image without starting the UI |
-| `hollow-canvas.exe inspect <INPUT>` | Print canvas size, active layer, theme, and the full layer stack |
-| `hollow-canvas.exe --help` | Print the CLI usage summary |
+| `aurelia.exe [FILE]` | Launch the studio, optionally opening an image or `.aur` project immediately |
+| `aurelia.exe --register-shell` | Register **Open with Aurelia** in the Windows Explorer context menu |
+| `aurelia.exe --unregister-shell` | Remove the Explorer context-menu association |
+| `aurelia.exe export <INPUT> -o <OUTPUT> [--format png\|jpg\|webp]` | Flatten a project/image to a single image without starting the UI |
+| `aurelia.exe inspect <INPUT>` | Print canvas size, active layer, theme, and the full layer stack |
+| `aurelia.exe --help` | Print the CLI usage summary |
 
 ---
 
@@ -302,7 +302,7 @@ workflow by design (see [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md)):
 
 ```bash
 make check                                            # cargo check --all-targets + workspace tests
-python scripts/pipeline.py v1.0.4-alpha --no-publish  # build, test, audit, package, sign (no upload)
+python scripts/pipeline.py v2.0.0 --no-publish  # build, test, audit, package, sign (no upload)
 ```
 
 ---

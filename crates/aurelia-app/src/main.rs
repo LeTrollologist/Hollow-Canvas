@@ -1,13 +1,13 @@
 use glam::Vec2;
-use hollow_core::brush::{BrushPoint, ToolType};
-use hollow_core::history::LayerPixelsSnapshotCommand;
-use hollow_core::rasterizer::StrokeRasterizer;
-use hollow_core::selection::SelectionMask;
-use hollow_io::export::{export_flat_image, export_flat_image_with_quality, ExportFormat};
-use hollow_io::project::load_project_file;
-use hollow_render::SoftwareRenderer;
-use hollow_ui::{
-    configure_hollow_style, render_ui, AppState, PendingFileAction,
+use aurelia_core::brush::{BrushPoint, ToolType};
+use aurelia_core::history::LayerPixelsSnapshotCommand;
+use aurelia_core::rasterizer::StrokeRasterizer;
+use aurelia_core::selection::SelectionMask;
+use aurelia_io::export::{export_flat_image, export_flat_image_with_quality, ExportFormat};
+use aurelia_io::project::load_project_file;
+use aurelia_render::SoftwareRenderer;
+use aurelia_ui::{
+    configure_aurelia_style, render_ui, AppState, PendingFileAction,
 };
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
@@ -273,9 +273,9 @@ unsafe fn set_clipboard_text(hwnd: HWND, text: &str) -> bool {
     true
 }
 
-static mut GLOBAL_APP_PTR: *mut HollowCanvasDesktopApp = std::ptr::null_mut();
+static mut GLOBAL_APP_PTR: *mut AureliaDesktopApp = std::ptr::null_mut();
 
-struct HollowCanvasDesktopApp {
+struct AureliaDesktopApp {
     state: AppState,
     renderer: SoftwareRenderer,
     egui_ctx: egui::Context,
@@ -317,7 +317,7 @@ fn hit_test_transform_handle(
     screen_pos: Vec2,
     win_w: f32,
     win_h: f32,
-) -> Option<hollow_ui::state::TransformHandle> {
+) -> Option<aurelia_ui::state::TransformHandle> {
     if !state.transform_session.is_active {
         return None;
     }
@@ -325,7 +325,7 @@ fn hit_test_transform_handle(
     let hit_dist_screen = 14.0_f32;
 
     match session.mode {
-        hollow_core::transform::TransformMode::Affine => {
+        aurelia_core::transform::TransformMode::Affine => {
             let origin = session.patch_origin;
             let pw = session.patch_w as f32;
             let ph = session.patch_h as f32;
@@ -351,21 +351,21 @@ fn hit_test_transform_handle(
             let normal = Vec2::new(-edge_dir.y, edge_dir.x);
             let rot_handle = top_mid + normal * 24.0;
             if screen_pos.distance(rot_handle) <= hit_dist_screen {
-                return Some(hollow_ui::state::TransformHandle::RotateStem);
+                return Some(aurelia_ui::state::TransformHandle::RotateStem);
             }
 
             // 2. Pivot point
             let pivot_sp = state.canvas_to_screen(session.transform.pivot + session.transform.translation, win_w, win_h);
             if screen_pos.distance(pivot_sp) <= hit_dist_screen {
-                return Some(hollow_ui::state::TransformHandle::Pivot);
+                return Some(aurelia_ui::state::TransformHandle::Pivot);
             }
 
             // 3. Corner handles
             let corner_handles = [
-                hollow_ui::state::TransformHandle::TopLeft,
-                hollow_ui::state::TransformHandle::TopRight,
-                hollow_ui::state::TransformHandle::BottomRight,
-                hollow_ui::state::TransformHandle::BottomLeft,
+                aurelia_ui::state::TransformHandle::TopLeft,
+                aurelia_ui::state::TransformHandle::TopRight,
+                aurelia_ui::state::TransformHandle::BottomRight,
+                aurelia_ui::state::TransformHandle::BottomLeft,
             ];
             for (i, &ch) in corner_handles.iter().enumerate() {
                 if screen_pos.distance(corners_screen[i]) <= hit_dist_screen {
@@ -375,10 +375,10 @@ fn hit_test_transform_handle(
 
             // 4. Midpoint handles
             let mid_handles = [
-                hollow_ui::state::TransformHandle::TopCenter,
-                hollow_ui::state::TransformHandle::MidRight,
-                hollow_ui::state::TransformHandle::BottomCenter,
-                hollow_ui::state::TransformHandle::MidLeft,
+                aurelia_ui::state::TransformHandle::TopCenter,
+                aurelia_ui::state::TransformHandle::MidRight,
+                aurelia_ui::state::TransformHandle::BottomCenter,
+                aurelia_ui::state::TransformHandle::MidLeft,
             ];
             for i in 0..4 {
                 let mid = (corners_screen[i] + corners_screen[(i + 1) % 4]) * 0.5;
@@ -393,18 +393,18 @@ fn hit_test_transform_handle(
             let local_x = src_canvas_pt.x - origin.x;
             let local_y = src_canvas_pt.y - origin.y;
             if local_x >= 0.0 && local_x <= pw && local_y >= 0.0 && local_y <= ph {
-                return Some(hollow_ui::state::TransformHandle::BodyTranslate);
+                return Some(aurelia_ui::state::TransformHandle::BodyTranslate);
             }
         }
-        hollow_core::transform::TransformMode::PerspectiveQuad => {
+        aurelia_core::transform::TransformMode::PerspectiveQuad => {
             for (i, &c) in session.quad.dst_corners.iter().enumerate() {
                 let sp = state.canvas_to_screen(c, win_w, win_h);
                 if screen_pos.distance(sp) <= hit_dist_screen {
-                    return Some(hollow_ui::state::TransformHandle::QuadCorner(i));
+                    return Some(aurelia_ui::state::TransformHandle::QuadCorner(i));
                 }
             }
         }
-        hollow_core::transform::TransformMode::MeshGrid => {
+        aurelia_core::transform::TransformMode::MeshGrid => {
             let mut best_dist = hit_dist_screen;
             let mut best_idx = None;
             for (idx, &v) in session.mesh_grid.vertices.iter().enumerate() {
@@ -416,10 +416,10 @@ fn hit_test_transform_handle(
                 }
             }
             if let Some(idx) = best_idx {
-                return Some(hollow_ui::state::TransformHandle::MeshVertex(idx));
+                return Some(aurelia_ui::state::TransformHandle::MeshVertex(idx));
             }
         }
-        hollow_core::transform::TransformMode::ThinPlateSpline => {
+        aurelia_core::transform::TransformMode::ThinPlateSpline => {
             let mut best_dist = hit_dist_screen;
             let mut best_idx = None;
             for (idx, &p) in session.tps_target_pins.iter().enumerate() {
@@ -431,7 +431,7 @@ fn hit_test_transform_handle(
                 }
             }
             if let Some(idx) = best_idx {
-                return Some(hollow_ui::state::TransformHandle::TpsPin(idx));
+                return Some(aurelia_ui::state::TransformHandle::TpsPin(idx));
             }
         }
     }
@@ -439,7 +439,7 @@ fn hit_test_transform_handle(
 }
 
 fn hit_test_text_handle(
-    state: &hollow_ui::state::AppState,
+    state: &aurelia_ui::state::AppState,
     screen_pos: glam::Vec2,
     win_w: f32,
     win_h: f32,
@@ -451,14 +451,14 @@ fn hit_test_text_handle(
     let config = layer.text.as_ref()?;
 
     let (measured_w, measured_h) = if let Some(font) = &state.text_font {
-        let lines = hollow_core::rasterizer::StrokeRasterizer::wrap_text_lines(
+        let lines = aurelia_core::rasterizer::StrokeRasterizer::wrap_text_lines(
             &config.content,
             font,
             config.font_size,
             config.letter_spacing,
             config.box_w,
         );
-        hollow_core::rasterizer::StrokeRasterizer::measure_text_lines(
+        aurelia_core::rasterizer::StrokeRasterizer::measure_text_lines(
             &lines,
             font,
             config.font_size,
@@ -495,23 +495,23 @@ fn hit_test_text_handle(
 }
 
 fn hit_test_text_layer_at(
-    state: &hollow_ui::state::AppState,
+    state: &aurelia_ui::state::AppState,
     canvas_pos: glam::Vec2,
-) -> Option<hollow_core::layer::LayerId> {
+) -> Option<aurelia_core::layer::LayerId> {
     for layer in state.document.layers.iter().rev() {
         if !layer.visible || !layer.is_text() {
             continue;
         }
         if let Some(config) = &layer.text {
             let (measured_w, measured_h) = if let Some(font) = &state.text_font {
-                let lines = hollow_core::rasterizer::StrokeRasterizer::wrap_text_lines(
+                let lines = aurelia_core::rasterizer::StrokeRasterizer::wrap_text_lines(
                     &config.content,
                     font,
                     config.font_size,
                     config.letter_spacing,
                     config.box_w,
                 );
-                hollow_core::rasterizer::StrokeRasterizer::measure_text_lines(
+                aurelia_core::rasterizer::StrokeRasterizer::measure_text_lines(
                     &lines,
                     font,
                     config.font_size,
@@ -538,7 +538,7 @@ fn hit_test_text_layer_at(
     None
 }
 
-impl HollowCanvasDesktopApp {
+impl AureliaDesktopApp {
     pub fn is_over_ui(&self, pos: Vec2) -> bool {
         let w = self.win_w as f32;
         let h = self.win_h as f32;
@@ -620,7 +620,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             // Guard unsaved work: Save / Discard / Cancel before the window dies.
             if app.state.is_dirty() {
                 let text = to_wide("This artwork has unsaved changes.\n\nSave before closing?");
-                let caption = to_wide("Hollow Canvas");
+                let caption = to_wide("Aurelia");
                 let answer = MessageBoxW(
                     hwnd,
                     text.as_ptr(),
@@ -634,7 +634,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         // Yes: quick-save when a path is known, otherwise prompt for one.
                         let saved = if app.state.document_path.is_some() {
                             app.state.quick_save()
-                        } else if let Some(path) = hollow_ui::save_project_dialog() {
+                        } else if let Some(path) = aurelia_ui::save_project_dialog() {
                             app.state.save_project_to(&path).is_ok()
                         } else {
                             false
@@ -736,28 +736,28 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 if let Some(handle) = app.state.transform_session.active_handle {
                     let delta = canvas_pos - app.state.transform_session.drag_start_canvas_pos;
                     match handle {
-                        hollow_ui::state::TransformHandle::BodyTranslate => {
+                        aurelia_ui::state::TransformHandle::BodyTranslate => {
                             app.state.transform_session.transform.translation = app.state.transform_session.initial_transform.translation + delta;
                         }
-                        hollow_ui::state::TransformHandle::Pivot => {
+                        aurelia_ui::state::TransformHandle::Pivot => {
                             let cur_pivot = app.state.transform_session.initial_transform.pivot;
                             app.state.transform_session.transform.pivot = cur_pivot + delta;
                         }
-                        hollow_ui::state::TransformHandle::RotateStem => {
+                        aurelia_ui::state::TransformHandle::RotateStem => {
                             let pivot_canvas = app.state.transform_session.transform.pivot + app.state.transform_session.transform.translation;
                             let initial_vec = app.state.transform_session.drag_start_canvas_pos - pivot_canvas;
                             let current_vec = canvas_pos - pivot_canvas;
                             let angle_diff = current_vec.y.atan2(current_vec.x) - initial_vec.y.atan2(initial_vec.x);
                             app.state.transform_session.transform.rotation_rad = app.state.transform_session.initial_transform.rotation_rad + angle_diff;
                         }
-                        hollow_ui::state::TransformHandle::TopLeft
-                        | hollow_ui::state::TransformHandle::TopRight
-                        | hollow_ui::state::TransformHandle::BottomRight
-                        | hollow_ui::state::TransformHandle::BottomLeft
-                        | hollow_ui::state::TransformHandle::TopCenter
-                        | hollow_ui::state::TransformHandle::MidRight
-                        | hollow_ui::state::TransformHandle::BottomCenter
-                        | hollow_ui::state::TransformHandle::MidLeft => {
+                        aurelia_ui::state::TransformHandle::TopLeft
+                        | aurelia_ui::state::TransformHandle::TopRight
+                        | aurelia_ui::state::TransformHandle::BottomRight
+                        | aurelia_ui::state::TransformHandle::BottomLeft
+                        | aurelia_ui::state::TransformHandle::TopCenter
+                        | aurelia_ui::state::TransformHandle::MidRight
+                        | aurelia_ui::state::TransformHandle::BottomCenter
+                        | aurelia_ui::state::TransformHandle::MidLeft => {
                             let initial_t = app.state.transform_session.initial_transform;
                             let pivot = initial_t.pivot;
                             let rot = initial_t.rotation_rad;
@@ -777,32 +777,32 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             let mut scale_y = initial_t.scale.y;
 
                             match handle {
-                                hollow_ui::state::TransformHandle::TopLeft => {
+                                aurelia_ui::state::TransformHandle::TopLeft => {
                                     scale_x = (initial_t.scale.x * half_w - local_delta.x) / half_w;
                                     scale_y = (initial_t.scale.y * half_h - local_delta.y) / half_h;
                                 }
-                                hollow_ui::state::TransformHandle::TopRight => {
+                                aurelia_ui::state::TransformHandle::TopRight => {
                                     scale_x = (initial_t.scale.x * half_w + local_delta.x) / half_w;
                                     scale_y = (initial_t.scale.y * half_h - local_delta.y) / half_h;
                                 }
-                                hollow_ui::state::TransformHandle::BottomRight => {
+                                aurelia_ui::state::TransformHandle::BottomRight => {
                                     scale_x = (initial_t.scale.x * half_w + local_delta.x) / half_w;
                                     scale_y = (initial_t.scale.y * half_h + local_delta.y) / half_h;
                                 }
-                                hollow_ui::state::TransformHandle::BottomLeft => {
+                                aurelia_ui::state::TransformHandle::BottomLeft => {
                                     scale_x = (initial_t.scale.x * half_w - local_delta.x) / half_w;
                                     scale_y = (initial_t.scale.y * half_h + local_delta.y) / half_h;
                                 }
-                                hollow_ui::state::TransformHandle::TopCenter => {
+                                aurelia_ui::state::TransformHandle::TopCenter => {
                                     scale_y = (initial_t.scale.y * half_h - local_delta.y) / half_h;
                                 }
-                                hollow_ui::state::TransformHandle::BottomCenter => {
+                                aurelia_ui::state::TransformHandle::BottomCenter => {
                                     scale_y = (initial_t.scale.y * half_h + local_delta.y) / half_h;
                                 }
-                                hollow_ui::state::TransformHandle::MidLeft => {
+                                aurelia_ui::state::TransformHandle::MidLeft => {
                                     scale_x = (initial_t.scale.x * half_w - local_delta.x) / half_w;
                                 }
-                                hollow_ui::state::TransformHandle::MidRight => {
+                                aurelia_ui::state::TransformHandle::MidRight => {
                                     scale_x = (initial_t.scale.x * half_w + local_delta.x) / half_w;
                                 }
                                 _ => {}
@@ -816,21 +816,21 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
                             app.state.transform_session.transform.scale = Vec2::new(scale_x.max(0.02), scale_y.max(0.02));
                         }
-                        hollow_ui::state::TransformHandle::QuadCorner(i) => {
+                        aurelia_ui::state::TransformHandle::QuadCorner(i) => {
                             if i < 4 {
                                 app.state.transform_session.quad.dst_corners[i] = canvas_pos;
                                 app.state.transform_session.quad.recompute();
                             }
                         }
-                        hollow_ui::state::TransformHandle::MeshVertex(idx) => {
+                        aurelia_ui::state::TransformHandle::MeshVertex(idx) => {
                             if idx < app.state.transform_session.mesh_grid.vertices.len() {
                                 app.state.transform_session.mesh_grid.vertices[idx] = canvas_pos;
                             }
                         }
-                        hollow_ui::state::TransformHandle::TpsPin(idx) => {
+                        aurelia_ui::state::TransformHandle::TpsPin(idx) => {
                             if idx < app.state.transform_session.tps_target_pins.len() {
                                 app.state.transform_session.tps_target_pins[idx] = canvas_pos;
-                                app.state.transform_session.tps = hollow_core::transform::ThinPlateSpline2D::solve(
+                                app.state.transform_session.tps = aurelia_core::transform::ThinPlateSpline2D::solve(
                                     &app.state.transform_session.tps_target_pins,
                                     &app.state.transform_session.tps_source_pins,
                                 );
@@ -930,7 +930,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 } else if tool.is_shape_tool() || tool == ToolType::Marquee || tool == ToolType::Crop || tool == ToolType::Polygon || tool == ToolType::Eyedropper || tool == ToolType::Fill {
                     // Explicitly NEVER paint continuous brush strokes when non-freehand tools are active
                 } else if tool.is_freehand_stroke_tool() {
-                    let effective_canvas_pos = if app.state.perspective.snap_enabled && app.state.perspective.p_type != hollow_core::perspective::PerspectiveType::None {
+                    let effective_canvas_pos = if app.state.perspective.snap_enabled && app.state.perspective.p_type != aurelia_core::perspective::PerspectiveType::None {
                         if let Some(&first_pt) = app.stroke_points.first() {
                             let (snapped_pt, axis) = app.state.perspective.constrain_stroke_point(
                                 first_pt.position,
@@ -1106,7 +1106,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.is_drawing_on_canvas = false;
                     InvalidateRect(hwnd, std::ptr::null(), 0);
                     return 0;
-                } else if app.state.transform_session.mode == hollow_core::transform::TransformMode::ThinPlateSpline {
+                } else if app.state.transform_session.mode == aurelia_core::transform::TransformMode::ThinPlateSpline {
                     app.state.add_tps_pin(canvas_pos);
                     app.is_drawing_on_canvas = false;
                     InvalidateRect(hwnd, std::ptr::null(), 0);
@@ -1134,7 +1134,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 if cx >= 0 && cx < app.state.document.width as i32 && cy >= 0 && cy < app.state.document.height as i32 {
                     let idx = ((cy * app.state.document.width as i32 + cx) * 4) as usize;
                     if idx + 3 < flat.len() {
-                        let picked = hollow_core::color::Color::from_rgba8(flat[idx], flat[idx + 1], flat[idx + 2], flat[idx + 3]);
+                        let picked = aurelia_core::color::Color::from_rgba8(flat[idx], flat[idx + 1], flat[idx + 2], flat[idx + 3]);
                         app.state.brush.primary_color = picked;
                         app.state.push_color_history(picked);
                         app.state.set_status(format!("Sampled color: {}", picked.to_hex()));
@@ -1205,8 +1205,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             if let Some(cfg) = &layer.text {
                                 let font = app.state.text_font.as_ref();
                                 let (mw, mh) = if let Some(f) = font {
-                                    let lines = hollow_core::rasterizer::StrokeRasterizer::wrap_text_lines(&cfg.content, f, cfg.font_size, cfg.letter_spacing, cfg.box_w);
-                                    hollow_core::rasterizer::StrokeRasterizer::measure_text_lines(&lines, f, cfg.font_size, cfg.line_spacing, cfg.letter_spacing)
+                                    let lines = aurelia_core::rasterizer::StrokeRasterizer::wrap_text_lines(&cfg.content, f, cfg.font_size, cfg.letter_spacing, cfg.box_w);
+                                    aurelia_core::rasterizer::StrokeRasterizer::measure_text_lines(&lines, f, cfg.font_size, cfg.line_spacing, cfg.letter_spacing)
                                 } else {
                                     (120.0, cfg.font_size)
                                 };
@@ -1230,8 +1230,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         if let Some(cfg) = &layer.text {
                             let font = app.state.text_font.as_ref();
                             let (mw, mh) = if let Some(f) = font {
-                                let lines = hollow_core::rasterizer::StrokeRasterizer::wrap_text_lines(&cfg.content, f, cfg.font_size, cfg.letter_spacing, cfg.box_w);
-                                hollow_core::rasterizer::StrokeRasterizer::measure_text_lines(&lines, f, cfg.font_size, cfg.line_spacing, cfg.letter_spacing)
+                                let lines = aurelia_core::rasterizer::StrokeRasterizer::wrap_text_lines(&cfg.content, f, cfg.font_size, cfg.letter_spacing, cfg.box_w);
+                                aurelia_core::rasterizer::StrokeRasterizer::measure_text_lines(&lines, f, cfg.font_size, cfg.line_spacing, cfg.letter_spacing)
                             } else {
                                 (120.0, cfg.font_size)
                             };
@@ -1260,7 +1260,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 if cx >= 0 && cx < app.state.document.width as i32 && cy >= 0 && cy < app.state.document.height as i32 {
                     let idx = ((cy * app.state.document.width as i32 + cx) * 4) as usize;
                     if idx + 3 < flat.len() {
-                        let picked = hollow_core::color::Color::from_rgba8(flat[idx], flat[idx + 1], flat[idx + 2], flat[idx + 3]);
+                        let picked = aurelia_core::color::Color::from_rgba8(flat[idx], flat[idx + 1], flat[idx + 2], flat[idx + 3]);
                         app.state.brush.primary_color = picked;
                         app.state.push_color_history(picked);
                     }
@@ -1464,7 +1464,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 if let Some(layer) = app.state.document.active_layer() {
                     let current_offset = (layer.offset_x, layer.offset_y);
                     if current_offset != app.before_move_offset {
-                        let cmd = Box::new(hollow_core::history::TranslateLayerCommand {
+                        let cmd = Box::new(aurelia_core::history::TranslateLayerCommand {
                             layer_id: layer.id,
                             before_offset: app.before_move_offset,
                             after_offset: current_offset,
@@ -1759,8 +1759,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     let sel = app.state.selection.clone();
                     if let Some(layer) = app.state.document.active_layer_mut() {
                         let before = layer.pixels.clone();
-                        hollow_core::filter::filter_invert(&mut layer.pixels, w, h, sel.as_ref());
-                        let cmd = Box::new(hollow_core::history::LayerPixelsSnapshotCommand {
+                        aurelia_core::filter::filter_invert(&mut layer.pixels, w, h, sel.as_ref());
+                        let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                             layer_id: layer.id,
                             description: "Invert Colors",
                             before_pixels: before,
@@ -1966,7 +1966,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 // 2. Render canvas layer composite with up-to-date state, tracing paper, and onion skinning
                 let tracing_cfg = if app.state.tracing_enabled {
                     app.state.reference_image.as_ref().map(|(w, h, rgba)| {
-                        hollow_render::TracingReferenceConfig {
+                        aurelia_render::TracingReferenceConfig {
                             width: *w,
                             height: *h,
                             rgba: rgba.as_slice(),
@@ -2011,7 +2011,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     }
 
                     for (buf, tint, is_prev) in &onion_skin_buffers {
-                        onion_skins.push(hollow_render::OnionSkinFrame {
+                        onion_skins.push(aurelia_render::OnionSkinFrame {
                             rgba: buf.as_slice(),
                             tint_r: tint[0],
                             tint_g: tint[1],
@@ -2124,7 +2124,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
 
                 // 4.6 Render Visual Perspective Guides & Horizon line if enabled
-                if app.state.perspective.show_guides && app.state.perspective.p_type != hollow_core::perspective::PerspectiveType::None {
+                if app.state.perspective.show_guides && app.state.perspective.p_type != aurelia_core::perspective::PerspectiveType::None {
                     app.renderer.render_perspective_guides(
                         &mut app.buffer,
                         app.win_w,
@@ -2201,7 +2201,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             if let Some(action) = app.state.pending_file_action.take() {
                 match action {
                     PendingFileAction::NewCanvas(w, h, bg_mode) => {
-                        let mut doc = hollow_core::document::Document::new(w, h);
+                        let mut doc = aurelia_core::document::Document::new(w, h);
                         match bg_mode {
                             1 => { // Pure white
                                 doc.is_transparent = false;
@@ -2228,7 +2228,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         let target = app.state.document_path.clone();
                         let path = match target {
                             Some(p) => Some(p),
-                            None => hollow_ui::save_project_dialog(),
+                            None => aurelia_ui::save_project_dialog(),
                         };
                         match path {
                             Some(p) => {
@@ -2240,14 +2240,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         }
                     }
                     PendingFileAction::SaveProjectAs => {
-                        if let Some(path) = hollow_ui::save_project_dialog() {
+                        if let Some(path) = aurelia_ui::save_project_dialog() {
                             if let Err(e) = app.state.save_project_to(&path) {
                                 app.state.set_status(format!("Save error: {}", e));
                             }
                         }
                     }
                     PendingFileAction::OpenProject => {
-                        if let Some(path) = hollow_ui::open_project_dialog() {
+                        if let Some(path) = aurelia_ui::open_project_dialog() {
                             match load_project_file(&path) {
                                 Ok(doc) => {
                                     app.state.document = doc;
@@ -2268,7 +2268,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             2 => (ExportFormat::WebP, "webp", "WebP Image (*.webp)"),
                             _ => (ExportFormat::Png, "png", "PNG Image (*.png)"),
                         };
-                        if let Some(path) = hollow_ui::export_image_dialog(extension, label) {
+                        if let Some(path) = aurelia_ui::export_image_dialog(extension, label) {
                             match export_flat_image_with_quality(
                                 &app.state.document,
                                 &path,
@@ -2286,7 +2286,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         }
                     }
                     PendingFileAction::OpenReferenceImage => {
-                        if let Some(path) = hollow_ui::open_image_dialog() {
+                        if let Some(path) = aurelia_ui::open_image_dialog() {
                             if let Ok(img) = image::open(&path) {
                                 let rgba = img.to_rgba8();
                                 let (w, h) = rgba.dimensions();
@@ -2310,7 +2310,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             if len > 0 {
                 let path_str = String::from_utf16_lossy(&buf[..len as usize]);
                 let path = PathBuf::from(&path_str);
-                if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("hcv")).unwrap_or(false) {
+                if is_project_path(&path) {
                     match load_project_file(&path) {
                         Ok(doc) => {
                             app.state.document = doc;
@@ -2327,7 +2327,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 } else if let Ok(img) = image::open(&path) {
                     let rgba = img.to_rgba8();
                     let (w, h) = rgba.dimensions();
-                    let mut doc = hollow_core::document::Document::new(w, h);
+                    let mut doc = aurelia_core::document::Document::new(w, h);
                     doc.is_transparent = true;
                     if let Some(layer) = doc.active_layer_mut() {
                         layer.name = path.file_name().and_then(|n| n.to_str()).unwrap_or("Layer 1").to_string();
@@ -2349,6 +2349,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
     }
 }
 
+/// True for Aurelia project files (`.aur`) and legacy Hollow Canvas projects (`.hcv`).
+fn is_project_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("aur") || e.eq_ignore_ascii_case("hcv"))
+        .unwrap_or(false)
+}
+
 fn to_wide(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(Some(0)).collect()
 }
@@ -2359,20 +2367,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // CLI Subcommands & Flags
     if args.len() > 1 {
         if args[1] == "--register-shell" {
-            match hollow_ui::register_shell_associations() {
+            match aurelia_ui::register_shell_associations() {
                 Ok(msg) => println!("{}", msg),
                 Err(err) => eprintln!("Error: {}", err),
             }
             return Ok(());
         } else if args[1] == "--unregister-shell" {
-            match hollow_ui::unregister_shell_associations() {
+            match aurelia_ui::unregister_shell_associations() {
                 Ok(msg) => println!("{}", msg),
                 Err(err) => eprintln!("Error: {}", err),
             }
             return Ok(());
         } else if args[1] == "export" {
             if args.len() < 4 {
-                println!("Usage: hollow-app export <INPUT> -o <OUTPUT> [--format png|jpg|webp]");
+                println!("Usage: aurelia export <INPUT> -o <OUTPUT> [--format png|jpg|webp]");
                 return Ok(());
             }
             let input = PathBuf::from(&args[2]);
@@ -2404,13 +2412,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         } else if args[1] == "inspect" {
             if args.len() < 3 {
-                println!("Usage: hollow-app inspect <INPUT>");
+                println!("Usage: aurelia inspect <INPUT>");
                 return Ok(());
             }
             let input = PathBuf::from(&args[2]);
             let doc = load_project_file(&input)?;
             println!("==========================================");
-            println!(" Hollow Canvas Project: {}", input.display());
+            println!(" Aurelia Project: {}", input.display());
             println!("==========================================");
             println!("Canvas Size: {} x {}", doc.width, doc.height);
             println!("Active Layer ID: {}", doc.active_layer_id);
@@ -2427,18 +2435,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("==========================================");
             return Ok(());
         } else if args[1] == "--help" || args[1] == "-h" {
-            println!("Hollow Canvas · Native Windows Graphics Application");
+            println!("Aurelia · Native Windows Graphics Application");
             println!();
-            println!("Usage: hollow-app [FILE]");
-            println!("       hollow-app --register-shell     (Register Windows Explorer context menu)");
-            println!("       hollow-app --unregister-shell   (Unregister Windows Explorer context menu)");
-            println!("       hollow-app export <INPUT> -o <OUTPUT> [--format png|jpg|webp]");
-            println!("       hollow-app inspect <INPUT>");
+            println!("Usage: aurelia [FILE]");
+            println!("       aurelia --register-shell     (Register Windows Explorer context menu)");
+            println!("       aurelia --unregister-shell   (Unregister Windows Explorer context menu)");
+            println!("       aurelia export <INPUT> -o <OUTPUT> [--format png|jpg|webp]");
+            println!("       aurelia inspect <INPUT>");
             return Ok(());
         }
     }
 
-    println!("=== HOLLOW CANVAS · GRAPHICS STUDIO ===");
+    println!("=== AURELIA · ILLUSTRATION & ANIMATION STUDIO ===");
 
     // Opt into per-monitor V2 DPI awareness before any window exists, so GDI
     // surfaces are not bitmap-stretched on scaled displays. Failure is harmless
@@ -2453,7 +2461,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app_state = if args.len() > 1 && !args[1].starts_with('-') {
         let initial_file = PathBuf::from(&args[1]);
-        if initial_file.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("hcv")).unwrap_or(false) {
+        if is_project_path(&initial_file) {
             match load_project_file(&initial_file) {
                 Ok(doc) => {
                     let mut s = AppState::from_document(doc);
@@ -2474,7 +2482,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(img) => {
                     let rgba = img.to_rgba8();
                     let (w, h) = rgba.dimensions();
-                    let mut doc = hollow_core::document::Document::new(w, h);
+                    let mut doc = aurelia_core::document::Document::new(w, h);
                     doc.is_transparent = true;
                     if let Some(layer) = doc.active_layer_mut() {
                         layer.name = initial_file.file_name().and_then(|n| n.to_str()).unwrap_or("Layer 1").to_string();
@@ -2514,7 +2522,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "A crash-recovery snapshot was found:\n{}\n\nRestore it?\n\nYes = open the snapshot\nNo = discard it and keep the saved file",
                 recovery_path.display()
             ));
-            let caption = to_wide("Hollow Canvas · Recover artwork");
+            let caption = to_wide("Aurelia · Recover artwork");
             let answer = unsafe {
                 MessageBoxW(
                     std::ptr::null_mut(),
@@ -2543,9 +2551,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let egui_ctx = egui::Context::default();
     egui_ctx.set_pixels_per_point(dpi_scale);
-    configure_hollow_style(&egui_ctx, app_state.theme_accent_color());
+    configure_aurelia_style(&egui_ctx, app_state.theme_accent_color());
 
-    let mut desktop_app = Box::new(HollowCanvasDesktopApp {
+    let mut desktop_app = Box::new(AureliaDesktopApp {
         state: app_state,
         renderer: SoftwareRenderer::new(),
         egui_ctx,
@@ -2582,8 +2590,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         GLOBAL_APP_PTR = &mut *desktop_app;
 
         let h_instance = GetModuleHandleW(std::ptr::null());
-        let class_name = to_wide("HollowCanvasStudio");
-        let title = to_wide("Hollow Canvas · Graphics Studio");
+        let class_name = to_wide("AureliaStudio");
+        let title = to_wide("Aurelia · Illustration & Animation Studio");
 
         let idc_arrow = 32512 as usize as *const u16;
         let h_cursor = LoadCursorW(std::ptr::null_mut(), idc_arrow);
@@ -2657,7 +2665,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         ShowWindow(hwnd, 5); // SW_SHOW
         UpdateWindow(hwnd);
-        println!("Hollow Canvas Window running successfully.");
+        println!("Aurelia Window running successfully.");
 
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
@@ -2668,7 +2676,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let app_ptr = GLOBAL_APP_PTR;
             if !app_ptr.is_null() {
                 let app = &mut *app_ptr;
-                let title = format!("Hollow Canvas · {}", app.state.document_title());
+                let title = format!("Aurelia · {}", app.state.document_title());
                 if title != app.last_window_title {
                     app.last_window_title = title.clone();
                     let wide = to_wide(&title);

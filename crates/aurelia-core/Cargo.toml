@@ -1,8 +1,8 @@
 [package]
-name = "hollow-core"
-version = "1.0.4-alpha"
+name = "aurelia-core"
+version = "2.0.0"
 edition = "2021"
-description = "Core graphics domain model, layers, rasterizer, blend modes, and history engine for Hollow Canvas"
+description = "Core graphics domain model, layers, rasterizer, blend modes, and history engine for Aurelia"
 
 [dependencies]
 glam = { workspace = true }

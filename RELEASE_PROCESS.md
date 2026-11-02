@@ -1,13 +1,13 @@
-# Hollow Canvas: Local Release & Packaging Process
+# Aurelia: Local Release & Packaging Process
 
-This document outlines the standardized, local-first release pipeline for Hollow Canvas. All builds, tests, packaging, security scans, VirusTotal verification, and publishing operations run deterministically on the local developer machine without relying on external CI/CD services.
+This document outlines the standardized, local-first release pipeline for Aurelia. All builds, tests, packaging, security scans, VirusTotal verification, and publishing operations run deterministically on the local developer machine without relying on external CI/CD services.
 
 ---
 
 ## 1. Overview & Core Principles
 
 1. **No GitHub Actions**: Everything is built, tested, scanned, and published locally via `scripts/pipeline.py` and the `gh` CLI.
-2. **Canonical Asset Naming**: All assets follow `hollow-canvas-v{VER}-{platform}-{arch}.{ext}`.
+2. **Canonical Asset Naming**: All assets follow `aurelia-v{VER}-{platform}-{arch}.{ext}`.
 3. **Clean Distribution Bundles**: Only standalone archives (`.zip` and `.vpack`), `SHA256SUMS.txt`, and security audit summaries (`virustotal-summary.txt`) are published as release assets.
 4. **VPack Integration**: Every release includes a high-compression `.vpack` archive compatible with the `vpack` archiver.
 5. **VirusTotal & Binary Hygiene**: Every release zip is submitted for multi-engine antivirus verification and linked in release notes.
@@ -19,7 +19,7 @@ This document outlines the standardized, local-first release pipeline for Hollow
 | Stage | Operation | Description |
 | :--- | :--- | :--- |
 | **`preflight`** | Tool verification | Confirms `rustc`, `cargo`, `gh`, and `vpack` are present |
-| **`build`** | Optimized compilation | `cargo build --release -p hollow-app` |
+| **`build`** | Optimized compilation | `cargo build --release -p aurelia-app` |
 | **`test`** | Test execution | `cargo test --workspace` |
 | **`security`** | Audit logs | Generates `dist/v{VER}/audit/security-audit.txt` |
 | **`package`** | Asset bundling | Generates `.zip` and `.vpack` archives |
@@ -40,21 +40,21 @@ $env:VIRUSTOTAL_API_KEY = "your-virustotal-api-key-here"
 
 ### Full Release (Build, Test, Package, VirusTotal & Publish)
 ```bash
-python scripts/pipeline.py v1.0.0-alpha.1
+python scripts/pipeline.py v2.0.0
 ```
 *or via Make:*
 ```bash
-make release TAG=v1.0.0-alpha.1
+make release TAG=v2.0.0
 ```
 
 ### Local Build & Package Only (No Upload)
 ```bash
-python scripts/pipeline.py v1.0.0-alpha.1 --no-publish
+python scripts/pipeline.py v2.0.0 --no-publish
 ```
 
 ### Create as GitHub Draft Release
 ```bash
-python scripts/pipeline.py v1.0.0-alpha.1 --draft
+python scripts/pipeline.py v2.0.0 --draft
 ```
 
 ---
@@ -62,11 +62,11 @@ python scripts/pipeline.py v1.0.0-alpha.1 --draft
 ## 4. Output Layout (`dist/`)
 
 ```text
-dist/v1.0.0-alpha.1/
+dist/v2.0.0/
 ├── windows-staging/                                # Temporary staging folder
-├── hollow-canvas-v1.0.0-alpha.1-windows-x86_64.zip # Standard Zip distribution
-├── hollow-canvas-v1.0.0-alpha.1-windows-x86_64.vpack # Signed VPack distribution
-├── hollow-publisher.pub                            # Ed25519 publisher public key
+├── aurelia-v2.0.0-windows-x86_64.zip # Standard Zip distribution
+├── aurelia-v2.0.0-windows-x86_64.vpack # Signed VPack distribution
+├── aurelia-publisher.pub                            # Ed25519 publisher public key
 ├── SHA256SUMS.txt                                  # SHA-256 Checksums
 ├── release_notes.md                                # Release markdown body
 └── audit/
@@ -83,10 +83,10 @@ dist/v1.0.0-alpha.1/
 To verify released packages:
 ```bash
 # Check SHA-256
-certutil -hashfile hollow-canvas-v1.0.0-alpha.1-windows-x86_64.zip SHA256
+certutil -hashfile aurelia-v2.0.0-windows-x86_64.zip SHA256
 
 # Verify VPACK CRC-32 integrity and Ed25519 digital signature
-vpack test hollow-canvas-v1.0.0-alpha.1-windows-x86_64.vpack
+vpack test aurelia-v2.0.0-windows-x86_64.vpack
 
 # Inspect VirusTotal Analysis
 # https://www.virustotal.com/gui/file/<SHA256_HASH>
@@ -99,13 +99,13 @@ vpack test hollow-canvas-v1.0.0-alpha.1-windows-x86_64.vpack
 ### Option A: Via VPack Archiver
 ```bash
 # Extract all contents
-vpack extract hollow-canvas-v1.0.0-alpha.1-windows-x86_64.vpack
+vpack extract aurelia-v2.0.0-windows-x86_64.vpack
 
 # Or extract to a specific folder
-vpack extract hollow-canvas-v1.0.0-alpha.1-windows-x86_64.vpack -o ./HollowCanvas/
+vpack extract aurelia-v2.0.0-windows-x86_64.vpack -o ./Aurelia/
 ```
 
 ### Option B: Via Native Windows Zip
 ```powershell
-Expand-Archive -Path .\hollow-canvas-v1.0.0-alpha.1-windows-x86_64.zip -DestinationPath .\HollowCanvas
+Expand-Archive -Path .\aurelia-v2.0.0-windows-x86_64.zip -DestinationPath .\Aurelia
 ```

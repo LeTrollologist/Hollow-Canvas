@@ -26,7 +26,7 @@ impl Document {
             active_layer_id: first_id,
             background_value: 255, // Default pristine white studio canvas paper
             is_transparent: false,
-            theme: ThemeMode::DeepMist,
+            theme: ThemeMode::Dawn,
             next_layer_id: 2,
         }
     }

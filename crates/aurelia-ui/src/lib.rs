@@ -11,5 +11,5 @@ pub use dialogs::{
 };
 pub use shell::{is_shell_registered, register_shell_associations, unregister_shell_associations};
 pub use state::{AppState, PendingFileAction};
-pub use style::configure_hollow_style;
+pub use style::configure_aurelia_style;
 pub use ui::render_ui;

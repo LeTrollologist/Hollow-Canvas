@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "crates/hollow-core",
-    "crates/hollow-render",
-    "crates/hollow-io",
-    "crates/hollow-ui",
-    "crates/hollow-app",
+    "crates/aurelia-core",
+    "crates/aurelia-render",
+    "crates/aurelia-io",
+    "crates/aurelia-ui",
+    "crates/aurelia-app",
 ]
 resolver = "2"
 

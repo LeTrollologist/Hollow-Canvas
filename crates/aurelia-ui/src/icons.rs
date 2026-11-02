@@ -1,5 +1,5 @@
 use egui::{pos2, Color32, Painter, Rect, Stroke, Vec2};
-use hollow_core::brush::ToolType;
+use aurelia_core::brush::ToolType;
 
 /// Draws a crisp, vector-rendered studio tool icon inside the given bounding rectangle.
 pub fn draw_tool_icon(painter: &Painter, rect: Rect, tool: ToolType, color: Color32, is_active: bool) {

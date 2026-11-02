@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::project::{load_project_from_reader, save_project_to_writer};
-    use hollow_core::document::Document;
+    use aurelia_core::document::Document;
     use std::io::Cursor;
 
     #[test]
@@ -11,7 +11,7 @@ mod tests {
         if let Some(l2) = doc.get_layer_mut(id2) {
             l2.set_pixel(10, 10, [168, 159, 216, 255]);
             l2.opacity = 0.85;
-            l2.blend_mode = hollow_core::blend::BlendMode::Overlay;
+            l2.blend_mode = aurelia_core::blend::BlendMode::Overlay;
         }
 
         let mut buffer = Cursor::new(Vec::new());
@@ -25,7 +25,7 @@ mod tests {
         assert_eq!(loaded_doc.layers.len(), 2);
         assert_eq!(loaded_doc.layers[1].name, "Overlay Layer");
         assert_eq!(loaded_doc.layers[1].opacity, 0.85);
-        assert_eq!(loaded_doc.layers[1].blend_mode, hollow_core::blend::BlendMode::Overlay);
+        assert_eq!(loaded_doc.layers[1].blend_mode, aurelia_core::blend::BlendMode::Overlay);
         assert_eq!(loaded_doc.layers[1].get_pixel(10, 10).unwrap(), [168, 159, 216, 255]);
     }
 
@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn test_binary_hcv_adjustment_layer_roundtrip() {
-        use hollow_core::layer::AdjustmentType;
+        use aurelia_core::layer::AdjustmentType;
 
         let mut doc = Document::new(32, 32);
         let adj_id = doc.add_adjustment_layer(
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn test_binary_hcv_text_layer_roundtrip() {
-        use hollow_core::layer::TextLayerConfig;
+        use aurelia_core::layer::TextLayerConfig;
 
         let mut doc = Document::new(48, 48);
         let config = TextLayerConfig {
@@ -117,7 +117,7 @@ mod tests {
             font_family: "Roboto".to_string(),
             font_size: 16.0,
             color: [100, 200, 255, 255],
-            align: hollow_core::brush::TextAlign::Right,
+            align: aurelia_core::brush::TextAlign::Right,
             line_spacing: 1.25,
             letter_spacing: 1.5,
             box_w: 40.0,
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(loaded_cfg.font_family, "Roboto");
         assert_eq!(loaded_cfg.font_size, 16.0);
         assert_eq!(loaded_cfg.color, [100, 200, 255, 255]);
-        assert_eq!(loaded_cfg.align, hollow_core::brush::TextAlign::Right);
+        assert_eq!(loaded_cfg.align, aurelia_core::brush::TextAlign::Right);
         assert_eq!(loaded_cfg.line_spacing, 1.25);
         assert_eq!(loaded_cfg.letter_spacing, 1.5);
         assert_eq!(loaded_cfg.box_w, 40.0);
@@ -157,7 +157,7 @@ mod tests {
     fn test_atomic_save_replaces_file_and_leaves_no_temp() {
         let dir = std::env::temp_dir().join(format!("hc-atomic-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("art.hcv");
+        let path = dir.join("art.aur");
 
         let doc = Document::new(16, 16);
         crate::project::save_project_file(&doc, &path).unwrap();

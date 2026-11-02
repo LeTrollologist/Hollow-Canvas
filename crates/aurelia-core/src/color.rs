@@ -15,7 +15,13 @@ impl Color {
     pub const GREEN: Self = Self::new(0.0, 1.0, 0.0, 1.0);
     pub const BLUE: Self = Self::new(0.0, 0.0, 1.0, 1.0);
     pub const TRANSPARENT: Self = Self::new(0.0, 0.0, 0.0, 0.0);
-    pub const HOLLOW_PURPLE: Self = Self::new(0.6588, 0.6235, 0.8471, 1.0); // #a89fd8
+    pub const BRAND_GOLD: Self = Self::new(0.9647, 0.7686, 0.3529, 1.0); // #F6C45A
+    pub const BRAND_AMBER: Self = Self::new(0.9098, 0.5882, 0.2471, 1.0); // #E8963F
+    pub const BRAND_CORAL: Self = Self::new(0.8941, 0.4392, 0.3725, 1.0); // #E4705F
+    pub const BRAND_ROSE: Self = Self::new(0.7882, 0.3216, 0.4980, 1.0); // #C9527F
+    pub const BRAND_TEAL: Self = Self::new(0.2471, 0.6549, 0.5882, 1.0); // #3FA796
+    pub const INK: Self = Self::new(0.0431, 0.0314, 0.0235, 1.0); // #0B0806
+    pub const PARCHMENT: Self = Self::new(0.9529, 0.9059, 0.8392, 1.0); // #F3E7D6
 
     pub fn lerp(&self, other: Self, t: f32) -> Self {
         let t = t.clamp(0.0, 1.0);
@@ -174,30 +180,42 @@ impl Color {
 
 impl Default for Color {
     fn default() -> Self {
-        Self::HOLLOW_PURPLE
+        Self::BRAND_GOLD
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeMode {
-    DeepMist,
-    Moonlit,
-    EmberGlow,
+    /// Golden-hour default: amber/gold accents on warm ink.
+    Dawn,
+    /// Cooler evening variant: rose accents.
+    Dusk,
+    /// High-contrast warm variant: coral accents.
+    Ember,
 }
 
 impl ThemeMode {
     pub fn accent_color(&self) -> Color {
         match self {
-            Self::DeepMist => Color::from_hex("#a89fd8").unwrap(),
-            Self::Moonlit => Color::from_hex("#7eb8f7").unwrap(),
-            Self::EmberGlow => Color::from_hex("#f0a96a").unwrap(),
+            Self::Dawn => Color::BRAND_GOLD,
+            Self::Dusk => Color::BRAND_ROSE,
+            Self::Ember => Color::BRAND_CORAL,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Dawn => "Aurelia Dawn",
+            Self::Dusk => "Aurelia Dusk",
+            Self::Ember => "Aurelia Ember",
         }
     }
 }
 
+/// Aurelia studio palette: warm ink darks, gold/amber primaries, teal complement.
 pub const DEFAULT_PALETTE: &[&str] = &[
-    "#ffffff", "#d0d8f0", "#a89fd8", "#7c6fb0", "#453575", "#130f30",
-    "#7eb8f7", "#38bdf8", "#22d3ee", "#2dd4bf", "#4ade80", "#a3e635",
-    "#fdba74", "#f97316", "#f87171", "#e879f9", "#c084fc", "#818cf8",
-    "#fef08a", "#fcd34d", "#6ee7b7", "#f0abfc", "#f9a8d4", "#060810",
+    "#ffffff", "#f3e7d6", "#e6d3b3", "#d4b483", "#b08d57", "#6b4f32", "#2a201a",
+    "#f6c45a", "#e8963f", "#e4705f", "#c9527f", "#9c3d54", "#6d2b3f", "#3fa796",
+    "#2f7d74", "#1f5c55", "#a8d5c9", "#7fb3a6", "#f7e08a", "#f2b95c", "#d98c4a",
+    "#bf6b3f", "#8c4a2f", "#0b0806",
 ];
