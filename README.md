@@ -11,7 +11,7 @@
 <!-- Tier 1: Project Metadata & Quality Assurance Badges -->
 <p align="center">
   <a href="https://github.com/LeTrollologist/Aurelia/releases">
-    <img src="https://img.shields.io/badge/Release-v2.0.0-F6C45A?style=for-the-badge&logo=github&logoColor=1A120B&labelColor=1A120B" alt="Release" />
+    <img src="https://img.shields.io/badge/Release-v2.1.0-F6C45A?style=for-the-badge&logo=github&logoColor=1A120B&labelColor=1A120B" alt="Release" />
   </a>
   <a href="crates/">
     <img src="https://img.shields.io/badge/Engine-100%25_Pure_Rust-E8963F?style=for-the-badge&logo=rust&logoColor=1A120B&labelColor=1A120B" alt="Engine" />
@@ -47,12 +47,12 @@
     <img src="https://img.shields.io/badge/UI-egui_0.28_%2B_Win32_GDI-F3E7D6?style=flat-square&labelColor=1A120B" alt="UI Stack" />
   </a>
   &nbsp;
-  <a href="https://github.com/LeTrollologist/vpack-archiver">
-    <img src="https://img.shields.io/badge/Packager-VPack_2.0.1-3FA796?style=flat-square&labelColor=1A120B" alt="Packager" />
+  <a href="https://github.com/LeTrollologist/Aurelia/releases">
+    <img src="https://img.shields.io/badge/Installer-Inno_Setup_6-E8963F?style=flat-square&labelColor=1A120B" alt="Installer" />
   </a>
   &nbsp;
   <a href="RELEASE_PROCESS.md">
-    <img src="https://img.shields.io/badge/Integrity-Ed25519_%2B_CRC--32-E4705F?style=flat-square&labelColor=1A120B" alt="Integrity" />
+    <img src="https://img.shields.io/badge/Integrity-SHA--256_%2B_Ledger-F3E7D6?style=flat-square&labelColor=1A120B" alt="Integrity" />
   </a>
 </p>
 
@@ -119,7 +119,7 @@
 - ✍ **Stylus Pressure & Tilt**: Pen input is sampled through `WM_POINTER` / `GetPointerPenInfo`; real pressure drives brush size while the mouse path (and velocity dynamics) keeps working unchanged.
 - 🧠 **Memory-Bounded Undo**: The 50-step history also enforces a 512 MiB budget, evicting the oldest full-layer snapshots first so long sessions cannot balloon into multi-gigabyte RSS.
 - 📊 **Tone & Stylize Filters**: Levels (black/white/gamma), Colorize, Pixelate and Motion Blur alongside the existing blur/sharpen/grain/vignette/lens set — all with live, non-destructive previews and selection awareness.
-- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.aur`, AUR v1) alongside Ed25519-signed `.vpack` releases.
+- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.aur`, AUR v1) alongside SHA-256-verified installer and portable releases.
 
 ---
 
@@ -142,39 +142,37 @@ Aurelia/
 
 ## 🚀 Installation & Getting Started
 
-Aurelia can be installed as a portable native binary, via the **VPack Archiver** ecosystem, or compiled directly from source.
+Aurelia ships as a **per-user Windows installer**, a portable zip, or a pure-Rust source build.
+Full details, silent-install switches and verification steps live in [`INSTALL.md`](INSTALL.md).
 
-### Option 1: Install with VPack (Recommended)
+### Option 1: Installer (Recommended)
 
-[**VPack Archiver**](https://github.com/LeTrollologist/vpack-archiver) is the high-performance universal archive manager for `.vpack` packages.
+1. Download [`Aurelia-Setup-2.1.0.exe`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
+2. Run it — it installs per user to `%LOCALAPPDATA%\Programs\Aurelia` (no administrator rights, no UAC prompt).
+3. Optionally keep *"Open Aurelia projects with Aurelia (.aur, .hcv)"* checked for double-click opening, and tick *Create a desktop shortcut*.
+4. Launch **Aurelia** from the Start menu.
 
-1. Download [`aurelia-v2.0.0-windows-x86_64.vpack`](https://github.com/LeTrollologist/Aurelia/releases/latest) and [`aurelia-publisher.pub`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
-2. Extract the package with `vpack`:
-   ```bash
-   # Extract all files
-   vpack extract aurelia-v2.0.0-windows-x86_64.vpack
+Silent install:
 
-   # Or extract to a custom directory
-   vpack extract aurelia-v2.0.0-windows-x86_64.vpack -o ./Aurelia/
-   ```
-3. *(Optional)* Verify Ed25519 signature and CRC-32 integrity:
-   ```bash
-   vpack test aurelia-v2.0.0-windows-x86_64.vpack
-   ```
-4. Run `aurelia.exe`.
+```powershell
+Aurelia-Setup-2.1.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+```
 
 ---
 
-### Option 2: Install with Native Portable Zip
+### Option 2: Portable Zip
 
-No additional archive tools required — works with standard Windows extraction:
+No installer and no registry writes of its own:
 
-1. Download [`aurelia-v2.0.0-windows-x86_64.zip`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
-2. Extract the zip file using PowerShell or Windows Explorer:
+1. Download [`Aurelia-v2.1.0-win64.zip`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
+2. Extract it with PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\aurelia-v2.0.0-windows-x86_64.zip -DestinationPath .\Aurelia
+   Expand-Archive -Path .\Aurelia-v2.1.0-win64.zip -DestinationPath .\Aurelia
    ```
 3. Double-click `Aurelia\aurelia.exe` to launch immediately.
+
+Both distributions keep settings in `%LOCALAPPDATA%\Aurelia` (theme, recent projects, autosave),
+and every release publishes a `SHA256SUMS.txt` for verification.
 
 ---
 
@@ -302,7 +300,7 @@ workflow by design (see [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md)):
 
 ```bash
 make check                                            # cargo check --all-targets + workspace tests
-python scripts/pipeline.py v2.0.0 --no-publish  # build, test, audit, package, sign (no upload)
+python scripts/pipeline.py v2.1.0 --no-publish  # build, test, audit, package, sign (no upload)
 ```
 
 ---

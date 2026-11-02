@@ -1,640 +1,803 @@
 #!/usr/bin/env python3
 """
-Aurelia — Local Release Orchestration Pipeline
-Replaces CI/CD services with a deterministic, local-first release process.
+Aurelia Local Release Pipeline
+==============================
+Staged, resumable, self-verifying release orchestrator for Aurelia.
+Architecture adopted from the Morrow release pipeline; packaging adapted from
+Inkwell's Inno Setup flow. VPack packaging is intentionally retired.
 
 Stages:
-  1. preflight   Check tools (rustc, cargo, gh, vpack)
-  2. build       cargo build --release -p aurelia-app
-  3. test        cargo test --workspace
-  4. security    Dependency advisory & integrity audit
-  5. package     Create zip and .vpack archives with canonical naming
-  6. verify      Calculate SHA-256 sums, test vpack integrity, lint asset names
-  7. publish     Create GitHub release draft or publish with canonical assets
+  1. preflight: toolchain checks (cargo, Inno Setup), git wiring, clean-tree policy.
+  2. version:   rewrite every version declaration to the tag and prove consistency.
+  3. build:     cargo build --release -p aurelia-app.
+  4. test:      cargo test --workspace, with pass/fail counts recorded.
+  5. package:   portable zip + Inno Setup installer + release notes in dist/<tag>/.
+  6. verify:    SHA256SUMS.txt, archive integrity, installer sanity, ledger drift.
+  7. publish:   commit pipeline-managed changes, annotated tag, push, verify origin.
+  8. ship:      attach the verified bytes to the GitHub release page (REST, no CLI).
+
+Usage:
+  python scripts/pipeline.py v2.1.0                 # full release pipeline
+  python scripts/pipeline.py v2.1.0 --dry-run       # preview stages, no side effects
+  python scripts/pipeline.py v2.1.0 --from package  # resume from packaging
+  python scripts/pipeline.py v2.1.0 --skip test     # skip a stage
+  python scripts/pipeline.py v2.1.0 --no-publish    # build/package/verify only
+  python scripts/pipeline.py v2.1.0 --skip-installer
+  python scripts/pipeline.py v2.1.0 --clobber       # republish a released version
+  python scripts/pipeline.py v2.1.0 --force         # publish a dirty tree / move a tag
+
+Publishing is pure git: the release *is* the annotated tag, the artifacts in
+dist/<tag>/ and the record in releases/<tag>.json. GitHub is only a file host.
 """
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
-try:
-    if sys.stdout:
-        sys.stdout.reconfigure(encoding="utf-8")
-    if sys.stderr:
-        sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
-    pass
+ROOT = Path(__file__).resolve().parent.parent
+STAGES = ["preflight", "version", "build", "test", "package", "verify", "publish", "ship"]
 
-PROJECT_NAME = "aurelia"
-REPO_GH = "LeTrollologist/Aurelia"
+PRODUCT = "Aurelia"
 APP_CRATE = "aurelia-app"
-ROOT_DIR = Path(__file__).resolve().parent.parent
-DIST_DIR = ROOT_DIR / "dist"
+EXE_NAME = "aurelia.exe"
+CARGO_BIN = "aurelia-app.exe"
+INSTALLER_ISS = ROOT / "installer" / "aurelia.iss"
 
-CANONICAL_ASSET_REGEX = re.compile(
-    r"^(aurelia-v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?-(windows|linux|macos)-(x86_64|aarch64)\.(zip|vpack|tar\.gz)|aurelia-publisher\.pub)$"
-)
+# Files that carry the product version and must agree with the tag.
+VERSION_FILES = [
+    "Cargo.toml",
+    "crates/aurelia-core/Cargo.toml",
+    "crates/aurelia-render/Cargo.toml",
+    "crates/aurelia-io/Cargo.toml",
+    "crates/aurelia-ui/Cargo.toml",
+    "crates/aurelia-app/Cargo.toml",
+    "README.md",
+    "Makefile",
+    "assets/banner.svg",
+    "installer/aurelia.iss",
+]
+
+# Paths the pipeline is allowed to change and then commit on its own.
+MANAGED_PATHS = set(VERSION_FILES) | {"Cargo.lock", "release-notes", "releases", "dist"}
 
 
-
-def log(stage: str, msg: str):
-    print(f"\n\033[1;36m[{stage.upper()}]\033[0m {msg}")
-
-
-def run_cmd(cmd, cwd=None, check=True, capture=False):
-    print(f"  \033[90m$ {' '.join(str(c) for c in cmd)}\033[0m")
-    if capture:
-        res = subprocess.run(cmd, cwd=cwd or ROOT_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if check and res.returncode != 0:
-            print(f"\033[1;31mCommand failed:\033[0m\n{res.stderr}")
-            sys.exit(res.returncode)
-        return res
+def log(msg: str, header: bool = False):
+    if header:
+        print(f"\n{'=' * 70}\n[PIPELINE] {msg}\n{'=' * 70}")
     else:
-        res = subprocess.run(cmd, cwd=cwd or ROOT_DIR)
-        if check and res.returncode != 0:
-            print(f"\033[1;31mCommand failed with exit code {res.returncode}\033[0m")
-            sys.exit(res.returncode)
-        return res
+        print(f"[PIPELINE] {msg}")
 
 
-def stage_preflight():
-    log("preflight", "Checking build tools and environment...")
-    run_cmd(["rustc", "--version"])
-    run_cmd(["cargo", "--version"])
-    run_cmd(["gh", "--version"])
-
-    # Check cargo-audit
-    cargo_audit_path = shutil.which("cargo-audit") or shutil.which("cargo-audit.exe")
-    if not cargo_audit_path:
-        cargo_bin_audit = Path.home() / ".cargo" / "bin" / "cargo-audit.exe"
-        if cargo_bin_audit.exists():
-            cargo_audit_path = str(cargo_bin_audit)
-    print(f"  Found cargo-audit: {cargo_audit_path or 'checking via cargo audit'}")
-
-    # Check vpack CLI
-    vpack_path = shutil.which("vpack")
-    if not vpack_path:
-        # Check ~/.cargo/bin/vpack.exe
-        cargo_bin_vpack = Path.home() / ".cargo" / "bin" / "vpack.exe"
-        if cargo_bin_vpack.exists():
-            vpack_path = str(cargo_bin_vpack)
-        else:
-            print("\033[1;33mWarning: 'vpack' not found on PATH. Checking .cargo/bin...\033[0m")
-    print(f"  Found vpack: {vpack_path}")
-    return vpack_path
+def run(cmd, cwd=None, check=True, capture_output=False):
+    """Run a command; list or string (shell) forms both supported."""
+    shell = isinstance(cmd, str)
+    res = subprocess.run(cmd, cwd=cwd or ROOT, shell=shell, text=True,
+                         capture_output=capture_output)
+    if check and res.returncode != 0:
+        detail = (res.stderr or res.stdout or "") if capture_output else f"exit {res.returncode}"
+        raise RuntimeError(f"Command failed ({detail.strip()}): {cmd}")
+    return res
 
 
-def stage_build():
-    log("build", "Building optimized release binary (cargo build --release -p aurelia-app)...")
-    run_cmd(["cargo", "build", "--release", "-p", APP_CRATE])
+def compute_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest().upper()
 
 
-def stage_test():
-    log("test", "Running full workspace test suite...")
-    run_cmd(["cargo", "test", "--workspace"])
+def numeric_version(version: str) -> str:
+    """2.1.0 -> 2.1.0.0 (Inno Setup wants four components)."""
+    clean = re.sub(r"[^0-9.].*$", "", version)
+    parts = [p for p in clean.split(".") if p != ""]
+    while len(parts) < 4:
+        parts.append("0")
+    return ".".join(parts[:4])
 
 
-def stage_security(tag_dir: Path):
-    log("security", "Running automated dependency security audit (cargo audit)...")
-    audit_dir = tag_dir / "audit"
-    audit_dir.mkdir(parents=True, exist_ok=True)
-    audit_file = audit_dir / "security-audit.txt"
-    cargo_audit_file = audit_dir / "cargo-audit.txt"
-
-    # 1. Run cargo audit (search PATH and ~/.cargo/bin)
-    cargo_bin_audit = Path.home() / ".cargo" / "bin" / "cargo-audit.exe"
-    audit_exe = "cargo-audit" if shutil.which("cargo-audit") else (str(cargo_bin_audit) if cargo_bin_audit.exists() else "cargo")
-    audit_cmd = [audit_exe, "audit"] if audit_exe != "cargo" else ["cargo", "audit"]
-
-    audit_res = run_cmd(audit_cmd, check=False, capture=True)
-    audit_output = audit_res.stdout if audit_res.stdout else audit_res.stderr
-    if not audit_output or "no such command: `audit`" in audit_output:
-        # Fallback: scan Cargo.lock dependencies
-        lock_file = ROOT_DIR / "Cargo.lock"
-        if lock_file.exists():
-            pkg_count = lock_file.read_text(encoding="utf-8").count("[[package]]")
-            audit_output = f"Cargo.lock verified: {pkg_count} packages in dependency tree.\nZero known vulnerabilities in core dependencies (pure Rust workspace)."
-            is_clean = True
-        else:
-            audit_output = "No Cargo.lock found."
-            is_clean = False
-    else:
-        is_clean = (audit_res.returncode == 0) or ("0 vulnerabilities" in audit_output.lower() and "unmaintained" not in audit_output.lower())
-
-    status_str = "PASSED (0 known vulnerabilities)" if is_clean else "SECURITY AUDIT COMPLETED"
-
-    with open(cargo_audit_file, "w", encoding="utf-8") as f:
-        f.write(audit_output)
-
-    with open(audit_file, "w", encoding="utf-8") as f:
-        f.write("Aurelia Security & Integrity Audit\n")
-        f.write("=========================================\n")
-        f.write("Memory Safety: 100% pure Rust compiled with release optimizations\n")
-        f.write("Local-First: Zero outbound network connections or telemetry\n")
-        f.write("Offline Guarantee: All file storage and processing is local-only\n")
-        f.write(f"Automated Dependency Audit (cargo audit): {status_str}\n")
-        f.write("-----------------------------------------\n")
-        f.write(audit_output + "\n")
-
-    print(f"  Security audit saved to {audit_file}")
-    if not is_clean and ("Vulnerable crates found" in audit_output or "critical" in audit_output.lower()):
-        print("\033[1;31mSecurity Alert: Vulnerable crates found in dependency tree! Aborting release.\033[0m")
-        sys.exit(1)
-
-
-def stage_package(version: str, tag_dir: Path, vpack_exe: str):
-    log("package", f"Packaging release assets for version {version}...")
-    staging_dir = tag_dir / "windows-staging"
-    if staging_dir.exists():
-        shutil.rmtree(staging_dir)
-    staging_dir.mkdir(parents=True, exist_ok=True)
-
-    release_bin = ROOT_DIR / "target" / "release" / "aurelia-app.exe"
-    if not release_bin.exists():
-        print(f"\033[1;31mError: {release_bin} not found. Run build first.\033[0m")
-        sys.exit(1)
-
-    # Copy files into staging
-    shutil.copy2(release_bin, staging_dir / "aurelia.exe")
-    shutil.copy2(ROOT_DIR / "README.md", staging_dir / "README.md")
-    shutil.copy2(ROOT_DIR / "LICENSE.md", staging_dir / "LICENSE.md")
-    shutil.copy2(ROOT_DIR / "PRIVACY.md", staging_dir / "PRIVACY.md")
-    shutil.copy2(ROOT_DIR / "SECURITY.md", staging_dir / "SECURITY.md")
-
-    # 1. Create ZIP Archive
-    zip_name = f"aurelia-{version}-windows-x86_64.zip"
-    zip_path = tag_dir / zip_name
-    print(f"  Creating {zip_name}...")
-    if zip_path.exists():
-        zip_path.unlink()
-    shutil.make_archive(str(tag_dir / f"aurelia-{version}-windows-x86_64"), "zip", staging_dir)
-
-    # 2. Check for Ed25519 Publisher Signing Key
-    signing_key = os.environ.get("VPACK_SIGNING_KEY")
-    key_path = None
-    if signing_key and Path(signing_key).exists():
-        key_path = Path(signing_key)
-    elif (ROOT_DIR / "keys" / "aurelia-publisher.priv").exists():
-        key_path = ROOT_DIR / "keys" / "aurelia-publisher.priv"
-
-    # 3. Create Signed VPACK Archive
-    vpack_name = f"aurelia-{version}-windows-x86_64.vpack"
-    vpack_path = tag_dir / vpack_name
-    print(f"  Creating {vpack_name}...")
-    if vpack_path.exists():
-        vpack_path.unlink()
-
-    vpack_cmd = [
-        vpack_exe or "vpack",
-        "add",
-        "-c",
-        "9",
+def iscc_path():
+    """Locate Inno Setup's compiler the way Inkwell's pipeline does."""
+    candidates = []
+    for env in ("ISCC", "INNO_ISCC"):
+        if os.environ.get(env):
+            candidates.append(os.environ[env])
+    for name in ("ISCC", "iscc"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+    pf = os.environ.get("ProgramFiles(x86)") or os.environ.get("ProgramFiles") or r"C:\Program Files (x86)"
+    local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    candidates += [
+        str(Path(pf) / "Inno Setup 6" / "ISCC.exe"),
+        str(Path(pf) / "Inno Setup 5" / "ISCC.exe"),
+        str(Path(local) / "Programs" / "Inno Setup 6" / "ISCC.exe"),
+        str(Path(local) / "Programs" / "Inno" / "ISCC.exe"),
+        str(Path(local) / "Inno Setup 6" / "ISCC.exe"),
     ]
-    if key_path and key_path.exists():
-        print(f"  \033[1;32m✓ Digitally signing VPack package with publisher key: {key_path.name}\033[0m")
-        vpack_cmd.extend(["-s", str(key_path)])
-
-    vpack_cmd.extend([
-        str(vpack_path),
-        str(staging_dir / "aurelia.exe"),
-        str(staging_dir / "README.md"),
-        str(staging_dir / "LICENSE.md"),
-        str(staging_dir / "PRIVACY.md"),
-        str(staging_dir / "SECURITY.md"),
-    ])
-    run_cmd(vpack_cmd)
-
-    # 4. Verify archive integrity & signature via vpack test
-    print(f"  Testing CRC-32 integrity & verifying Ed25519 signature of {vpack_name}...")
-    run_cmd([vpack_exe or "vpack", "test", str(vpack_path)])
-
-    # 5. Export public key to release folder if available
-    pub_key_path = ROOT_DIR / "keys" / "aurelia-publisher.pub"
-    created_assets = [zip_path, vpack_path]
-    if pub_key_path.exists():
-        dest_pub = tag_dir / "aurelia-publisher.pub"
-        shutil.copy2(pub_key_path, dest_pub)
-        created_assets.append(dest_pub)
-
-    return created_assets
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return Path(candidate)
+    return None
 
 
-def stage_verify(tag_dir: Path, assets: list):
-    log("verify", "Verifying asset integrity and calculating SHA-256 checksums...")
-    checksums_file = tag_dir / "SHA256SUMS.txt"
-    lines = []
-    hashes = {}
+class ReleasePipeline:
+    def __init__(self, tag: str, dry_run=False, no_publish=False, no_bump=False,
+                 force=False, clobber=False, no_release_page=False,
+                 skip_installer=False):
+        self.tag = tag if tag.startswith("v") else f"v{tag}"
+        self.ver = self.tag.lstrip("v")
+        self.dry_run = dry_run
+        self.no_publish = no_publish
+        self.no_bump = no_bump
+        self.force = force
+        self.clobber = clobber
+        self.no_release_page = no_release_page
+        self.skip_installer = skip_installer
 
-    for asset in assets:
-        # Lint name against canonical pattern
-        filename = asset.name
-        if not CANONICAL_ASSET_REGEX.match(filename):
-            print(f"\033[1;33mWarning: Asset '{filename}' does not strictly match canonical naming pattern.\033[0m")
+        self.dist_dir = ROOT / "dist" / self.tag
+        self.notes_path = ROOT / "release-notes" / f"{self.tag}.md"
+        self.ledger_path = ROOT / "releases" / f"{self.tag}.json"
+        self.remote = None
+        self.test_summary = None
+        self.iscc = None
 
-        # Compute SHA-256
-        sha = hashlib.sha256()
-        with open(asset, "rb") as f:
-            while chunk := f.read(65536):
-                sha.update(chunk)
-        digest = sha.hexdigest()
-        hashes[filename] = digest
-        lines.append(f"{digest}  {filename}")
-        print(f"  {filename}: {digest}")
+    # ── shared helpers ──────────────────────────────────────────────────
+    def _state_path(self) -> Path:
+        return ROOT / "target" / "pipeline-state.json"
 
-    with open(checksums_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
-    print(f"  Saved checksums to {checksums_file}")
-    return hashes
-
-
-def upload_to_virustotal(zip_path: Path, api_key: str) -> dict:
-    import json
-    import time
-    import urllib.request
-
-    boundary = "----WebKitFormBoundary" + hashlib.md5(str(time.time()).encode()).hexdigest()
-    file_bytes = zip_path.read_bytes()
-    filename = zip_path.name
-
-    body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-        f"Content-Type: application/zip\r\n\r\n"
-    ).encode("utf-8") + file_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
-
-    req = urllib.request.Request(
-        "https://www.virustotal.com/api/v3/files",
-        data=body,
-        headers={
-            "x-apikey": api_key,
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "Aurelia-ReleasePipeline/1.0",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def request_virustotal_reanalyse(sha256_hash: str, api_key: str) -> dict:
-    """Queue a fresh analysis for a sample VirusTotal already knows about.
-
-    Re-uploading identical bytes returns HTTP 409, and a file record can exist
-    with `last_analysis_stats` all zero (submitted, never analysed), so this is
-    the only way to obtain a real verdict for such a file.
-    """
-    import json
-    import urllib.request
-
-    req = urllib.request.Request(
-        f"https://www.virustotal.com/api/v3/files/{sha256_hash}/analyse",
-        data=b"",
-        headers={
-            "x-apikey": api_key,
-            "Content-Length": "0",
-            "User-Agent": "Aurelia-ReleasePipeline/1.0",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def poll_virustotal_analysis(analysis_id: str, api_key: str, max_retries: int = 18) -> dict:
-    import json
-    import time
-    import urllib.request
-
-    url = f"https://www.virustotal.com/api/v3/analyses/{analysis_id}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "x-apikey": api_key,
-            "User-Agent": "Aurelia-ReleasePipeline/1.0",
-        },
-    )
-    for attempt in range(max_retries):
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                attributes = data.get("data", {}).get("attributes", {})
-                status = attributes.get("status")
-                if status == "completed" and stats_total(attributes.get("stats", {})) > 0:
-                    return data
-                print(f"  Waiting for VirusTotal scan to complete (status: {status}, poll {attempt + 1}/{max_retries})...")
-        except Exception as e:
-            print(f"  VirusTotal poll warning: {e}")
-        time.sleep(10)
-    return {}
-
-
-def get_virustotal_file_report(sha256_hash: str, api_key: str) -> dict:
-    import json
-    import urllib.request
-
-    url = f"https://www.virustotal.com/api/v3/files/{sha256_hash}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "x-apikey": api_key,
-            "User-Agent": "Aurelia-ReleasePipeline/1.0",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return {}
-
-
-def stats_total(stats: dict) -> int:
-    """Total engines that returned a verdict.
-
-    VirusTotal creates a file record on first submission, so a record can exist
-    with `last_analysis_stats` all zero (never scanned). Treating that as a
-    completed scan would report a false "0 detections" result.
-    """
-    try:
-        return sum(int(v) for v in (stats or {}).values())
-    except (TypeError, ValueError):
-        return 0
-
-
-def stage_virustotal(tag_dir: Path, zip_path: Path, sha256_hash: str) -> dict:
-    log("virustotal", "Running VirusTotal scan & integrity verification...")
-    import json
-    api_key = os.environ.get("VIRUSTOTAL_API_KEY") or os.environ.get("VT_API_KEY")
-    if not api_key:
-        # Check potential .env files
-        for env_path in [
-            ROOT_DIR / ".env",
-            ROOT_DIR.parent / "vpack-archiver" / ".env",
-            Path.home() / ".env",
-        ]:
-            if env_path.exists():
-                try:
-                    for line in env_path.read_text(encoding="utf-8").splitlines():
-                        if line.startswith("VIRUSTOTAL_API_KEY=") or line.startswith("VT_API_KEY="):
-                            api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
-                            if api_key:
-                                print(f"  Loaded VirusTotal API key from {env_path}")
-                                break
-                    if api_key:
-                        break
-                except Exception:
-                    pass
-    audit_dir = tag_dir / "audit"
-    audit_dir.mkdir(parents=True, exist_ok=True)
-    vt_summary_file = audit_dir / "virustotal-summary.txt"
-    vt_report_file = audit_dir / "virustotal-report.json"
-    permalink = f"https://www.virustotal.com/gui/file/{sha256_hash}"
-
-    vt_data = {
-        "sha256": sha256_hash,
-        "filename": zip_path.name,
-        "permalink": permalink,
-        "scanned": False,
-        "status": "permalink_generated",
-        "stats": {"malicious": 0, "suspicious": 0, "undetected": 0, "harmless": 0},
-    }
-
-    if api_key:
-        print(f"  Checking if {zip_path.name} ({sha256_hash[:12]}...) is already scanned on VirusTotal...")
-        existing_report = get_virustotal_file_report(sha256_hash, api_key)
-        existing_stats = {}
-        if existing_report and "data" in existing_report:
-            existing_stats = existing_report.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
-        if existing_report and "data" in existing_report and stats_total(existing_stats) > 0:
-            attributes = existing_report.get("data", {}).get("attributes", {})
-            stats = existing_stats
-            vt_data["scanned"] = True
-            vt_data["status"] = "completed"
-            vt_data["stats"] = stats
-            vt_data["engines_total"] = stats_total(stats)
-            with open(vt_report_file, "w", encoding="utf-8") as f:
-                json.dump(existing_report, f, indent=2)
-            print(f"  Existing VirusTotal report found: {stats.get('malicious', 0)} malicious / {stats.get('suspicious', 0)} suspicious / {stats.get('undetected', 0)} clean ({stats_total(stats)} engines reporting)")
-        else:
-            # A file record can exist with no analysis at all, and re-uploading the
-            # same bytes returns HTTP 409 — in both cases request a re-analysis.
-            known_record = bool(existing_report and "data" in existing_report)
-            analysis_id = ""
+    def _save_state(self, **facts):
+        if self.dry_run:
+            return
+        path = self._state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        current = {}
+        if path.exists():
             try:
-                if known_record:
-                    print("  File record exists without a completed analysis — requesting re-analysis...")
-                    resp = request_virustotal_reanalyse(sha256_hash, api_key)
-                else:
-                    print(f"  Uploading {zip_path.name} to VirusTotal API v3...")
-                    resp = upload_to_virustotal(zip_path, api_key)
-                analysis_id = resp.get("data", {}).get("id", "")
-            except Exception as e:
-                print(f"  \033[1;33mWarning: VirusTotal submission failed: {e}\033[0m")
-                print(f"  Falling back to direct permalink: {permalink}")
+                current = json.loads(path.read_text(encoding="utf-8"))
+            except ValueError:
+                current = {}
+        current.setdefault(self.tag, {}).update(facts)
+        path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
 
-            if analysis_id:
-                print(f"  Scan queued with Analysis ID: {analysis_id}")
-                analysis = poll_virustotal_analysis(analysis_id, api_key)
-                if analysis:
-                    attributes = analysis.get("data", {}).get("attributes", {})
-                    stats = attributes.get("stats", {})
-                    vt_data["scanned"] = True
-                    vt_data["status"] = attributes.get("status", "completed")
-                    vt_data["stats"] = stats
-                    vt_data["engines_total"] = stats_total(stats)
-                    with open(vt_report_file, "w", encoding="utf-8") as f:
-                        json.dump(analysis, f, indent=2)
-                    print(f"  VirusTotal scan completed: {stats.get('malicious', 0)} malicious / {stats.get('suspicious', 0)} suspicious / {stats.get('undetected', 0)} clean ({stats_total(stats)} engines reporting)")
-                else:
-                    vt_data["scanned"] = True
-                    vt_data["status"] = "pending"
-                    print("  Scan still queued at VirusTotal — release notes will report it as pending.")
-    else:
-        print(f"  Note: 'VIRUSTOTAL_API_KEY' or 'VT_API_KEY' not set.")
-        print(f"  Direct verification permalink generated: {permalink}")
+    def _load_state(self):
+        path = self._state_path()
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8")).get(self.tag, {})
+        except ValueError:
+            return {}
 
-    with open(vt_summary_file, "w", encoding="utf-8") as f:
-        f.write(f"VirusTotal Scan & Security Report for {zip_path.name}\n")
-        f.write(f"====================================================\n")
-        f.write(f"SHA-256: {sha256_hash}\n")
-        f.write(f"Permalink: {permalink}\n")
-        if vt_data["scanned"] and stats_total(vt_data.get("stats", {})) > 0:
-            stats = vt_data["stats"]
-            f.write(f"Status: {vt_data['status']}\n")
-            f.write(f"Engines Reporting: {stats_total(stats)}\n")
-            f.write(f"Malicious: {stats.get('malicious', 0)}\n")
-            f.write(f"Suspicious: {stats.get('suspicious', 0)}\n")
-            f.write(f"Clean/Undetected: {stats.get('undetected', 0)}\n")
-        elif vt_data["scanned"]:
-            f.write("Status: Submitted — analysis pending at the permalink above\n")
-            f.write("Engines Reporting: 0 (scan queued or still in progress)\n")
+    def _recover_facts(self):
+        state = self._load_state()
+        self.test_summary = self.test_summary or state.get("tests")
+        return state
+
+    def _load_ledger(self):
+        if not self.ledger_path.exists():
+            return {}
+        try:
+            return json.loads(self.ledger_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def _asset_digests(self):
+        return [
+            {"name": a.name, "bytes": a.stat().st_size, "sha256": compute_sha256(a)}
+            for a in sorted(self.dist_dir.glob("*"))
+            if a.is_file() and a.name not in ("SHA256SUMS.txt", "PUBLISH.txt")
+        ]
+
+    def _read_preserving(self, path: Path) -> str:
+        return path.read_text(encoding="utf-8")
+
+    def _write_preserving(self, path: Path, text: str):
+        path.write_text(text, encoding="utf-8", newline="")
+
+    # ── stage 1: preflight ──────────────────────────────────────────────
+    def stage_preflight(self):
+        log("STAGE 1: Preflight checks", header=True)
+        rustc = run("rustc --version", capture_output=True).stdout.strip()
+        cargo = run("cargo --version", capture_output=True).stdout.strip()
+        log(f"Toolchain: {rustc} / {cargo}")
+
+        self.iscc = iscc_path()
+        if self.skip_installer:
+            log("Installer build skipped (--skip-installer): portable zip only.")
+        elif not self.iscc:
+            raise RuntimeError(
+                "Inno Setup (ISCC.exe) not found. Install it with "
+                "'winget install JRSoftware.InnoSetup', or run with --skip-installer "
+                "for a portable-only package."
+            )
         else:
-            f.write(f"Status: Direct permalink verification ready (API key not set or offline)\n")
+            log(f"Inno Setup: {self.iscc}")
+        if not self.skip_installer and not INSTALLER_ISS.exists():
+            raise FileNotFoundError(f"missing installer script {INSTALLER_ISS}")
 
-    return vt_data
+        res = run("git rev-parse --is-inside-work-tree", capture_output=True, check=False)
+        if res.returncode != 0:
+            raise RuntimeError("Not inside a git work tree; cannot release.")
+        branch = run("git branch --show-current", capture_output=True).stdout.strip()
+        if not branch:
+            raise RuntimeError("HEAD is detached; check out the release branch first.")
+        log(f"Branch: {branch}")
 
+        res = run("git remote get-url origin", capture_output=True, check=False)
+        if res.returncode != 0:
+            raise RuntimeError("No 'origin' remote configured; add one or run with --no-publish.")
+        self.remote = res.stdout.strip()
+        log(f"Remote: origin = {self.remote}")
 
-def stage_publish(version: str, tag_dir: Path, assets: list, vt_data: dict, draft: bool = False):
-    log("publish", f"Publishing release {version} to GitHub ({REPO_GH})...")
-    checksums_file = tag_dir / "SHA256SUMS.txt"
-    vt_summary_file = tag_dir / "audit" / "virustotal-summary.txt"
+        dirty = run("git status --porcelain", capture_output=True).stdout.strip()
+        if dirty:
+            log(f"Warning: working tree has modifications:\n{dirty}")
+            if not (self.force or self.no_publish or self.clobber):
+                log("The publish stage will refuse unmanaged changes unless --force is given.")
 
-    upload_files = [str(a) for a in assets] + [str(checksums_file)]
-    if vt_summary_file.exists():
-        upload_files.append(str(vt_summary_file))
+        log("Preflight passed.")
 
-    zip_hash = vt_data.get("sha256", "N/A")
-    vt_url = vt_data.get("permalink", f"https://www.virustotal.com/gui/file/{zip_hash}")
-    vt_stats = vt_data.get("stats", {}) or {}
-    engines_total = stats_total(vt_stats)
-    if vt_data.get("scanned") and engines_total > 0:
-        vt_status_text = (
-            f"🟢 {vt_stats.get('malicious', 0)} detections "
-            f"({vt_stats.get('undetected', 0)} undetected / {engines_total} engines reporting)"
-        )
-    elif vt_data.get("scanned"):
-        vt_status_text = "🟡 Submitted to VirusTotal — analysis pending (open the permalink for live results)"
-    else:
-        vt_status_text = "⚪ Not Scanned via API (No VIRUSTOTAL_API_KEY configured — Manual lookup link available)"
+    # ── stage 2: version ────────────────────────────────────────────────
+    def _current_version(self) -> str:
+        text = (ROOT / "crates" / APP_CRATE / "Cargo.toml").read_text(encoding="utf-8")
+        match = re.search(r'^version = "([^"]+)"', text, re.MULTILINE)
+        if not match:
+            raise RuntimeError("cannot read the current version from the app manifest")
+        return match.group(1)
 
-    pub_key_file = ROOT_DIR / "keys" / "aurelia-publisher.pub"
-    publisher_key = pub_key_file.read_text(encoding="utf-8").strip() if pub_key_file.exists() else "N/A"
+    def _bump_declarations(self):
+        current = self._current_version()
+        if current == self.ver:
+            return []
+        changed = []
+        pattern = re.compile(re.escape(current))
+        for rel in VERSION_FILES:
+            path = ROOT / rel
+            if not path.exists():
+                continue
+            text = self._read_preserving(path)
+            updated = pattern.sub(self.ver, text)
+            if updated != text:
+                self._write_preserving(path, updated)
+                changed.append(rel)
+        return changed
 
-    release_body = f"""## 🌟 Aurelia {version} · Studio Release
- 
-A modern, high-performance, local-first digital illustration, concept art, and graphics studio built with 100% pure native Rust.
+    def _read_declared_versions(self):
+        """Collect every version string the pipeline cares about, per file."""
+        declared = {}
+        for rel in VERSION_FILES:
+            path = ROOT / rel
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8")
+            versions = set()
+            if rel.endswith("Cargo.toml"):
+                versions |= set(re.findall(r'version = "(\d+\.\d+\.\d+)"', text))
+            if rel == "README.md":
+                versions |= set(re.findall(r"Release-v(\d+\.\d+\.\d+)", text))
+                versions |= set(re.findall(r"Aurelia-v(\d+\.\d+\.\d+)-win64", text))
+            if rel == "Makefile":
+                versions |= set(re.findall(r"TAG \?= v(\d+\.\d+\.\d+)", text))
+            if rel == "assets/banner.svg":
+                versions |= set(re.findall(r"v(\d+\.\d+\.\d+) · PRODUCTION", text))
+            if rel == "installer/aurelia.iss":
+                versions |= set(re.findall(r'MyAppVersion "(\d+\.\d+\.\d+)"', text))
+            if versions:
+                declared[rel] = versions
+        return declared
 
-### ✨ What's New in {version}
+    def stage_version(self):
+        log("STAGE 2: Version bump & declaration consistency", header=True)
+        if self.dry_run:
+            log(f"[DRY-RUN] Would rewrite version declarations to {self.ver}.")
+            return
+        if self.no_bump:
+            log("--no-bump requested; declarations are left untouched.")
+        else:
+            changed = self._bump_declarations()
+            for item in changed:
+                log(f"  bumped {item}")
+            if not changed:
+                log(f"Declarations already declare {self.ver}.")
 
-* **🪙 Hollow Canvas is now Aurelia**:
-  - **New identity**: gold-on-ink branding, an all-new application icon, banner and studio theme. Every crate is now `aurelia-*`, the executable is `aurelia.exe`, and settings live under `%LOCALAPPDATA%\\Aurelia`.
-  - **New project format**: projects are saved as `.aur` (signature `AUR\\x01`). Legacy Hollow Canvas `.hcv` files (v2–v5) still open, and the Explorer menu registers both extensions while cleaning up pre-2.0 registry keys.
+        declared = self._read_declared_versions()
+        stale = {rel: sorted(v - {self.ver}) for rel, v in declared.items() if v - {self.ver}}
+        if stale:
+            detail = "; ".join(f"{rel}: {', '.join(vs)}" for rel, vs in stale.items())
+            raise RuntimeError(
+                f"Version declarations do not match {self.tag} ({detail}). "
+                f"Re-run without --no-bump or fix them by hand."
+            )
+        missing = [rel for rel in VERSION_FILES if not (ROOT / rel).exists()]
+        if missing:
+            raise RuntimeError(f"Missing version declaration files: {', '.join(missing)}")
+        log(f"All {len(declared)} declaration files agree on {self.ver}.")
 
-* **🎨 Aurelia Dawn theme**:
-  - **Warm ink UI**: every panel, dock, ruler, guide and tool surface was re-tinted from cool slate to warm ink with gold, amber, coral and teal accents.
-  - **Three variants**: Aurelia Dawn (gold), Aurelia Dusk (rose) and Aurelia Ember (coral), persisted between sessions.
+    # ── stage 3: build ──────────────────────────────────────────────────
+    def stage_build(self):
+        log("STAGE 3: Release build", header=True)
+        if self.dry_run:
+            log(f"[DRY-RUN] Would run cargo build --release -p {APP_CRATE}.")
+            return
+        run(["cargo", "build", "--release", "-p", APP_CRATE])
+        binary = ROOT / "target" / "release" / CARGO_BIN
+        if not binary.exists():
+            raise FileNotFoundError(f"expected {binary} after the build")
+        size_mb = binary.stat().st_size / (1024 * 1024)
+        log(f"Built {binary.relative_to(ROOT)} ({size_mb:.1f} MB)")
+        self._save_state(binary_sha256=compute_sha256(binary),
+                         binary_bytes=binary.stat().st_size)
 
-* **💾 Crash-Proof Save Pipeline** (from 1.0.4):
-  - **Unsaved-Changes Guard**: closing the window asks *Save / Discard / Cancel* instead of silently dropping the artwork.
-  - **Quick Save & Save As**: <kbd>Ctrl+S</kbd> writes straight to the known path; <kbd>Ctrl+Shift+S</kbd> saves a copy. The title bar shows `*` while edits are unsaved.
-  - **Atomic Writes**: projects are written to a `.tmp` sibling and renamed over the target, so an interrupted save can never truncate an existing file.
-  - **Autosave & Crash Recovery**: a recovery snapshot is written every 120 s of unsaved edits and offered back on the next launch.
+    # ── stage 4: test ───────────────────────────────────────────────────
+    def stage_test(self):
+        log("STAGE 4: Workspace test suite", header=True)
+        if self.dry_run:
+            log("[DRY-RUN] Would run cargo test --workspace.")
+            return
+        res = run(["cargo", "test", "--workspace"], capture_output=True, check=False)
+        output = (res.stdout or "") + (res.stderr or "")
+        passed = sum(int(m) for m in re.findall(r"test result: ok\. (\d+) passed", output))
+        failed = sum(int(m) for m in re.findall(r"(\d+) failed", output))
+        for line in output.splitlines():
+            if "test result:" in line or line.startswith("error") or "panicked" in line:
+                log(f"  {line.strip()}")
+        if res.returncode != 0 or failed:
+            raise RuntimeError(f"tests failed ({failed} failing, {passed} passing)")
+        self.test_summary = f"{passed} tests passed across the workspace (0 failed)"
+        log(self.test_summary)
+        self._save_state(tests=self.test_summary)
 
-* **✍ Stylus Pressure & Tilt**: pressure and tilt are sampled through `WM_POINTER` / `GetPointerPenInfo`; pressure drives brush size while mouse input and velocity dynamics keep working as before.
+    # ── stage 5: package ────────────────────────────────────────────────
+    ZIP_DATE = (1980, 1, 1, 0, 0, 0)
+    SHIPPED_DOCS = ("README.md", "INSTALL.md", "LICENSE.md", "PRIVACY.md",
+                    "SECURITY.md", "ROADMAP.md")
 
-* **📊 Tone & Stylize Filters**: Levels, Colorize, Pixelate and Motion Blur with live, non-destructive, selection-aware previews, plus JPEG quality control and sprite-sheet export.
+    @classmethod
+    def _zip_add(cls, zf, path: Path, arcname: str):
+        info = zipfile.ZipInfo(arcname.replace("\\", "/"), date_time=cls.ZIP_DATE)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.create_system = 0          # MS-DOS: host-independent archives
+        info.external_attr = 0o644 << 16
+        zf.writestr(info, path.read_bytes())
 
-* **📦 VPack 2.0.1 Cryptographic Trust**:
-  - **Ed25519 Publisher Signature**: Verified with official publisher public key (`{publisher_key}`).
-  - **High-Ratio Deflate Compression & CRC-32 Validation**: Validated via `vpack test`.
+    def _generated_notes(self) -> str:
+        tests = self.test_summary or "(test stage skipped in this run)"
+        assets = "`Aurelia-{0}-win64.zip`, `Aurelia-Setup-{1}.exe`, `SHA256SUMS.txt`".format(
+            self.tag, self.ver)
+        return f"""# Aurelia {self.tag}
 
-### 🛡️ Security & VirusTotal Verification
-| Security Check | Result | Verification Link |
-| :--- | :--- | :--- |
-| **VirusTotal Scan** | {vt_status_text} | [View VirusTotal Report]({vt_url}) |
-| **SHA-256 Checksum** | `{zip_hash}` | Match against `SHA256SUMS.txt` |
-| **Ed25519 Publisher Key** | `{publisher_key}` | Verified via `vpack test` |
-| **Audit Summary** | Local Security & Compliance Verified | Uploaded as `virustotal-summary.txt` |
+Built and verified locally by `scripts/pipeline.py` (see `RELEASE_PROCESS.md`).
 
-### 📦 Downloads & Assets
-| Asset | Format | Description |
-| :--- | :--- | :--- |
-| `aurelia-{version}-windows-x86_64.vpack` | VPack Archive | Digitally signed, ultra-compact package (inspectable via `vpack`) |
-| `aurelia-{version}-windows-x86_64.zip` | Standard Zip | Full portable studio archive |
-| `aurelia-publisher.pub` | Ed25519 Key | Official publisher public key for verifying signatures |
-| `SHA256SUMS.txt` | SHA-256 | Cryptographic integrity verification checksums |
-| `virustotal-summary.txt` | Security Audit | VirusTotal scan analysis summary |
+## Verification recorded by the pipeline
 
-### 🚀 Installation Instructions
+| Gate | Result |
+|---|---|
+| Workspace tests | {tests} |
+| Distribution | {assets} |
 
-#### Option 1: Install with VPack Archiver (Recommended)
-```bash
-# Extract all files
-vpack extract aurelia-{version}-windows-x86_64.vpack
-
-# Or extract to a custom directory
-vpack extract aurelia-{version}-windows-x86_64.vpack -o ./Aurelia/
-```
-
-#### Option 2: Install with Native Zip
-```powershell
-Expand-Archive -Path .\\aurelia-{version}-windows-x86_64.zip -DestinationPath .\\Aurelia
-```
-
-### 🔒 Cryptographic Verification
-Verify all assets against `SHA256SUMS.txt` and check digital signatures:
-```bash
-# 1. Verify SHA-256
-certutil -hashfile aurelia-{version}-windows-x86_64.zip SHA256
-
-# 2. Test CRC-32 & Verify Ed25519 Publisher Signature
-vpack test aurelia-{version}-windows-x86_64.vpack
-```
+> This skeleton was generated because `release-notes/{self.tag}.md` is missing.
+> Commit authored notes for that tag to replace it.
 """
 
-    notes_file = tag_dir / "release_notes.md"
-    with open(notes_file, "w", encoding="utf-8") as f:
-        f.write(release_body)
+    def stage_package(self):
+        log("STAGE 5: Packaging release assets", header=True)
+        if self.dry_run:
+            log(f"[DRY-RUN] Would package {PRODUCT} {self.tag} into {self.dist_dir}")
+            return
 
-    gh_cmd = [
-        "gh",
-        "release",
-        "create",
-        version,
-        *upload_files,
-        "--title",
-        f"Aurelia {version} · Studio Release",
-        "--notes-file",
-        str(notes_file),
-    ]
-    if draft:
-        gh_cmd.append("--draft")
+        if self.dist_dir.exists() and (self.dist_dir / "PUBLISH.txt").exists():
+            if not self.clobber:
+                raise RuntimeError(
+                    f"{self.dist_dir} already holds a published release record (PUBLISH.txt). "
+                    f"Pass --clobber to rebuild it, or cut a new version."
+                )
+            log(f"--clobber: overwriting the published artifacts in {self.dist_dir.name}/")
+        if self.dist_dir.exists():
+            shutil.rmtree(self.dist_dir)
+        self.dist_dir.mkdir(parents=True, exist_ok=True)
+        self._recover_facts()
 
-    res = run_cmd(gh_cmd, check=False)
-    if res.returncode != 0:
-        print(f"  Release {version} already exists. Updating release notes and assets (--clobber)...")
-        run_cmd(["gh", "release", "edit", version, "--notes-file", str(notes_file), "--title", f"Aurelia {version} · Studio Release"])
-        run_cmd(["gh", "release", "upload", version, *upload_files, "--clobber"])
+        # 1. Staging folder: the exact tree a portable user unzips.
+        staging = self.dist_dir / "staging"
+        staging.mkdir()
+        binary = ROOT / "target" / "release" / CARGO_BIN
+        if not binary.exists():
+            raise FileNotFoundError(f"missing {binary}; run the build stage first")
+        shutil.copy2(binary, staging / EXE_NAME)
+        for doc in self.SHIPPED_DOCS:
+            source = ROOT / doc
+            if source.exists():
+                shutil.copy2(source, staging / doc)
+            else:
+                log(f"  note: {doc} not present, omitted from the package")
 
-    print(f"\n\033[1;32m[SUCCESS] Successfully published/updated release {version} on GitHub!\033[0m")
+        # 2. Portable archive.
+        zip_path = self.dist_dir / f"{PRODUCT}-{self.tag}-win64.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(staging.iterdir()):
+                if path.is_file():
+                    self._zip_add(zf, path, f"{PRODUCT}/{path.name}")
+        log(f"Created {zip_path.name} ({zip_path.stat().st_size / (1024 * 1024):.2f} MB)")
+
+        # 3. Per-user Inno Setup installer (adapted from Inkwell's installer flow).
+        if self.skip_installer:
+            log("Installer skipped (--skip-installer); portable zip only.")
+        else:
+            if not self.iscc:
+                raise RuntimeError("Inno Setup was not resolved in preflight")
+            cmd = [
+                str(self.iscc),
+                f"/DMyAppVersion={self.ver}",
+                f"/DMyAppVersionNumeric={numeric_version(self.ver)}",
+                f"/DMySourceDir={staging}",
+                f"/DMyOutputDir={self.dist_dir}",
+                str(INSTALLER_ISS),
+            ]
+            res = run(cmd, capture_output=True, check=False)
+            for line in ((res.stdout or "") + (res.stderr or "")).splitlines():
+                if line.strip() and ("Successful" in line or "Error" in line or "Warning" in line):
+                    log(f"  ISCC: {line.strip()}")
+            setup = self.dist_dir / f"{PRODUCT}-Setup-{self.ver}.exe"
+            if res.returncode != 0 or not setup.exists():
+                raise RuntimeError(
+                    f"Inno Setup failed (exit {res.returncode}); expected {setup.name}"
+                )
+            log(f"Created {setup.name} ({setup.stat().st_size / (1024 * 1024):.2f} MB)")
+
+        # 4. Release notes: authored notes win, otherwise a factual skeleton.
+        notes_file = self.dist_dir / "RELEASE_NOTES.md"
+        if self.notes_path.exists():
+            shutil.copy2(self.notes_path, notes_file)
+            log(f"Release notes taken from {self.notes_path.relative_to(ROOT)}")
+        else:
+            notes_file.write_text(self._generated_notes(), encoding="utf-8")
+            log(f"No release-notes/{self.tag}.md found; wrote a generated skeleton.")
+
+        shutil.rmtree(staging, ignore_errors=True)
+
+    # ── stage 6: verify ─────────────────────────────────────────────────
+    def stage_verify(self):
+        log("STAGE 6: Verification & checksum generation", header=True)
+        if self.dry_run:
+            log("[DRY-RUN] Would verify and hash the release assets.")
+            return
+
+        zip_name = f"{PRODUCT}-{self.tag}-win64.zip"
+        setup_name = f"{PRODUCT}-Setup-{self.ver}.exe"
+        required = [zip_name, "RELEASE_NOTES.md"]
+        if not self.skip_installer:
+            required.append(setup_name)
+        missing = [name for name in required if not (self.dist_dir / name).exists()]
+        if missing:
+            raise FileNotFoundError(
+                f"Missing release assets in {self.dist_dir}: {', '.join(missing)}"
+            )
+
+        # Archive integrity + the files a user must receive.
+        with zipfile.ZipFile(self.dist_dir / zip_name, "r") as zf:
+            bad = zf.testzip()
+            if bad:
+                raise RuntimeError(f"Corrupted member in {zip_name}: {bad}")
+            names = set(zf.namelist())
+            for needed in (f"{PRODUCT}/{EXE_NAME}", f"{PRODUCT}/LICENSE.md",
+                           f"{PRODUCT}/README.md", f"{PRODUCT}/INSTALL.md"):
+                if needed not in names:
+                    raise RuntimeError(f"{zip_name} is missing {needed}")
+        log(f"{zip_name}: archive intact, contains {EXE_NAME} + licensing")
+
+        # Installer sanity: a PE image, not a stub.
+        if not self.skip_installer:
+            setup = self.dist_dir / setup_name
+            if setup.read_bytes()[:2] != b"MZ":
+                raise RuntimeError(f"{setup_name} is not a Windows executable")
+            if setup.stat().st_size < 512 * 1024:
+                raise RuntimeError(f"{setup_name} looks too small to be an installer")
+            log(f"{setup_name}: valid PE image ({setup.stat().st_size / (1024 * 1024):.2f} MB)")
+
+        # Checksums for everything that ships.
+        assets = [p for p in sorted(self.dist_dir.glob("*"))
+                  if p.is_file() and p.name not in ("SHA256SUMS.txt", "PUBLISH.txt")]
+        lines = []
+        for asset in assets:
+            digest = compute_sha256(asset)
+            lines.append(f"{digest}  {asset.name}")
+            log(f"  {asset.name} -> {digest}")
+        (self.dist_dir / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n",
+                                                      encoding="utf-8")
+        log("Wrote SHA256SUMS.txt")
+
+        # Cross-check against the local release record (republish byte equality).
+        ledger = self._load_ledger()
+        if ledger:
+            recorded = {a["name"]: a["sha256"] for a in ledger.get("assets", [])}
+            current = {a["name"]: a["sha256"] for a in self._asset_digests()}
+            drift = sorted(n for n in current if n in recorded and recorded[n] != current[n])
+            added = sorted(set(current) - set(recorded))
+            removed = sorted(set(recorded) - set(current))
+            if drift:
+                if not self.clobber:
+                    raise RuntimeError(
+                        "Artifacts differ from the recorded publication of "
+                        f"{self.tag} ({', '.join(drift)}). Pass --clobber to record the new "
+                        "bytes, or investigate why the build changed."
+                    )
+                log("Warning: --clobber recording new bytes for: " + ", ".join(drift))
+            if added or removed:
+                log(f"Asset set changed vs {self.ledger_path.name}: "
+                    f"+{added or '[]'} -{removed or '[]'}")
+            if not drift and not added and not removed:
+                log(f"Artifacts match the recorded publication of {self.tag} byte-for-byte.")
+
+        self._save_state(assets=self._asset_digests())
+
+    # ── stage 7: publish ────────────────────────────────────────────────
+    def _split_dirty(self, lines):
+        managed, unmanaged = [], []
+        for line in lines:
+            path = line[3:].strip().strip('"')
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1].strip().strip('"')
+            if any(path == p or path.startswith(p.rstrip("/") + "/") for p in MANAGED_PATHS):
+                managed.append(path)
+            else:
+                unmanaged.append(line)
+        return managed, unmanaged
+
+    def _write_ledger(self, previous):
+        commit = run("git rev-parse HEAD", capture_output=True).stdout.strip()
+        entry = {
+            "tag": self.tag,
+            "version": self.ver,
+            "product": PRODUCT,
+            "remote": self.remote,
+            "tests": self.test_summary,
+            "notes": (f"release-notes/{self.tag}.md" if self.notes_path.exists() else None),
+            "assets": self._asset_digests(),
+            "installer": (None if self.skip_installer
+                          else f"{PRODUCT}-Setup-{self.ver}.exe"),
+            "published_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "republish_count": int(previous.get("republish_count", 0)) + (1 if previous else 0),
+            "recorded_near_commit": commit,
+            "previous_publication": (
+                {"published_at": previous.get("published_at"),
+                 "assets": previous.get("assets")}
+                if previous else None
+            ),
+        }
+        self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        if previous:
+            same = (previous.get("tests") == entry["tests"]
+                    and previous.get("assets") == entry["assets"]
+                    and previous.get("installer") == entry["installer"])
+            if same:
+                log(f"{self.ledger_path.name} already records this publication exactly; "
+                    f"nothing to re-record.")
+                return False
+        self.ledger_path.write_text(json.dumps(entry, indent=2) + "\n", encoding="utf-8")
+        log(f"Wrote release record {self.ledger_path.relative_to(ROOT)} "
+            f"(republish #{entry['republish_count']})")
+        return True
+
+    def _release_title(self) -> str:
+        return f"{PRODUCT} {self.tag}"
+
+    def stage_publish(self):
+        log("STAGE 8: Publish (git tag + push)", header=True)
+        if self.dry_run:
+            log("[DRY-RUN] Would commit, tag and push the release.")
+            return
+        if self.no_publish:
+            log("--no-publish requested; skipping git tag/push.")
+            return
+
+        self._recover_facts()
+        head = run("git rev-parse HEAD", capture_output=True).stdout.strip()
+        tag_exists = run(f"git rev-parse -q --verify refs/tags/{self.tag}",
+                         check=False, capture_output=True).returncode == 0
+        if tag_exists:
+            tag_sha = run(f"git rev-list -n 1 {self.tag}", capture_output=True).stdout.strip()
+            at_head = tag_sha == head
+            ancestor = at_head or run(f"git merge-base --is-ancestor {self.tag} HEAD",
+                                      check=False, capture_output=True).returncode == 0
+            if not ancestor and not self.force:
+                raise RuntimeError(
+                    f"Tag {self.tag} points at {tag_sha[:8]}, which is not an ancestor of "
+                    f"HEAD ({head[:8]}). Nothing was committed. Check out the tagged commit, "
+                    f"cut a new version, or pass --force to move the tag."
+                )
+            if not at_head and not self.clobber:
+                raise RuntimeError(
+                    f"Tag {self.tag} points at {tag_sha[:8]}, behind HEAD ({head[:8]}). "
+                    f"That is a republication; pass --clobber to record it."
+                )
+
+        ledger = self._load_ledger()
+        if ledger and tag_exists and not self.clobber:
+            raise RuntimeError(
+                f"{self.tag} is already published (local record {self.ledger_path.name}, "
+                f"publication #{ledger.get('republish_count', 0)} at "
+                f"{ledger.get('published_at')}). Pass --clobber to rebuild and record another "
+                f"publication."
+            )
+        self._write_ledger(ledger)
+
+        # Commit only what the pipeline owns (version bumps, notes, ledger).
+        dirty_lines = [l for l in run("git status --porcelain", capture_output=True)
+                       .stdout.splitlines() if l.strip()]
+        if dirty_lines:
+            managed, unmanaged = self._split_dirty(dirty_lines)
+            if unmanaged and not self.force:
+                raise RuntimeError(
+                    "Uncommitted changes the pipeline does not own; commit them first or "
+                    "pass --force:\n" + "\n".join(unmanaged)
+                )
+            if self.force and unmanaged:
+                run("git add -A")
+                count = len(managed) + len(unmanaged)
+            else:
+                for path in managed:
+                    run(["git", "add", "--", path])
+                count = len(managed)
+            if count:
+                suffix = " (republish)" if self.clobber else ""
+                run(["git", "commit", "-m", f"chore(release): {self.tag}{suffix}",
+                     "-m", "Version declarations, release notes and the local release record "
+                           "written by scripts/pipeline.py."])
+                log(f"Committed {count} pipeline-managed change(s).")
+        else:
+            log("Working tree clean.")
+
+        # Tag HEAD (create, or move when --force).
+        head = run("git rev-parse HEAD", capture_output=True).stdout.strip()
+        if run(f"git rev-parse -q --verify refs/tags/{self.tag}", check=False,
+               capture_output=True).returncode != 0:
+            run(["git", "tag", "-a", self.tag, "-m", self._release_title()])
+            log(f"Created annotated tag {self.tag} at {head[:8]}")
+        else:
+            tag_sha = run(f"git rev-list -n 1 {self.tag}", capture_output=True).stdout.strip()
+            if tag_sha != head:
+                if self.force:
+                    run(["git", "tag", "-f", "-a", self.tag, "-m", self._release_title()])
+                    log(f"Moved tag {self.tag} to {head[:8]}")
+                else:
+                    log(f"Tag {self.tag} stays at {tag_sha[:8]} (release commit); "
+                        f"the new publication record is committed on top of it.")
+
+        # Push branch + tag, then prove origin agrees with the local objects.
+        branch = run("git branch --show-current", capture_output=True).stdout.strip()
+        run(["git", "push", "origin", branch])
+        run(["git", "push", "--force", "origin", f"refs/tags/{self.tag}"],
+            check=False, capture_output=True)
+        tag_obj = run(f"git rev-parse refs/tags/{self.tag}",
+                      capture_output=True).stdout.strip()
+        ls = run(["git", "ls-remote", "origin", f"refs/tags/{self.tag}",
+                  f"refs/tags/{self.tag}^{{}}"], capture_output=True, check=False)
+        remote_obj = ""
+        for line in (ls.stdout or "").splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[1] == f"refs/tags/{self.tag}":
+                remote_obj = parts[0]
+        if remote_obj != tag_obj:
+            raise RuntimeError(
+                f"Remote tag {self.tag} ({remote_obj[:8]}) does not match local "
+                f"({tag_obj[:8]}) after push."
+            )
+        log(f"Remote tag {self.tag} verified (object {tag_obj[:8]})")
+
+        # Publish manifest next to the artifacts.
+        if not (self.dist_dir / "RELEASE_NOTES.md").exists():
+            raise FileNotFoundError(
+                f"{self.dist_dir / 'RELEASE_NOTES.md'} is missing; run the package stage first"
+            )
+        manifest = self.dist_dir / "PUBLISH.txt"
+        lines = [
+            self._release_title(),
+            "",
+            f"commit:  {head}",
+            f"branch:  {branch}",
+            f"remote:  {self.remote}",
+            f"tests:   {self.test_summary or 'n/a'}",
+            "",
+            "assets (SHA-256 in SHA256SUMS.txt):",
+        ]
+        for asset in sorted(self.dist_dir.glob("*")):
+            if asset.is_file() and asset.name not in ("SHA256SUMS.txt", "PUBLISH.txt"):
+                lines.append(f"  {asset.name}  ({asset.stat().st_size} bytes)")
+        lines += ["", "Installer: Inno Setup per-user package (no admin rights).",
+                  "Publishing = git tag + push; GitHub stores the bytes only.", ""]
+        manifest.write_text("\n".join(lines), encoding="utf-8")
+        log(f"Wrote {manifest.relative_to(ROOT)}")
+        log(f"{self.tag} published: tag pushed and verified on origin.")
+
+
+    # ── stage 9: ship ───────────────────────────────────────────────────
+    def stage_ship(self):
+        log("STAGE 9: Ship artifacts to the release page", header=True)
+        if self.dry_run:
+            log(f"[DRY-RUN] Would upload dist/{self.tag}/* to the release page.")
+            return
+        if self.no_publish:
+            log("--no-publish requested; skipping the release page.")
+            return
+        if self.no_release_page:
+            log("--no-release-page requested; artifacts stay local in dist/.")
+            return
+        script = ROOT / "scripts" / "release_page.py"
+        if not script.exists():
+            raise FileNotFoundError(f"missing {script}")
+        # GitHub is a file host here, never a builder: these bytes were produced and
+        # verified on this machine. No Actions workflow, no CI runner, no forge CLI.
+        res = run([sys.executable, str(script), self.tag], check=False, capture_output=True)
+        for line in ((res.stdout or "") + (res.stderr or "")).splitlines():
+            if line.strip():
+                log(line.strip())
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"release page upload failed (exit {res.returncode}); the local release is "
+                f"complete, rerun with --from ship to retry"
+            )
 
 
 def main():
     parser = argparse.ArgumentParser(description="Aurelia local release pipeline.")
-    parser.add_argument("version", help="Release tag/version (e.g. v0.1.0)")
-    parser.add_argument("--draft", action="store_true", help="Create a draft release instead of public")
-    parser.add_argument("--no-publish", action="store_true", help="Build and package without publishing")
-    parser.add_argument("--skip-test", action="store_true", help="Skip running tests")
+    parser.add_argument("tag", help="Release tag (e.g. v2.1.0)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Preview stages without running commands")
+    parser.add_argument("--from", dest="from_stage", choices=STAGES, default="preflight",
+                        help="Resume the pipeline from this stage")
+    parser.add_argument("--skip", action="append", choices=STAGES, default=[],
+                        help="Skip a stage (repeatable)")
+    parser.add_argument("--no-publish", action="store_true",
+                        help="Run everything except git tag/push and the release page")
+    parser.add_argument("--no-bump", action="store_true",
+                        help="Do not rewrite version declarations")
+    parser.add_argument("--force", action="store_true",
+                        help="Publish a dirty tree or move an existing tag")
+    parser.add_argument("--clobber", action="store_true",
+                        help="Republish an already-released version")
+    parser.add_argument("--no-release-page", action="store_true",
+                        help="Keep artifacts local; do not attach them to GitHub")
+    parser.add_argument("--skip-installer", action="store_true",
+                        help="Portable zip only (no Inno Setup package)")
     args = parser.parse_args()
 
-    version = args.version
-    if not version.startswith("v"):
-        version = f"v{version}"
-
-    tag_dir = DIST_DIR / version
-    tag_dir.mkdir(parents=True, exist_ok=True)
-
-    vpack_exe = stage_preflight()
-    stage_build()
-
-    if not args.skip_test:
-        stage_test()
-
-    stage_security(tag_dir)
-    assets = stage_package(version, tag_dir, vpack_exe)
-    hashes = stage_verify(tag_dir, assets)
-
-    zip_asset = next((a for a in assets if a.suffix == ".zip"), assets[0])
-    zip_hash = hashes.get(zip_asset.name, "")
-    vt_data = stage_virustotal(tag_dir, zip_asset, zip_hash)
-
-    if not args.no_publish:
-        stage_publish(version, tag_dir, assets, vt_data, draft=args.draft)
+    pipeline = ReleasePipeline(
+        args.tag, dry_run=args.dry_run, no_publish=args.no_publish,
+        no_bump=args.no_bump, force=args.force, clobber=args.clobber,
+        no_release_page=args.no_release_page, skip_installer=args.skip_installer,
+    )
+    start = STAGES.index(args.from_stage)
+    handlers = {
+        "preflight": pipeline.stage_preflight,
+        "version": pipeline.stage_version,
+        "build": pipeline.stage_build,
+        "test": pipeline.stage_test,
+        "package": pipeline.stage_package,
+        "verify": pipeline.stage_verify,
+        "publish": pipeline.stage_publish,
+        "ship": pipeline.stage_ship,
+    }
+    try:
+        for stage in STAGES[start:]:
+            if stage in args.skip:
+                log(f"Skipping stage '{stage}' (--skip).")
+                continue
+            handlers[stage]()
+    except Exception as exc:  # clean failure, not a traceback dump
+        print(f"\n[PIPELINE] FAILED: {exc}", file=sys.stderr)
+        return 1
+    print(f"\n[PIPELINE] {pipeline.tag} complete.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
