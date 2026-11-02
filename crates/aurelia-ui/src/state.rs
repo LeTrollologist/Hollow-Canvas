@@ -183,6 +183,11 @@ pub struct AppState {
     pub show_rulers: bool,
     pub show_navigator: bool,
     pub flip_view_horizontal: bool,
+    /// Chrome metrics written by the UI each frame, so canvas math follows the docks.
+    pub left_panel_w: f32,
+    pub right_panel_w: f32,
+    pub header_h: f32,
+    pub footer_h: f32,
     pub perspective: aurelia_core::perspective::PerspectiveConfig,
     pub show_perspective_dock: bool,
     pub active_adjustment_modal: Option<u64>,
@@ -393,6 +398,10 @@ impl AppState {
             show_rulers: true,
             show_navigator: true,
             flip_view_horizontal: false,
+            left_panel_w: 268.0,
+            right_panel_w: 324.0,
+            header_h: 38.0,
+            footer_h: 30.0,
             perspective: {
                 let mut p = aurelia_core::perspective::PerspectiveConfig::default();
                 p.init_for_canvas(width, height);
@@ -828,20 +837,29 @@ impl AppState {
 
     pub fn viewport_center_offset(&self) -> Vec2 {
         if self.show_ui_panels {
-            let bottom = if self.timeline.is_enabled { 88.0 } else { 32.0 };
-            Vec2::new((220.0 - 240.0) * 0.5, (38.0 - bottom) * 0.5)
+            let bottom = if self.timeline.is_enabled { 88.0 } else { self.footer_h.max(24.0) };
+            let ruler = if self.show_rulers { crate::design::RULER_PX } else { 0.0 };
+            Vec2::new(
+                (self.left_panel_w - self.right_panel_w + ruler) * 0.5,
+                (self.header_h - bottom + ruler) * 0.5,
+            )
         } else {
             Vec2::ZERO
         }
     }
 
+    /// Visible canvas area in window pixels: `[x0, y0, x1, y1]`.
+    ///
+    /// Reads the dock widths the UI actually painted this frame, so resizing a
+    /// side panel keeps the canvas clip, hit-testing and rulers aligned.
     pub fn viewport_rect(&self, win_w: usize, win_h: usize) -> [usize; 4] {
         if self.show_ui_panels {
-            let bottom = if self.timeline.is_enabled { 88 } else { 32 };
-            let vx0 = 220.min(win_w);
-            let vy0 = 38.min(win_h);
-            let vx1 = win_w.saturating_sub(240).max(vx0);
-            let vy1 = win_h.saturating_sub(bottom).max(vy0);
+            let bottom = if self.timeline.is_enabled { 88.0 } else { self.footer_h.max(24.0) };
+            let ruler = if self.show_rulers { crate::design::RULER_PX } else { 0.0 };
+            let vx0 = ((self.left_panel_w + ruler).max(0.0) as usize).min(win_w);
+            let vy0 = ((self.header_h + ruler).max(0.0) as usize).min(win_h);
+            let vx1 = win_w.saturating_sub(self.right_panel_w.max(0.0) as usize).max(vx0);
+            let vy1 = win_h.saturating_sub(bottom as usize).max(vy0);
             [vx0, vy0, vx1, vy1]
         } else {
             [0, 0, win_w, win_h]
@@ -854,9 +872,15 @@ impl AppState {
 
     pub fn reset_view_centered(&mut self, win_w: f32, win_h: f32) {
         self.pan = Vec2::ZERO;
-        let avail_w = if self.show_ui_panels { (win_w - 510.0).max(200.0) } else { (win_w - 60.0).max(200.0) };
-        let bottom = if self.timeline.is_enabled { 88.0 } else { 32.0 };
-        let avail_h = if self.show_ui_panels { (win_h - (38.0 + bottom + 30.0)).max(200.0) } else { (win_h - 60.0).max(200.0) };
+        let bottom = if self.timeline.is_enabled { 88.0 } else { self.footer_h.max(24.0) };
+        let (chrome_w, chrome_h) = if self.show_ui_panels {
+            let ruler = if self.show_rulers { crate::design::RULER_PX } else { 0.0 };
+            (self.left_panel_w + self.right_panel_w + ruler, self.header_h + bottom + ruler)
+        } else {
+            (0.0, 0.0)
+        };
+        let avail_w = (win_w - chrome_w - 30.0).max(200.0);
+        let avail_h = (win_h - chrome_h - 30.0).max(200.0);
         let scale_x = avail_w / self.document.width as f32;
         let scale_y = avail_h / self.document.height as f32;
         self.zoom = (scale_x.min(scale_y) * 0.92).clamp(0.05, 5.0);

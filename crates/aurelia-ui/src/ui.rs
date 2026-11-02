@@ -110,6 +110,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         egui::TopBottomPanel::top("header_panel")
             .frame(design::bar_frame(design::INK_PANEL))
             .show(ctx, |ui| {
+                state.header_h = ui.max_rect().height() + 10.0; // bar_frame pads 5 px top/bottom
                 ui.horizontal(|ui| {
                     // Left: wordmark + version
                     ui.label(RichText::new("✦ Aurelia").size(14.0).strong().color(design::TEXT));
@@ -695,6 +696,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         egui::TopBottomPanel::bottom("status_bar")
             .frame(design::bar_frame(design::INK_SUNKEN))
             .show(ctx, |ui| {
+                state.footer_h = ui.max_rect().height() + 10.0;
                 ui.horizontal(|ui| {
                     let dot_color = if state.is_dirty() { design::AMBER } else { design::TEAL };
                     ui.label(RichText::new("●").size(8.0).color(dot_color));
@@ -742,6 +744,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .resizable(true)
             .frame(crate::design::panel_frame(crate::design::INK_PANEL))
             .show(ctx, |ui| {
+                state.left_panel_w = ui.max_rect().width() + 2.0 * design::PANEL_PAD;
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     let content_w = ui.available_width().clamp(220.0, 320.0);
                     ui.set_min_width(content_w);
@@ -1220,6 +1223,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .resizable(true)
             .frame(crate::design::panel_frame(crate::design::INK_PANEL))
             .show(ctx, |ui| {
+                state.right_panel_w = ui.max_rect().width() + 2.0 * design::PANEL_PAD;
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     // A stable content width keeps rows from pushing the panel
                     // out to its maximum width (which used to clip the controls).
@@ -1261,8 +1265,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                         let win_w_f = ctx.screen_rect().width();
                         let win_h_f = ctx.screen_rect().height();
-                        let open_vp_w = (win_w_f - 490.0).max(100.0);
-                        let open_vp_h = (win_h_f - 70.0).max(100.0);
+                        let open_vp_w = (win_w_f - state.left_panel_w - state.right_panel_w - 20.0).max(100.0);
+                        let open_vp_h = (win_h_f - state.header_h - state.footer_h - 10.0).max(100.0);
 
                         let vp_canvas_w = open_vp_w / state.zoom;
                         let vp_canvas_h = open_vp_h / state.zoom;

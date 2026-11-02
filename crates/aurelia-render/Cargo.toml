@@ -4,9 +4,6 @@ version = "2.3.0"
 edition = "2021"
 description = "Fast software rasterizer and egui primitive compositing engine for Aurelia"
 
-[lib]
-test = false
-
 [dependencies]
 aurelia-core = { path = "../aurelia-core", version = "2.3.0" }
 egui = { workspace = true }

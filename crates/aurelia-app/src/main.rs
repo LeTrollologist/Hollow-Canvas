@@ -548,23 +548,23 @@ impl AureliaDesktopApp {
             return true;
         }
 
-        // 2. Main Studio Panels (strictly bounded to physical dock rectangles)
+        // 2. Main Studio Panels (bounded to the docks the UI actually painted)
         if self.state.show_ui_panels {
             // Top header bar
-            if pos.y < 38.0 {
+            if pos.y < self.state.header_h {
                 return true;
             }
             // Bottom status bar & animation timeline strip
-            let bottom_h = if self.state.timeline.is_enabled { 88.0 } else { 32.0 };
+            let bottom_h = if self.state.timeline.is_enabled { 88.0 } else { self.state.footer_h.max(24.0) };
             if pos.y > (h - bottom_h) {
                 return true;
             }
-            // Left tool dock & properties panel (strictly 0..220)
-            if pos.x < 220.0 {
+            // Left tool dock & properties panel
+            if pos.x < self.state.left_panel_w {
                 return true;
             }
-            // Right layers & color palette dock (strictly win_w - 240..win_w)
-            if pos.x > (w - 240.0) {
+            // Right layers & color palette dock
+            if pos.x > (w - self.state.right_panel_w) {
                 return true;
             }
         } else {

@@ -30,6 +30,9 @@ pub const ROW_H: f32 = 20.0;
 pub const LABEL_W: f32 = 92.0;
 pub const SWATCH: f32 = 22.0;
 
+/// Width/height of the ruler strips when they are visible.
+pub const RULER_PX: f32 = 24.0;
+
 pub fn panel_frame(fill: Color32) -> egui::Frame {
     egui::Frame::none()
         .fill(fill)
