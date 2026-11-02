@@ -600,6 +600,10 @@ Built and verified locally by `scripts/pipeline.py` (see `RELEASE_PROCESS.md`).
             return
 
         self._recover_facts()
+        if not self.remote:
+            # A run resumed at `publish` skips preflight, so resolve origin here.
+            self.remote = run("git remote get-url origin", capture_output=True,
+                              check=False).stdout.strip() or None
         head = run("git rev-parse HEAD", capture_output=True).stdout.strip()
         tag_exists = run(f"git rev-parse -q --verify refs/tags/{self.tag}",
                          check=False, capture_output=True).returncode == 0
