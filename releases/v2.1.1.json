@@ -1,0 +1,30 @@
+{
+  "tag": "v2.1.1",
+  "version": "2.1.1",
+  "product": "Aurelia",
+  "remote": "https://github.com/LeTrollologist/Aurelia.git",
+  "tests": "50 tests passed across the workspace (0 failed)",
+  "notes": "release-notes/v2.1.1.md",
+  "assets": [
+    {
+      "name": "Aurelia-Setup-2.1.1.exe",
+      "bytes": 4116514,
+      "sha256": "7D4C00C172EB1A74BCDE8651CD4FC7219187D59DD2A4B3FC34A6ED10CA685A33"
+    },
+    {
+      "name": "Aurelia-v2.1.1-win64.zip",
+      "bytes": 2601301,
+      "sha256": "5D352541876E8A588FBC603E5C2C9084D87C04506298D375457F969E137DCA63"
+    },
+    {
+      "name": "RELEASE_NOTES.md",
+      "bytes": 1250,
+      "sha256": "174D3CFADD1CFBF5132395A7477C9B3BD4D944F0DF6F7A080A694426A4254E88"
+    }
+  ],
+  "installer": "Aurelia-Setup-2.1.1.exe",
+  "published_at": "2026-11-02T15:44:55Z",
+  "republish_count": 0,
+  "recorded_near_commit": "d39ddbe32a2a28831140af9f448964ff23bb5c8f",
+  "previous_publication": null
+}
