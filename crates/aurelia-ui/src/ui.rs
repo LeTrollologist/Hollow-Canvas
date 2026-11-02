@@ -4210,6 +4210,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 });
             });
     }
+    paint_ruler_numbers(ctx, state);
 }
 
 /// Renders on-canvas interactive transform gizmos, wireframe grids, handles, and TPS pin vectors
@@ -4383,6 +4384,107 @@ fn render_transform_gizmos(
                     Color32::from_rgb(255, 210, 80),
                 );
             }
+        }
+    }
+}
+
+// Ruler numerals are painted by egui *after* everything else so they are
+// antialiased and share the chrome's typeface. The ticks themselves are
+// rasterised into the frame by `aurelia-render`, so both layers must agree on
+// the same geometry helpers (`viewport_rect`, `viewport_center_offset`).
+fn paint_ruler_numbers(ctx: &egui::Context, state: &AppState) {
+    use aurelia_render::software::ruler_ticks;
+
+    if !state.show_ui_panels
+        || !state.show_rulers
+        || state.document.width.max(state.document.height) == 0
+    {
+        return;
+    }
+
+    let ppp = ctx.pixels_per_point().max(0.01) as f32;
+    let screen = ctx.screen_rect().size();
+    let win_w = (screen.x * ppp).round() as usize;
+    let win_h = (screen.y * ppp).round() as usize;
+    if win_w < 250 || win_h < 150 {
+        return;
+    }
+
+    let vp = state.viewport_rect(win_w, win_h);
+    let offset = state.viewport_center_offset();
+    let doc_w = state.document.width as f32;
+    let doc_h = state.document.height as f32;
+    let zoom = state.zoom.max(0.02);
+    let centre_x = win_w as f32 * 0.5 + state.pan.x + offset.x;
+    let centre_y = win_h as f32 * 0.5 + state.pan.y + offset.y;
+
+    let strip = design::RULER_PX;
+    let font = egui::FontId::new(10.0, egui::FontFamily::Proportional);
+    let number_colour = Color32::from_rgb(212, 188, 152);
+
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("aurelia_ruler_numbers"),
+    ));
+
+    // ── Top strip: numbers sit above their major ticks ──
+    let top_rect = egui::Rect::from_min_size(
+        egui::pos2(vp[0] as f32 / ppp, vp[1] as f32 / ppp),
+        egui::vec2((vp[2] - vp[0]) as f32 / ppp, strip / ppp),
+    );
+    if top_rect.width() > 8.0 {
+        let clipped = painter.with_clip_rect(top_rect);
+        let ticks = ruler_ticks(doc_w, zoom, centre_x, vp[0] as isize, vp[2] as isize);
+        let placements = crate::ruler_text::place_labels(&ticks, doc_w, vp[2] as f32, |value| {
+            let text = format!("{}", value.round() as i64);
+            clipped.layout_no_wrap(text, font.clone(), number_colour).size().x * ppp
+        });
+        for label in placements {
+            clipped.text(
+                egui::pos2(
+                    (label.screen + crate::ruler_text::LABEL_INSET) / ppp,
+                    top_rect.top() + 0.5,
+                ),
+                egui::Align2::LEFT_TOP,
+                format!("{}", label.value.round() as i64),
+                font.clone(),
+                number_colour,
+            );
+        }
+    }
+
+    // ── Left strip: numbers rotated to read downwards ──
+    let left_top = vp[1] + design::RULER_PX as usize;
+    let left_rect = egui::Rect::from_min_size(
+        egui::pos2(vp[0] as f32 / ppp, left_top as f32 / ppp),
+        egui::vec2(
+            strip / ppp,
+            (vp[3].saturating_sub(left_top)) as f32 / ppp,
+        ),
+    );
+    if left_rect.height() > 8.0 {
+        let clipped = painter.with_clip_rect(left_rect);
+        let ticks = ruler_ticks(doc_h, zoom, centre_y, left_top as isize, vp[3] as isize);
+        let placements = crate::ruler_text::place_labels(&ticks, doc_h, vp[3] as f32, |value| {
+            let text = format!("{}", value.round() as i64);
+            clipped.layout_no_wrap(text, font.clone(), number_colour).size().x * ppp
+        });
+        for label in placements {
+            let galley = clipped.layout_no_wrap(
+                format!("{}", label.value.round() as i64),
+                font.clone(),
+                number_colour,
+            );
+            // epaint rotates around the galley origin, so -90° runs the number
+            // upwards from the anchor: anchor at its end, one pixel inside the strip.
+            let pos = egui::pos2(
+                left_rect.left() + 1.0,
+                (label.screen + crate::ruler_text::LABEL_INSET + label.extent) / ppp,
+            );
+            clipped.add(
+                egui::epaint::TextShape::new(pos, galley, number_colour)
+                    .with_angle(-std::f32::consts::FRAC_PI_2),
+            );
         }
     }
 }

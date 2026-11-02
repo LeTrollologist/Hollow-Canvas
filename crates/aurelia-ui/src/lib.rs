@@ -2,6 +2,7 @@ pub mod design;
 pub mod dialogs;
 pub mod fonts;
 pub mod icons;
+pub mod ruler_text;
 pub mod shell;
 pub mod state;
 pub mod style;
