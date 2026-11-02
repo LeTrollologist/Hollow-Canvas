@@ -1044,4 +1044,68 @@ mod tests {
         assert_eq!(px[3], 255);
         assert_ne!((px[0], px[1], px[2]), (100, 100, 100));
     }
+
+    /// Deleting the top layer used to crash the layer panel: the row indexed
+    /// `document.layers[i]` *after* deleting, when the vector had shrunk to `i`.
+    /// The invariant that made it survivable is checked here from the top down.
+    #[test]
+    fn deleting_layers_from_the_top_down_keeps_the_document_consistent() {
+        let mut doc = Document::new(64, 64);
+        let base = doc.active_layer_id;
+        let a = doc.add_layer(Some("A".into()));
+        let b = doc.add_layer(Some("B".into()));
+        let c = doc.add_layer(Some("C".into()));
+        assert_eq!(doc.layers.len(), 4);
+
+        for id in [c, b, a] {
+            assert!(doc.delete_layer(id).is_some(), "layer {id} should delete");
+            assert!(!doc.layers.is_empty(), "the document must keep at least one layer");
+            assert!(
+                doc.layers.iter().any(|l| l.id == doc.active_layer_id),
+                "active layer {} dangles after deleting {id}",
+                doc.active_layer_id
+            );
+            // Every index the panel might still read has to be in range.
+            for i in 0..doc.layers.len() {
+                assert_eq!(doc.layers[i].id, doc.layers[i].id);
+            }
+        }
+
+        assert_eq!(doc.layers.len(), 1);
+        assert_eq!(doc.active_layer_id, base);
+        // The final layer is protected.
+        assert!(doc.delete_layer(base).is_none());
+    }
+
+    #[test]
+    fn deleting_a_group_removes_descendants_and_keeps_active_valid() {
+        let mut doc = Document::new(64, 64);
+        let base = doc.active_layer_id;
+        let group = doc.add_group(Some("Group".into()));
+        let child = doc.add_layer(Some("Child".into()));
+        assert!(doc.set_layer_parent(child, Some(group)));
+
+        let removed = doc.delete_layer(group).expect("the group should delete");
+        assert_eq!(removed.id, group);
+        assert!(doc.get_layer(child).is_none(), "children die with their group");
+        assert!(doc.get_layer(base).is_some());
+        assert!(doc.layers.iter().any(|l| l.id == doc.active_layer_id));
+        assert_eq!(doc.layers.len(), 1);
+    }
+
+    #[test]
+    fn ungroup_releases_children_before_removing_the_group() {
+        let mut doc = Document::new(64, 64);
+        let base = doc.active_layer_id;
+        let group = doc.add_group(Some("Group".into()));
+        let child = doc.add_layer(Some("Child".into()));
+        assert!(doc.set_layer_parent(child, Some(group)));
+
+        assert!(doc.ungroup(group));
+        assert!(doc.get_layer(group).is_none(), "the group itself is gone");
+        let released = doc.get_layer(child).expect("the child survives ungrouping");
+        assert_eq!(released.parent_id, None, "the child is re-parented to the root");
+        assert!(doc.layers.iter().any(|l| l.id == doc.active_layer_id));
+        assert!(doc.get_layer(base).is_some());
+    }
 }

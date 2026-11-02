@@ -9,6 +9,22 @@ use aurelia_core::color::{Color, DEFAULT_PALETTE};
 use aurelia_core::selection::SelectionMask;
 use aurelia_core::symmetry::SymmetryMode;
 
+use aurelia_core::layer::LayerId;
+
+/// A structural layer edit, queued while the layer list is being drawn.
+///
+/// Applying these immediately would mutate `document.layers` while the current row
+/// still indexes into it: removing the top layer drops the length to that index and
+/// the next read panics (this is how v2.4.0 crashed on 'delete layer').
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayerCommand {
+    Delete(LayerId),
+    Ungroup(LayerId),
+    AddChild(LayerId),
+    Duplicate(LayerId),
+    RasterizeActiveText,
+}
+
 /// Helper to render a custom studio tool button with a crisp vector-drawn icon
 fn render_tool_button(
     ui: &mut egui::Ui,
@@ -1681,6 +1697,10 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         .collect();
 
                     // Render layers in reverse order (top to bottom)
+
+                    // Structural edits are queued here and applied after the list is drawn:
+                    // mutating document.layers mid-iteration invalidates the index the row is reading.
+                    let mut layer_commands: Vec<LayerCommand> = Vec::new();
                     for i in (0..layer_count).rev() {
                         let layer_id = state.document.layers[i].id;
                         let is_active = layer_id == active_id;
@@ -1802,21 +1822,20 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                             if is_group {
                                                 if ui.button("🗑").on_hover_text("Delete Folder and all contained layers").clicked() {
-                                                    state.document.delete_layer(layer_id);
+                                                    layer_commands.push(LayerCommand::Delete(layer_id));
                                                 }
                                                 if ui.button("🔓").on_hover_text("Ungroup (release child layers)").clicked() {
-                                                    state.document.ungroup(layer_id);
+                                                    layer_commands.push(LayerCommand::Ungroup(layer_id));
                                                 }
                                                 if ui.button("➕").on_hover_text("Add new layer inside this folder").clicked() {
-                                                    let new_id = state.document.add_layer(None);
-                                                    state.document.set_layer_parent(new_id, Some(layer_id));
+                                                    layer_commands.push(LayerCommand::AddChild(layer_id));
                                                 }
                                             } else {
                                                 if ui.button("🗑").on_hover_text("Delete Layer").clicked() {
-                                                    state.document.delete_layer(layer_id);
+                                                    layer_commands.push(LayerCommand::Delete(layer_id));
                                                 }
                                                 if ui.button("⎘").on_hover_text("Duplicate Layer").clicked() {
-                                                    state.document.duplicate_active_layer();
+                                                    layer_commands.push(LayerCommand::Duplicate(layer_id));
                                                 }
                                                 if is_text {
                                                     if ui.button("✏").on_hover_text("Edit Text in Viewport").clicked() {
@@ -1901,7 +1920,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                                     state.select_text_layer(layer_id);
                                                 }
                                                 if ui.button("⎘ Rasterize Layer").on_hover_text("Convert editable text into a standard bitmap pixel layer").clicked() {
-                                                    state.rasterize_active_text_layer();
+                                                    layer_commands.push(LayerCommand::RasterizeActiveText);
                                                 }
                                             });
                                         } else if !is_group {
@@ -1945,6 +1964,31 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 });
                         });
                         ui.add_space(2.0);
+                    }
+
+                    // Nothing is reading layer indices any more: apply the edits.
+                    for command in layer_commands {
+                        match command {
+                            LayerCommand::Delete(id) => {
+                                state.document.delete_layer(id);
+                            }
+                            LayerCommand::Ungroup(id) => {
+                                state.document.ungroup(id);
+                            }
+                            LayerCommand::AddChild(parent) => {
+                                let new_id = state.document.add_layer(None);
+                                state.document.set_layer_parent(new_id, Some(parent));
+                            }
+                            LayerCommand::Duplicate(id) => {
+                                // Duplicate the row that was clicked, not whatever happened
+                                // to be active.
+                                state.document.active_layer_id = id;
+                                state.document.duplicate_active_layer();
+                            }
+                            LayerCommand::RasterizeActiveText => {
+                                state.rasterize_active_text_layer();
+                            }
+                        }
                     }
 
                     ui.add_space(8.0);
