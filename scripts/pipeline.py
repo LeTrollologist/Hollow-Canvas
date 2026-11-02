@@ -143,7 +143,7 @@ def iscc_path():
 class ReleasePipeline:
     def __init__(self, tag: str, dry_run=False, no_publish=False, no_bump=False,
                  force=False, clobber=False, no_release_page=False,
-                 skip_installer=False):
+                 skip_installer=False, max_detections=0):
         self.tag = tag if tag.startswith("v") else f"v{tag}"
         self.ver = self.tag.lstrip("v")
         self.dry_run = dry_run
@@ -153,6 +153,7 @@ class ReleasePipeline:
         self.clobber = clobber
         self.no_release_page = no_release_page
         self.skip_installer = skip_installer
+        self.max_detections = int(max_detections)
 
         self.dist_dir = ROOT / "dist" / self.tag
         self.notes_path = ROOT / "release-notes" / f"{self.tag}.md"
@@ -593,15 +594,22 @@ Built and verified locally by `scripts/pipeline.py` (see `RELEASE_PROCESS.md`).
         flagged = [r for r in results
                    if r.get("stats", {}).get("malicious", 0)
                    or r.get("stats", {}).get("suspicious", 0)]
-        if flagged and not self.force:
+        total_detections = sum(
+            r.get("stats", {}).get("malicious", 0) + r.get("stats", {}).get("suspicious", 0)
+            for r in results)
+        if flagged and total_detections > self.max_detections:
             detail = "; ".join(
                 f"{r['file']}: {r['stats'].get('malicious', 0)} malicious / "
                 f"{r['stats'].get('suspicious', 0)} suspicious" for r in flagged)
             raise RuntimeError(
-                f"VirusTotal reported detections ({detail}). Refusing to publish; "
-                f"investigate, then pass --force to override."
+                f"VirusTotal reported {total_detections} detection(s) ({detail}), above the "
+                f"allowed {self.max_detections}. Refusing to publish; investigate, raise "
+                f"--max-detections, or pass --force to override."
             )
-        log(f"VirusTotal clean: {len(results)} artifact(s) scanned, "
+        if flagged:
+            log(f"Note: {total_detections} detection(s) tolerated by --max-detections "
+                f"{self.max_detections}; they are disclosed in the release notes.")
+        log(f"VirusTotal scan finished: {len(results)} artifact(s), "
             f"{client.requests_made} API request(s) used")
 
     # ── stage 7: verify ─────────────────────────────────────────────────
@@ -913,12 +921,16 @@ def main():
                         help="Keep artifacts local; do not attach them to GitHub")
     parser.add_argument("--skip-installer", action="store_true",
                         help="Portable zip only (no Inno Setup package)")
+    parser.add_argument("--max-detections", type=int, default=0, metavar="N",
+                        help="Tolerate up to N VirusTotal detections across the scanned "
+                             "artifacts (default 0: any detection blocks the release)")
     args = parser.parse_args()
 
     pipeline = ReleasePipeline(
         args.tag, dry_run=args.dry_run, no_publish=args.no_publish,
         no_bump=args.no_bump, force=args.force, clobber=args.clobber,
         no_release_page=args.no_release_page, skip_installer=args.skip_installer,
+        max_detections=args.max_detections,
     )
     start = STAGES.index(args.from_stage)
     handlers = {

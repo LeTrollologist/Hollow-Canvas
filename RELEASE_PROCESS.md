@@ -165,6 +165,16 @@ two-artifact scan typically uses 6–12 requests.
 `<!-- virustotal:begin --> … <!-- virustotal:end -->` block appended to
 `release-notes/<tag>.md`, which becomes the release body.
 
+**The detections gate.** Any detection blocks the release by default. Unsigned Windows
+installers routinely trip a handful of generic ML heuristics (no named family), so the
+gate is tunable per release:
+
+```powershell
+python scripts/pipeline.py v2.2.1 --max-detections 4
+```
+
+Whatever is tolerated still appears in the notes, and the default stays `0`.
+
 ---
 
 ## 8. Uploading artifacts

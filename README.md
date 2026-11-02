@@ -11,7 +11,7 @@
 <!-- Tier 1: Project Metadata & Quality Assurance Badges -->
 <p align="center">
   <a href="https://github.com/LeTrollologist/Aurelia/releases">
-    <img src="https://img.shields.io/badge/Release-v2.1.1-F6C45A?style=for-the-badge&logo=github&logoColor=1A120B&labelColor=1A120B" alt="Release" />
+    <img src="https://img.shields.io/badge/Release-v2.2.1-F6C45A?style=for-the-badge&logo=github&logoColor=1A120B&labelColor=1A120B" alt="Release" />
   </a>
   <a href="crates/">
     <img src="https://img.shields.io/badge/Engine-100%25_Pure_Rust-E8963F?style=for-the-badge&logo=rust&logoColor=1A120B&labelColor=1A120B" alt="Engine" />
@@ -151,7 +151,7 @@ Full details, silent-install switches and verification steps live in [`INSTALL.m
 
 ### Option 1: Installer (Recommended)
 
-1. Download [`Aurelia-Setup-2.1.1.exe`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
+1. Download [`Aurelia-Setup-2.2.1.exe`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
 2. Run it — it installs per user to `%LOCALAPPDATA%\Programs\Aurelia` (no administrator rights, no UAC prompt).
 3. Optionally keep *"Open Aurelia projects with Aurelia (.aur, .hcv)"* checked for double-click opening, and tick *Create a desktop shortcut*.
 4. Launch **Aurelia** from the Start menu.
@@ -159,7 +159,7 @@ Full details, silent-install switches and verification steps live in [`INSTALL.m
 Silent install:
 
 ```powershell
-Aurelia-Setup-2.1.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+Aurelia-Setup-2.2.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
 ---
@@ -168,10 +168,10 @@ Aurelia-Setup-2.1.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
 No installer and no registry writes of its own:
 
-1. Download [`Aurelia-v2.1.1-win64.zip`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
+1. Download [`Aurelia-v2.2.1-win64.zip`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
 2. Extract it with PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\Aurelia-v2.1.1-win64.zip -DestinationPath .\Aurelia
+   Expand-Archive -Path .\Aurelia-v2.2.1-win64.zip -DestinationPath .\Aurelia
    ```
 3. Double-click `Aurelia\aurelia.exe` to launch immediately.
 
@@ -304,7 +304,7 @@ workflow by design (see [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md)):
 
 ```bash
 make check                                            # cargo check --all-targets + workspace tests
-python scripts/pipeline.py v2.1.1 --no-publish  # build, test, audit, package, sign (no upload)
+python scripts/pipeline.py v2.2.1 --no-publish  # build, test, audit, package, sign (no upload)
 ```
 
 ---
