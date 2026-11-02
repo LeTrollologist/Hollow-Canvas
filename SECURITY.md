@@ -19,6 +19,27 @@ We provide security updates and patches for the following versions of **Aurelia*
 
 ---
 
+## VirusTotal Verification (API v3)
+
+Every release's two binaries — the portable zip and the Inno Setup installer — are
+submitted to VirusTotal during the pipeline's `virustotal` stage, and the release aborts
+if any engine reports a detection:
+
+- **Endpoint/contract**: `POST /files` (multipart, ≤ 32 MB) or `POST /files/{sha256}/analyse`
+  for samples VirusTotal already holds, then `GET /analyses/{id}` until `status == completed`
+  with engines actually reporting.
+- **Credential**: read from the `VIRUSTOTAL_API_KEY` environment variable only — never from a
+  file, never committed.
+- **Quota discipline**: the public API allows 4 requests/minute and 500/day, so the client
+  paces every call 15 s apart and retries documented `429`/`503`/`504` responses.
+- **Published evidence**: `virustotal-summary.txt` (per-artifact verdicts and permalinks,
+  hashed in `SHA256SUMS.txt`) and a verdict table inside the release notes.
+
+The scanner lives in `scripts/virustotal.py`; see `RELEASE_PROCESS.md` §7 for the full
+contract.
+
+---
+
 ## Release Integrity (SHA-256 + local release records)
 
 Since **v2.1.0** releases ship a portable zip and an Inno Setup installer instead of

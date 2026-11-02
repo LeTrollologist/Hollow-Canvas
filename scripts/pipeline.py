@@ -12,19 +12,25 @@ Stages:
   3. build:     cargo build --release -p aurelia-app.
   4. test:      cargo test --workspace, with pass/fail counts recorded.
   5. package:   portable zip + Inno Setup installer + release notes in dist/<tag>/.
-  6. verify:    SHA256SUMS.txt, archive integrity, installer sanity, ledger drift.
-  7. publish:   commit pipeline-managed changes, annotated tag, push, verify origin.
-  8. ship:      attach the verified bytes to the GitHub release page (REST, no CLI).
+  6. virustotal: submit zip + installer to the VirusTotal API v3 and record verdicts.
+  7. verify:    SHA256SUMS.txt, archive integrity, installer sanity, ledger drift.
+  8. publish:   commit pipeline-managed changes, annotated tag, push, verify origin.
+  9. ship:      attach the verified bytes to the GitHub release page (REST, no CLI).
 
 Usage:
-  python scripts/pipeline.py v2.1.0                 # full release pipeline
-  python scripts/pipeline.py v2.1.0 --dry-run       # preview stages, no side effects
-  python scripts/pipeline.py v2.1.0 --from package  # resume from packaging
-  python scripts/pipeline.py v2.1.0 --skip test     # skip a stage
-  python scripts/pipeline.py v2.1.0 --no-publish    # build/package/verify only
-  python scripts/pipeline.py v2.1.0 --skip-installer
-  python scripts/pipeline.py v2.1.0 --clobber       # republish a released version
-  python scripts/pipeline.py v2.1.0 --force         # publish a dirty tree / move a tag
+  python scripts/pipeline.py v2.2.1                 # full release pipeline
+  python scripts/pipeline.py v2.2.1 --dry-run       # preview stages, no side effects
+  python scripts/pipeline.py v2.2.1 --from package  # resume from packaging
+  python scripts/pipeline.py v2.2.1 --skip test     # skip a stage
+  python scripts/pipeline.py v2.2.1 --skip virustotal
+  python scripts/pipeline.py v2.2.1 --no-publish    # build/package/scan/verify only
+  python scripts/pipeline.py v2.2.1 --skip-installer
+  python scripts/pipeline.py v2.2.1 --clobber       # republish a released version
+  python scripts/pipeline.py v2.2.1 --force         # publish a dirty tree / move a tag
+
+VirusTotal scanning reads the key from the environment variable VIRUSTOTAL_API_KEY
+(never from a file). The public API allows 4 requests/minute and 500/day, so all
+requests are paced by scripts/virustotal.py.
 
 Publishing is pure git: the release *is* the annotated tag, the artifacts in
 dist/<tag>/ and the record in releases/<tag>.json. GitHub is only a file host.
@@ -42,8 +48,12 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from virustotal import VirusTotalClient, VirusTotalError, stats_total as vt_stats_total  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
-STAGES = ["preflight", "version", "build", "test", "package", "verify", "publish", "ship"]
+STAGES = ["preflight", "version", "build", "test", "package", "virustotal",
+          "verify", "publish", "ship"]
 
 PRODUCT = "Aurelia"
 APP_CRATE = "aurelia-app"
@@ -468,9 +478,135 @@ Built and verified locally by `scripts/pipeline.py` (see `RELEASE_PROCESS.md`).
 
         shutil.rmtree(staging, ignore_errors=True)
 
-    # ── stage 6: verify ─────────────────────────────────────────────────
+    # ── stage 6: virustotal ─────────────────────────────────────────────
+    VT_BEGIN = "<!-- virustotal:begin -->"
+    VT_END = "<!-- virustotal:end -->"
+
+    def _vt_targets(self):
+        """The artifacts users actually run: the portable zip and the installer."""
+        targets = [self.dist_dir / f"{PRODUCT}-{self.tag}-win64.zip"]
+        if not self.skip_installer:
+            targets.append(self.dist_dir / f"{PRODUCT}-Setup-{self.ver}.exe")
+        return [path for path in targets if path.exists()]
+
+    def _vt_notes_block(self, results):
+        lines = [self.VT_BEGIN, "", "## 🛡️ VirusTotal verification", "",
+                 "Both artifacts were submitted to the VirusTotal API v3 by the release "
+                 "pipeline; verdicts below are what the engines reported at scan time.", "",
+                 "| Artifact | Detections | Engines reporting | Report |",
+                 "| :--- | :--- | :--- | :--- |"]
+        for result in results:
+            stats = result.get("stats", {})
+            detections = stats.get("malicious", 0) + stats.get("suspicious", 0)
+            icon = "🟢" if detections == 0 else "🔴"
+            lines.append(
+                f"| `{result['file']}` | {icon} {detections} | {result.get('engines', 0)} "
+                f"| [VirusTotal]({result['permalink']}) |"
+            )
+        lines += ["", "SHA-256 of the scanned artifacts:", ""]
+        for result in results:
+            lines.append(f"- `{result['sha256']}` — `{result['file']}`")
+        lines += ["", self.VT_END]
+        return "\n".join(lines)
+
+    def _apply_vt_notes(self, results):
+        """Write the verdict block into the authored notes and the packaged copy."""
+        block = self._vt_notes_block(results)
+        pattern = re.compile(
+            re.escape(self.VT_BEGIN) + r".*?" + re.escape(self.VT_END), re.DOTALL)
+        for target in (self.notes_path, self.dist_dir / "RELEASE_NOTES.md"):
+            if target.exists():
+                text = target.read_text(encoding="utf-8")
+            elif target == self.notes_path:
+                text = self._generated_notes()
+            else:
+                continue
+            if pattern.search(text):
+                text = pattern.sub(block, text)
+            else:
+                text = text.rstrip() + "\n\n" + block + "\n"
+            target.write_text(text, encoding="utf-8")
+            log(f"  wrote VirusTotal verdicts into {target.relative_to(ROOT)}")
+
+    def stage_virustotal(self):
+        log("STAGE 6: VirusTotal scan (API v3)", header=True)
+        if self.dry_run:
+            log("[DRY-RUN] Would submit the zip and installer to the VirusTotal API.")
+            return
+
+        api_key = os.environ.get("VIRUSTOTAL_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError(
+                "VIRUSTOTAL_API_KEY is not set in the environment. Set it before releasing "
+                "(PowerShell: $env:VIRUSTOTAL_API_KEY = '<key>') or pass --skip virustotal "
+                "to ship without a scan."
+            )
+        targets = self._vt_targets()
+        if not targets:
+            raise FileNotFoundError(
+                f"no artifacts to scan in {self.dist_dir}; run the package stage first"
+            )
+
+        client = VirusTotalClient(api_key, log=lambda message: log(message))
+        results = []
+        for path in targets:
+            try:
+                results.append(client.scan(path))
+            except VirusTotalError as exc:
+                raise RuntimeError(f"VirusTotal scan failed for {path.name}: {exc}") from None
+
+        # Machine-readable audit trail next to the artifacts.
+        audit_dir = self.dist_dir / "audit"
+        audit_dir.mkdir(exist_ok=True)
+        for result in results:
+            (audit_dir / f"virustotal-{result['file']}.json").write_text(
+                json.dumps(result, indent=2) + "\n", encoding="utf-8")
+
+        summary = [
+            f"VirusTotal API v3 scan — {PRODUCT} {self.tag}",
+            "=" * 68,
+            f"requests used: {client.requests_made}",
+            "",
+        ]
+        for result in results:
+            stats = result.get("stats", {})
+            summary += [
+                f"{result['file']}",
+                f"  sha256:     {result['sha256']}",
+                f"  permalink:  {result['permalink']}",
+                f"  submitted:  {result['via']}",
+                f"  verdict:    {stats.get('malicious', 0)} malicious / "
+                f"{stats.get('suspicious', 0)} suspicious / "
+                f"{stats.get('undetected', 0)} undetected / "
+                f"{stats.get('harmless', 0)} harmless",
+                f"  engines:    {result.get('engines', 0)} reporting",
+                "",
+            ]
+        summary_text = "\n".join(summary)
+        (audit_dir / "virustotal-summary.txt").write_text(summary_text, encoding="utf-8")
+        # Top-level copy so it is hashed and shipped like every other asset.
+        (self.dist_dir / "virustotal-summary.txt").write_text(summary_text, encoding="utf-8")
+
+        self._apply_vt_notes(results)
+        self._save_state(virustotal=results)
+
+        flagged = [r for r in results
+                   if r.get("stats", {}).get("malicious", 0)
+                   or r.get("stats", {}).get("suspicious", 0)]
+        if flagged and not self.force:
+            detail = "; ".join(
+                f"{r['file']}: {r['stats'].get('malicious', 0)} malicious / "
+                f"{r['stats'].get('suspicious', 0)} suspicious" for r in flagged)
+            raise RuntimeError(
+                f"VirusTotal reported detections ({detail}). Refusing to publish; "
+                f"investigate, then pass --force to override."
+            )
+        log(f"VirusTotal clean: {len(results)} artifact(s) scanned, "
+            f"{client.requests_made} API request(s) used")
+
+    # ── stage 7: verify ─────────────────────────────────────────────────
     def stage_verify(self):
-        log("STAGE 6: Verification & checksum generation", header=True)
+        log("STAGE 7: Verification & checksum generation", header=True)
         if self.dry_run:
             log("[DRY-RUN] Would verify and hash the release assets.")
             return
@@ -568,6 +704,7 @@ Built and verified locally by `scripts/pipeline.py` (see `RELEASE_PROCESS.md`).
             "assets": self._asset_digests(),
             "installer": (None if self.skip_installer
                           else f"{PRODUCT}-Setup-{self.ver}.exe"),
+            "virustotal": self._load_state().get("virustotal"),
             "published_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "republish_count": int(previous.get("republish_count", 0)) + (1 if previous else 0),
             "recorded_near_commit": commit,
@@ -790,6 +927,7 @@ def main():
         "build": pipeline.stage_build,
         "test": pipeline.stage_test,
         "package": pipeline.stage_package,
+        "virustotal": pipeline.stage_virustotal,
         "verify": pipeline.stage_verify,
         "publish": pipeline.stage_publish,
         "ship": pipeline.stage_ship,

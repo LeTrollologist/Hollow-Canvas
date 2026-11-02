@@ -34,6 +34,7 @@ zip, an Inno Setup installer and a SHA-256 manifest.
 | Rust (`cargo`, `rustc`) | build, test | 1.80+ recommended |
 | **Inno Setup 6** (`ISCC.exe`) | installer | `winget install JRSoftware.InnoSetup`; skip with `--skip-installer` |
 | git + `origin` | publish | the HTTPS credential is reused for uploads |
+| **VirusTotal API key** | virustotal | environment variable `VIRUSTOTAL_API_KEY` (never a file); skip with `--skip virustotal` |
 | Python 3.10+ | the pipeline itself | no third-party packages |
 
 `preflight` locates `ISCC.exe` in `%ProgramFiles(x86)%`, `%ProgramFiles%`,
@@ -51,6 +52,7 @@ above if it cannot find it.
 | **`build`** | Compile | `cargo build --release -p aurelia-app`; records the binary hash |
 | **`test`** | Verify | `cargo test --workspace`; records `N tests passed` |
 | **`package`** | Bundle | Portable zip + `Aurelia-Setup-<ver>.exe` + release notes in `dist/<tag>/` |
+| **`virustotal`** | Scan | Submits the zip **and** the installer to the VirusTotal API v3, writes the verdict into the release notes and `virustotal-summary.txt`, and aborts on detections unless `--force` |
 | **`verify`** | Integrity | `SHA256SUMS.txt`, zip member/licensing checks, installer `MZ`/size check, ledger drift detection |
 | **`publish`** | Git | Commits pipeline-owned changes only, annotated tag, push branch + tag, verifies `origin` |
 | **`ship`** | Upload | `scripts/release_page.py` attaches the verified bytes to the GitHub release page over the REST API |
@@ -90,10 +92,14 @@ Makefile shortcuts: `release`, `check`, `version`, `build`, `test`, `package`,
 ## 5. Output layout (`dist/<tag>/`)
 
 ```text
-dist/v2.1.0/
-├── Aurelia-v2.1.0-win64.zip     # Portable distribution (exe + docs)
-├── Aurelia-Setup-2.1.0.exe      # Per-user Inno Setup installer
-├── RELEASE_NOTES.md             # Copied from release-notes/<tag>.md (also the release body)
+dist/<tag>/
+├── Aurelia-<tag>-win64.zip      # Portable distribution (exe + docs)
+├── Aurelia-Setup-<ver>.exe      # Per-user Inno Setup installer
+├── RELEASE_NOTES.md             # release-notes/<tag>.md + the VirusTotal block
+├── virustotal-summary.txt       # Engine verdicts for both artifacts (hashed + uploaded)
+├── audit/
+│   ├── virustotal-summary.txt
+│   └── virustotal-<artifact>.json
 ├── SHA256SUMS.txt               # Written by the verify stage
 └── PUBLISH.txt                  # Written by the publish stage (commit, remote, asset list)
 ```
@@ -121,7 +127,47 @@ produced `Setup` file is a real PE image above a size floor.
 
 ---
 
-## 7. Uploading artifacts
+## 7. VirusTotal scanning (API v3)
+
+The `virustotal` stage scans **both shipped binaries** — `Aurelia-v<ver>-win64.zip`
+and `Aurelia-Setup-<ver>.exe` — and refuses to publish if any engine reports a
+detection (`--force` overrides).
+
+**Key handling.** The API key is read from the environment only:
+
+```powershell
+$env:VIRUSTOTAL_API_KEY = "<your key>"   # current session
+python scripts/pipeline.py v2.2.1
+```
+
+Nothing reads `.env` and nothing is written to the repository. Without the variable the
+stage fails with instructions; pass `--skip virustotal` to ship without a scan.
+
+**API contract** (`scripts/virustotal.py`, verified against the official docs):
+
+| Call | Purpose |
+| :--- | :--- |
+| `GET /files/{sha256}` | Reuse an existing report; a record with all-zero `last_analysis_stats` means "submitted but never analysed" |
+| `POST /files` | Multipart upload of one file (≤ 32 MB) → analysis id |
+| `POST /files/{sha256}/analyse` | Re-analyse a sample VT already holds (used for known hashes and `409 AlreadyExistsError`) |
+| `GET /analyses/{id}` | Poll until `status == completed` **and** engines actually reported |
+
+Errors follow `{"error": {"code", "message"}}`; the client retries `429 QuotaExceededError`,
+`503 TransientError` and `504 DeadlineExceededError`, and treats `404 NotFoundError` as
+"not visible yet" while polling.
+
+**Quota.** The public API allows **4 requests/minute and 500/day** (daily reset 00:00 UTC),
+so every request goes through a single pacer (`PUBLIC_MIN_INTERVAL = 15 s`). A full
+two-artifact scan typically uses 6–12 requests.
+
+**Outputs.** `dist/<tag>/virustotal-summary.txt` (hashed and uploaded like any asset),
+`dist/<tag>/audit/virustotal-*.json` (per-artifact record) and a fenced
+`<!-- virustotal:begin --> … <!-- virustotal:end -->` block appended to
+`release-notes/<tag>.md`, which becomes the release body.
+
+---
+
+## 8. Uploading artifacts
 
 `ship` runs `scripts/release_page.py <tag>`:
 
@@ -136,7 +182,7 @@ that lacks a release page.
 
 ---
 
-## 8. Verification & integrity
+## 9. Verification & integrity
 
 ```powershell
 # 1. Checksums shipped with the release
@@ -155,7 +201,7 @@ the new bytes are recorded as the next publication.
 
 ---
 
-## 9. Installation
+## 10. Installation
 
 See [`INSTALL.md`](INSTALL.md). Short version:
 

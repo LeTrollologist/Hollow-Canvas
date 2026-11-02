@@ -53,6 +53,10 @@ Get-FileHash .\Aurelia-Setup-2.1.1.exe -Algorithm SHA256
 # compare against the matching line in SHA256SUMS.txt
 ```
 
+The zip and the installer are also submitted to VirusTotal by the release pipeline; the
+release notes list the per-artifact verdict and a permalink, and `virustotal-summary.txt`
+ships with the download.
+
 ## Building from source
 
 ```powershell

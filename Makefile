@@ -2,7 +2,7 @@
 # Stages: preflight -> version -> build -> test -> package -> verify -> publish -> ship
 TAG ?= v2.1.1
 
-.PHONY: release check version build test package portable verify ship republish dry-run clean
+.PHONY: release check version build test package portable scan verify ship republish dry-run clean
 
 # Full release: bump versions, build, test, package (zip + Inno Setup installer), publish
 release:
@@ -35,6 +35,10 @@ portable:
 # Verify checksums, archive integrity and the installer image
 verify:
 	python scripts/pipeline.py $(TAG) --from verify --skip publish --skip ship
+
+# Scan the packaged artifacts with the VirusTotal API (needs VIRUSTOTAL_API_KEY)
+scan:
+	python scripts/pipeline.py $(TAG) --from virustotal --skip verify --skip publish --skip ship
 
 # Attach already-verified artifacts to the GitHub release page (REST, no CLI)
 ship:

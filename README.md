@@ -54,6 +54,10 @@
   <a href="RELEASE_PROCESS.md">
     <img src="https://img.shields.io/badge/Integrity-SHA--256_%2B_Ledger-F3E7D6?style=flat-square&labelColor=1A120B" alt="Integrity" />
   </a>
+  &nbsp;
+  <a href="SECURITY.md">
+    <img src="https://img.shields.io/badge/VirusTotal-Scanned_via_API_v3-3FA796?style=flat-square&labelColor=1A120B" alt="VirusTotal" />
+  </a>
 </p>
 
 <!-- Tier 3: Interactive Quick Navigation Buttons -->
@@ -119,7 +123,7 @@
 - ✍ **Stylus Pressure & Tilt**: Pen input is sampled through `WM_POINTER` / `GetPointerPenInfo`; real pressure drives brush size while the mouse path (and velocity dynamics) keeps working unchanged.
 - 🧠 **Memory-Bounded Undo**: The 50-step history also enforces a 512 MiB budget, evicting the oldest full-layer snapshots first so long sessions cannot balloon into multi-gigabyte RSS.
 - 📊 **Tone & Stylize Filters**: Levels (black/white/gamma), Colorize, Pixelate and Motion Blur alongside the existing blur/sharpen/grain/vignette/lens set — all with live, non-destructive previews and selection awareness.
-- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.aur`, AUR v1) alongside SHA-256-verified installer and portable releases.
+- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.aur`, AUR v1) alongside SHA-256-verified, VirusTotal-scanned installer and portable releases.
 
 ---
 
