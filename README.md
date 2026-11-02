@@ -304,7 +304,7 @@ workflow by design (see [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md)):
 
 ```bash
 make check                                            # cargo check --all-targets + workspace tests
-python scripts/pipeline.py v2.2.2 --no-publish  # build, test, audit, package, sign (no upload)
+python scripts/pipeline.py v2.4.0 --no-publish  # build, test, audit, package, scan (no upload)
 ```
 
 ---

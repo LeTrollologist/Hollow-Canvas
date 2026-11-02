@@ -87,6 +87,13 @@ MANAGED_PATHS = set(VERSION_FILES) | {"Cargo.lock", "release-notes", "releases",
 # consistency check below fails on a release that is otherwise ready.
 DECLARATION_RULES = [
     (re.compile(r'(?m)^version = "\d+\.\d+\.\d+"'), lambda v: f'version = "{v}"'),
+    # Intra-workspace dependency pins: `aurelia-core = { path = "..", version = "x.y.z" }`.
+    (
+        re.compile(
+            r'([A-Za-z0-9_-]+\s*=\s*\{\s*path\s*=\s*"[^"]*"\s*,\s*version\s*=\s*")\d+\.\d+\.\d+(")'
+        ),
+        lambda v: rf"\g<1>{v}\g<2>",
+    ),
     (re.compile(r"(Release-v)\d+\.\d+\.\d+"), lambda v: rf"\g<1>{v}"),
     (re.compile(r"(Aurelia-v)\d+\.\d+\.\d+(-win64)"), lambda v: rf"\g<1>{v}\g<2>"),
     (re.compile(r"(Aurelia-Setup-)\d+\.\d+\.\d+"), lambda v: rf"\g<1>{v}"),
