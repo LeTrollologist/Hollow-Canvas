@@ -101,8 +101,9 @@ def assets_for(tag):
     dist = ROOT / "dist" / tag
     if not dist.exists():
         return []
+    # PUBLISH.txt is a local build record; SHA256SUMS.txt must ship so users can verify.
     return [p for p in sorted(dist.glob("*"))
-            if p.is_file() and p.name not in ("SHA256SUMS.txt", "PUBLISH.txt")]
+            if p.is_file() and p.name != "PUBLISH.txt"]
 
 
 def _recorded_hashes(tag):
@@ -124,6 +125,8 @@ def dist_is_consistent(tag, files):
     if not recorded:
         return False, "SHA256SUMS.txt is missing"
     for path in files:
+        if path.name == "SHA256SUMS.txt":
+            continue  # the manifest cannot hash itself
         want = recorded.get(path.name)
         if want is None:
             return False, f"{path.name} is not listed in SHA256SUMS.txt"
