@@ -2309,4 +2309,63 @@ mod tests {
             .count();
         assert!(changed > 0, "the polygon outline painted nothing onto the 16-bit layer");
     }
+
+    /// Gradient on 16-bit storage: the interpolation must produce values off the 8-bit lattice,
+    /// which is only possible if the gradient is evaluated and written at 16 bits rather than
+    /// quantised on the way in or out.
+    #[test]
+    fn gradient_writes_native_sixteen_bit_values() {
+        use crate::brush::{BrushSettings, GradientType, ToolType};
+        use crate::layer::{LayerBuffer, PixelFormat};
+
+        let mut doc = Document::new(16, 4);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        let mid = crate::pixel::srgb8_to_srgb16(90) + 128;
+        let mut channels = vec![0u16; 16 * 4 * 4];
+        for pixel in 0..(16 * 4) {
+            for channel in 0..3 {
+                channels[pixel * 4 + channel] = mid;
+            }
+            channels[pixel * 4 + 3] = 65535;
+        }
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        let mut brush = BrushSettings::default();
+        brush.tool = ToolType::Gradient;
+        brush.gradient_type = GradientType::Linear;
+        brush.primary_color = Color::from_rgba8(0, 0, 0, 255);
+        brush.secondary_color = Color::WHITE;
+        brush.opacity = 0.5;
+
+        crate::rasterizer::StrokeRasterizer::rasterize_gradient(
+            &mut doc,
+            glam::Vec2::new(0.0, 0.0),
+            glam::Vec2::new(16.0, 0.0),
+            &brush,
+            None,
+        );
+
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16, "the gradient must not change storage");
+        let painted = layer.as_srgb16().expect("16-bit");
+
+        let mut off_lattice = 0;
+        let mut moved = 0;
+        for pixel in painted.chunks_exact(4) {
+            if pixel[0] != mid {
+                moved += 1;
+                if pixel[0] % 257 != 0 {
+                    off_lattice += 1;
+                }
+            }
+        }
+        assert!(moved > 0, "the gradient painted nothing");
+        assert!(
+            off_lattice > 0,
+            "every gradient value landed on the 8-bit lattice: interpolation was quantised"
+        );
+    }
 }

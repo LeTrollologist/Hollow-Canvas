@@ -954,28 +954,29 @@ impl StrokeRasterizer {
         }
     }
 
-    pub fn rasterize_gradient(
-        doc: &mut Document,
+    /// Gradient fill, dispatching once per operation.
+    ///
+    /// The interpolation is the existing code, moved not rewritten: the projection, the
+    /// dither term and its clamp, and `lerp` on the brush colours are untouched, which is
+    /// what keeps interpolation identical at both storage widths. Only the storage read,
+    /// the blend call and the write changed.
+    #[allow(clippy::too_many_arguments)]
+    fn gradient_impl<C: Channel + PartialEq>(
+        pixels: &mut [C],
+        doc_w: u32,
+        doc_h: u32,
         start: Vec2,
-        end: Vec2,
-        brush: &BrushSettings,
-        selection: Option<&SelectionMask>,
+        diff: Vec2,
+        length_sq: f32,
+        length: f32,
+        grad_type: GradientType,
+        dither: bool,
+        col0: Color,
+        col1: Color,
+        active_mask: Option<&SelectionMask>,
+        blend_mode: BlendMode,
+        opacity: f32,
     ) {
-        let (doc_w, doc_h, active_id) = (doc.width, doc.height, doc.active_layer_id);
-        let layer = match doc.get_layer_mut(active_id) {
-            Some(l) if !l.locked => l,
-            _ => return,
-        };
-
-        let active_mask = selection.filter(|s| s.has_selection());
-        let col0 = brush.primary_color;
-        let col1 = brush.secondary_color;
-        let diff = end - start;
-        let length_sq = diff.length_squared().max(1.0);
-        let length = length_sq.sqrt();
-        let grad_type = brush.gradient_type;
-        let dither = brush.gradient_dither;
-
         for y in 0..doc_h {
             for x in 0..doc_w {
                 if let Some(mask) = active_mask {
@@ -1002,10 +1003,45 @@ impl StrokeRasterizer {
 
                 let color = col0.lerp(col1, t);
                 let idx = ((y * doc_w + x) * 4) as usize;
-                let dst = [layer.as_srgb8_exact()[idx], layer.as_srgb8_exact()[idx + 1], layer.as_srgb8_exact()[idx + 2], layer.as_srgb8_exact()[idx + 3]];
-                let blended = layer.blend_mode.composite_pixel(dst, color.to_rgba8(), brush.opacity);
-                layer.as_srgb8_exact_mut()[idx..idx + 4].copy_from_slice(&blended);
+                let dst = Self::read_px(pixels, idx);
+                let blended = blend_mode.composite_working(dst, Self::u8_px(color.to_rgba8()), opacity);
+                Self::store_px(pixels, idx, blended);
             }
+        }
+    }
+
+    pub fn rasterize_gradient(
+        doc: &mut Document,
+        start: Vec2,
+        end: Vec2,
+        brush: &BrushSettings,
+        selection: Option<&SelectionMask>,
+    ) {
+        let (doc_w, doc_h, active_id) = (doc.width, doc.height, doc.active_layer_id);
+        let layer = match doc.get_layer_mut(active_id) {
+            Some(l) if !l.locked => l,
+            _ => return,
+        };
+
+        let active_mask = selection.filter(|s| s.has_selection());
+        let col0 = brush.primary_color;
+        let col1 = brush.secondary_color;
+        let diff = end - start;
+        let length_sq = diff.length_squared().max(1.0);
+        let length = length_sq.sqrt();
+        let grad_type = brush.gradient_type;
+        let dither = brush.gradient_dither;
+
+        let blend_mode = layer.blend_mode;
+        match layer.buffer_mut() {
+            LayerBuffer::Srgb8(pixels) => Self::gradient_impl(
+                pixels, doc_w, doc_h, start, diff, length_sq, length, grad_type, dither, col0,
+                col1, active_mask, blend_mode, brush.opacity,
+            ),
+            LayerBuffer::Srgb16(pixels) => Self::gradient_impl(
+                pixels, doc_w, doc_h, start, diff, length_sq, length, grad_type, dither, col0,
+                col1, active_mask, blend_mode, brush.opacity,
+            ),
         }
     }
 
