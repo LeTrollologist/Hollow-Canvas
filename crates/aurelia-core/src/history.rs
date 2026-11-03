@@ -37,16 +37,16 @@ impl Command for LayerPixelsSnapshotCommand {
 
     fn undo(&mut self, doc: &mut Document) {
         if let Some(layer) = doc.get_layer_mut(self.layer_id) {
-            if layer.as_srgb8().len() == self.before_pixels.len() {
-                layer.as_srgb8_mut().copy_from_slice(&self.before_pixels);
+            if layer.as_srgb8_exact().len() == self.before_pixels.len() {
+                layer.as_srgb8_exact_mut().copy_from_slice(&self.before_pixels);
             }
         }
     }
 
     fn redo(&mut self, doc: &mut Document) {
         if let Some(layer) = doc.get_layer_mut(self.layer_id) {
-            if layer.as_srgb8().len() == self.after_pixels.len() {
-                layer.as_srgb8_mut().copy_from_slice(&self.after_pixels);
+            if layer.as_srgb8_exact().len() == self.after_pixels.len() {
+                layer.as_srgb8_exact_mut().copy_from_slice(&self.after_pixels);
             }
         }
     }
@@ -117,20 +117,23 @@ impl PixelDelta {
         PixelDelta::Spans(spans)
     }
 
-    fn apply(&self, pixels: &mut [u8], use_after: bool) {
+    /// Replays the delta into `layer` at the storage-byte level.
+    ///
+    /// Deliberately format-agnostic: it asks the layer to write storage bytes, so a delta
+    /// works the same whether the layer holds 8-bit or 16-bit channels and never interprets
+    /// a pixel itself.
+    fn apply(&self, layer: &mut Layer, use_after: bool) {
         match self {
             PixelDelta::Spans(spans) => {
                 for span in spans {
                     let source = if use_after { &span.after } else { &span.before };
-                    if span.offset + source.len() <= pixels.len() {
-                        pixels[span.offset..span.offset + source.len()].copy_from_slice(source);
-                    }
+                    layer.write_storage_bytes(span.offset, source);
                 }
             }
             PixelDelta::Whole { before, after } => {
                 let source = if use_after { after } else { before };
-                if pixels.len() == source.len() {
-                    pixels.copy_from_slice(source);
+                if layer.storage_len() == source.len() {
+                    layer.write_storage_bytes(0, source);
                 }
             }
         }
@@ -193,13 +196,13 @@ impl Command for LayerPixelsDeltaCommand {
 
     fn undo(&mut self, doc: &mut Document) {
         if let Some(layer) = doc.get_layer_mut(self.layer_id) {
-            self.delta.apply(layer.as_srgb8_mut(), false);
+            self.delta.apply(layer, false);
         }
     }
 
     fn redo(&mut self, doc: &mut Document) {
         if let Some(layer) = doc.get_layer_mut(self.layer_id) {
-            self.delta.apply(layer.as_srgb8_mut(), true);
+            self.delta.apply(layer, true);
         }
     }
 }
@@ -288,7 +291,7 @@ impl Command for FullDocumentSnapshotCommand {
     }
 
     fn cost(&self) -> usize {
-        let sum = |layers: &[Layer]| -> usize { layers.iter().map(|l| l.as_srgb8().len()).sum() };
+        let sum = |layers: &[Layer]| -> usize { layers.iter().map(|l| l.as_srgb8_exact().len()).sum() };
         sum(&self.before_layers) + sum(&self.after_layers)
     }
 
@@ -417,7 +420,7 @@ mod tests {
     fn pixels_of(doc: &Document, layer_id: u64) -> Vec<u8> {
         doc.get_layer(layer_id)
             .expect("layer")
-            .as_srgb8()
+            .as_srgb8_exact()
             .to_vec()
     }
 
@@ -428,7 +431,7 @@ mod tests {
             for dy in 0..size as usize {
                 for dx in 0..size as usize {
                     let at = ((y as usize + dy) * width + (x as usize + dx)) * 4;
-                    let pixels = layer.as_srgb8_mut();
+                    let pixels = layer.as_srgb8_exact_mut();
                     if at + 3 < pixels.len() {
                         pixels[at] = value;
                         pixels[at + 1] = value;
@@ -470,7 +473,7 @@ mod tests {
 
         // Every fourth pixel, so the diff cannot assume contiguity.
         if let Some(layer) = doc.get_layer_mut(layer_id) {
-            let pixels = layer.as_srgb8_mut();
+            let pixels = layer.as_srgb8_exact_mut();
             for index in (0..pixels.len() / 4).step_by(4) {
                 pixels[index * 4] = 200;
             }
@@ -605,13 +608,13 @@ mod tests {
         let mut doc = Document::new(4, 4);
         let layer_id = doc.active_layer_id;
         if let Some(layer) = doc.get_layer_mut(layer_id) {
-            for (index, byte) in layer.as_srgb8_mut().iter_mut().enumerate() {
+            for (index, byte) in layer.as_srgb8_exact_mut().iter_mut().enumerate() {
                 *byte = (index * 37 % 251) as u8;
             }
         }
         let before = pixels_of(&doc, layer_id);
         if let Some(layer) = doc.get_layer_mut(layer_id) {
-            for (index, byte) in layer.as_srgb8_mut().iter_mut().enumerate() {
+            for (index, byte) in layer.as_srgb8_exact_mut().iter_mut().enumerate() {
                 *byte = (index * 91 + 13 % 241) as u8;
             }
         }
@@ -622,5 +625,40 @@ mod tests {
         assert_eq!(pixels_of(&doc, layer_id), before, "undo must be byte-exact");
         command.redo(&mut doc);
         assert_eq!(pixels_of(&doc, layer_id), after, "redo must be byte-exact");
+    }
+
+    /// The stronger form of the format-agnostic constraint: the same delta machinery must
+    /// round-trip a **16-bit** layer exactly, without knowing it is 16-bit.
+    #[test]
+    fn deltas_round_trip_a_sixteen_bit_layer() {
+        use crate::layer::LayerBuffer;
+
+        let mut doc = Document::new(8, 8);
+        let layer_id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(layer_id) {
+            let channels: Vec<u16> = (0..(8 * 8 * 4) as u16).map(|i| i.wrapping_mul(257)).collect();
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+        let read_all = |doc: &Document| -> Vec<u8> {
+            let layer = doc.get_layer(layer_id).expect("layer");
+            let mut bytes = vec![0u8; layer.storage_len()];
+            assert!(layer.read_storage_bytes(0, &mut bytes));
+            bytes
+        };
+
+        let before = read_all(&doc);
+        if let Some(channels) = doc.get_layer_mut(layer_id).and_then(|l| l.as_srgb16_mut()) {
+            for (index, channel) in channels.iter_mut().enumerate().step_by(3) {
+                *channel = channel.wrapping_add(1000 + index as u16);
+            }
+        }
+        let after = read_all(&doc);
+        assert_ne!(before, after, "the fixture must change channels");
+
+        let mut command = LayerPixelsDeltaCommand::new(layer_id, "16-bit edit", before.clone(), after.clone());
+        command.undo(&mut doc);
+        assert_eq!(read_all(&doc), before, "undo of a 16-bit layer must be byte-exact");
+        command.redo(&mut doc);
+        assert_eq!(read_all(&doc), after, "redo of a 16-bit layer must be byte-exact");
     }
 }

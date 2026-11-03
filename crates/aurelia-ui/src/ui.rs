@@ -145,9 +145,9 @@ fn restore_and_preview(state: &mut AppState, apply: impl Fn(&mut [u8], u32, u32)
         return;
     };
     if let Some(layer) = document.active_layer_mut() {
-        if layer.as_srgb8().len() == orig.len() {
-            layer.as_srgb8_mut().copy_from_slice(orig);
-            apply(layer.as_srgb8_mut(), width, height);
+        if layer.as_srgb8_exact().len() == orig.len() {
+            layer.as_srgb8_exact_mut().copy_from_slice(orig);
+            apply(layer.as_srgb8_exact_mut(), width, height);
         }
     }
 }
@@ -334,7 +334,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             if ui.button("◱ Select Layer Alpha").clicked() {
                                 if let Some(layer) = state.document.active_layer() {
                                     let mask = SelectionMask::from_layer_alpha(
-                                        layer.as_srgb8(),
+                                        layer.as_srgb8_exact(),
                                         state.document.width,
                                         state.document.height,
                                         8,
@@ -354,7 +354,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             if ui.button("∩ Intersect with Layer Alpha").clicked() {
                                 let alpha = state.document.active_layer().map(|layer| {
                                     SelectionMask::from_layer_alpha(
-                                        layer.as_srgb8(),
+                                        layer.as_srgb8_exact(),
                                         state.document.width,
                                         state.document.height,
                                         8,
@@ -459,9 +459,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 let h = state.document.height;
                                 let sel = state.selection.clone();
                                 if let Some(layer) = state.document.active_layer_mut() {
-                                    let before = layer.as_srgb8().to_vec();
-                                    aurelia_core::filter::filter_invert(layer.as_srgb8_mut(), w, h, sel.as_ref());
-                                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Invert Colors", before, layer.as_srgb8().to_vec()));
+                                    let before = layer.as_srgb8_exact().to_vec();
+                                    aurelia_core::filter::filter_invert(layer.as_srgb8_exact_mut(), w, h, sel.as_ref());
+                                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Invert Colors", before, layer.as_srgb8_exact().to_vec()));
                                     state.history.push(cmd);
                                     state.set_status("Inverted Colors");
                                 }
@@ -472,9 +472,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 let h = state.document.height;
                                 let sel = state.selection.clone();
                                 if let Some(layer) = state.document.active_layer_mut() {
-                                    let before = layer.as_srgb8().to_vec();
-                                    aurelia_core::filter::filter_grayscale(layer.as_srgb8_mut(), w, h, sel.as_ref());
-                                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Grayscale", before, layer.as_srgb8().to_vec()));
+                                    let before = layer.as_srgb8_exact().to_vec();
+                                    aurelia_core::filter::filter_grayscale(layer.as_srgb8_exact_mut(), w, h, sel.as_ref());
+                                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Grayscale", before, layer.as_srgb8_exact().to_vec()));
                                     state.history.push(cmd);
                                     state.set_status("Applied Grayscale");
                                 }
@@ -485,9 +485,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 let h = state.document.height;
                                 let sel = state.selection.clone();
                                 if let Some(layer) = state.document.active_layer_mut() {
-                                    let before = layer.as_srgb8().to_vec();
-                                    aurelia_core::filter::filter_sepia(layer.as_srgb8_mut(), w, h, sel.as_ref());
-                                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Sepia", before, layer.as_srgb8().to_vec()));
+                                    let before = layer.as_srgb8_exact().to_vec();
+                                    aurelia_core::filter::filter_sepia(layer.as_srgb8_exact_mut(), w, h, sel.as_ref());
+                                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Sepia", before, layer.as_srgb8_exact().to_vec()));
                                     state.history.push(cmd);
                                     state.set_status("Applied Sepia Tone");
                                 }
@@ -2584,7 +2584,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     layer.set_pixels(orig.clone());
                     if state.filter_preview_active {
                         aurelia_core::filter::adjust_hsl(
-                            layer.as_srgb8_mut(),
+                            layer.as_srgb8_exact_mut(),
                             doc_w,
                             doc_h,
                             state.filter_hue_shift,
@@ -2637,7 +2637,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     layer.set_pixels(orig.clone());
                     if state.filter_preview_active {
                         aurelia_core::filter::adjust_brightness_contrast(
-                            layer.as_srgb8_mut(),
+                            layer.as_srgb8_exact_mut(),
                             doc_w,
                             doc_h,
                             state.filter_brightness,
@@ -2690,7 +2690,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     layer.set_pixels(orig.clone());
                     if state.filter_preview_active {
                         aurelia_core::filter::adjust_color_balance(
-                            layer.as_srgb8_mut(),
+                            layer.as_srgb8_exact_mut(),
                             doc_w,
                             doc_h,
                             state.filter_cyan_red,
@@ -2735,7 +2735,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         if ui.button(RichText::new("Apply Threshold").strong()).clicked() {
                             if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                                 layer.set_pixels(orig.clone());
-                                aurelia_core::filter::filter_threshold(layer.as_srgb8_mut(), doc_w, doc_h, state.filter_threshold_val, sel_mask.as_ref());
+                                aurelia_core::filter::filter_threshold(layer.as_srgb8_exact_mut(), doc_w, doc_h, state.filter_threshold_val, sel_mask.as_ref());
                             }
                             state.apply_filter_modal("Threshold");
                             return;
@@ -2751,7 +2751,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     layer.set_pixels(orig.clone());
                     if state.filter_preview_active {
                         aurelia_core::filter::filter_posterize(
-                            layer.as_srgb8_mut(),
+                            layer.as_srgb8_exact_mut(),
                             doc_w,
                             doc_h,
                             state.filter_posterize_levels,
@@ -2801,7 +2801,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     layer.set_pixels(orig.clone());
                     if state.filter_preview_active {
                         aurelia_core::filter::filter_gaussian_blur(
-                            layer.as_srgb8_mut(),
+                            layer.as_srgb8_exact_mut(),
                             doc_w,
                             doc_h,
                             state.filter_blur_radius,
@@ -2851,7 +2851,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                                 layer.set_pixels(orig.clone());
                                 aurelia_core::filter::filter_unsharp_mask(
-                                    layer.as_srgb8_mut(),
+                                    layer.as_srgb8_exact_mut(),
                                     doc_w,
                                     doc_h,
                                     state.filter_unsharp_radius,
@@ -2874,7 +2874,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     layer.set_pixels(orig.clone());
                     if state.filter_preview_active {
                         aurelia_core::filter::filter_sharpen(
-                            layer.as_srgb8_mut(),
+                            layer.as_srgb8_exact_mut(),
                             doc_w,
                             doc_h,
                             state.filter_sharpen_amount,
@@ -2925,7 +2925,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     layer.set_pixels(orig.clone());
                     if state.filter_preview_active {
                         aurelia_core::filter::filter_film_grain(
-                            layer.as_srgb8_mut(),
+                            layer.as_srgb8_exact_mut(),
                             doc_w,
                             doc_h,
                             state.filter_noise_intensity,
@@ -2977,7 +2977,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             if let (Some(orig), Some(layer)) = (&state.filter_original_pixels, state.document.active_layer_mut()) {
                                 layer.set_pixels(orig.clone());
                                 aurelia_core::filter::filter_chromatic_aberration(
-                                    layer.as_srgb8_mut(),
+                                    layer.as_srgb8_exact_mut(),
                                     doc_w,
                                     doc_h,
                                     state.filter_chromatic_shift,
@@ -2999,7 +2999,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     layer.set_pixels(orig.clone());
                     if state.filter_preview_active {
                         aurelia_core::filter::filter_vignette(
-                            layer.as_srgb8_mut(),
+                            layer.as_srgb8_exact_mut(),
                             doc_w,
                             doc_h,
                             state.filter_vignette_radius,

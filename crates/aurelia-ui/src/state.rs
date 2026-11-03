@@ -960,7 +960,7 @@ impl AppState {
     /// Backs up the active layer's pixels before opening a filter dialog
     pub fn begin_filter_modal(&mut self, modal: ActiveFilterModal) {
         if let Some(layer) = self.document.active_layer() {
-            self.filter_original_pixels = Some(layer.as_srgb8().to_vec());
+            self.filter_original_pixels = Some(layer.as_srgb8_exact().to_vec());
             self.active_filter_modal = modal;
             self.filter_preview_active = true;
         }
@@ -980,8 +980,8 @@ impl AppState {
     pub fn apply_filter_modal(&mut self, filter_name: &'static str) {
         if let Some(before) = self.filter_original_pixels.take() {
             if let Some(layer) = self.document.active_layer() {
-                if before != layer.as_srgb8() {
-                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, filter_name, before, layer.as_srgb8().to_vec()));
+                if before != layer.as_srgb8_exact() {
+                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, filter_name, before, layer.as_srgb8_exact().to_vec()));
                     self.history.push(cmd);
                     self.set_status(format!("Applied {}", filter_name));
                 }
@@ -1007,7 +1007,7 @@ impl AppState {
                     for x in 0..doc_w {
                         if sel.is_selected(x, y) {
                             let idx = (y * doc_w + x) as usize * 4;
-                            if layer.as_srgb8()[idx + 3] > 0 {
+                            if layer.as_srgb8_exact()[idx + 3] > 0 {
                                 min_x = min_x.min(x);
                                 max_x = max_x.max(x);
                                 min_y = min_y.min(y);
@@ -1020,7 +1020,7 @@ impl AppState {
                 for y in 0..doc_h {
                     for x in 0..doc_w {
                         let idx = (y * doc_w + x) as usize * 4;
-                        if layer.as_srgb8()[idx + 3] > 0 {
+                        if layer.as_srgb8_exact()[idx + 3] > 0 {
                             min_x = min_x.min(x);
                             max_x = max_x.max(x);
                             min_y = min_y.min(y);
@@ -1051,7 +1051,7 @@ impl AppState {
                     if should_extract {
                         let src_idx = (sy * doc_w + sx) as usize * 4;
                         let dst_idx = (py * patch_w + px) as usize * 4;
-                        patch[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8()[src_idx..src_idx + 4]);
+                        patch[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8_exact()[src_idx..src_idx + 4]);
                     }
                 }
             }
@@ -1087,7 +1087,7 @@ impl AppState {
             self.transform_session = TransformSession {
                 is_active: true,
                 mode: TransformMode::Affine,
-                original_layer_pixels: layer.as_srgb8().to_vec(),
+                original_layer_pixels: layer.as_srgb8_exact().to_vec(),
                 extracted_patch: patch,
                 patch_w,
                 patch_h,
@@ -1116,10 +1116,10 @@ impl AppState {
                         let should_clear = sel_opt.map_or(true, |s| s.is_selected(sx, sy));
                         if should_clear {
                             let idx = (sy * doc_w + sx) as usize * 4;
-                            layer_mut.as_srgb8_mut()[idx] = 0;
-                            layer_mut.as_srgb8_mut()[idx + 1] = 0;
-                            layer_mut.as_srgb8_mut()[idx + 2] = 0;
-                            layer_mut.as_srgb8_mut()[idx + 3] = 0;
+                            layer_mut.as_srgb8_exact_mut()[idx] = 0;
+                            layer_mut.as_srgb8_exact_mut()[idx + 1] = 0;
+                            layer_mut.as_srgb8_exact_mut()[idx + 2] = 0;
+                            layer_mut.as_srgb8_exact_mut()[idx + 3] = 0;
                         }
                     }
                 }
@@ -1153,7 +1153,7 @@ impl AppState {
 
         if let Some(layer) = self.document.active_layer_mut() {
             // Start from original pixels with source patch cleared
-            layer.as_srgb8_mut().copy_from_slice(orig);
+            layer.as_srgb8_exact_mut().copy_from_slice(orig);
             for py in 0..ph {
                 let sy = origin.y as u32 + py;
                 for px in 0..pw {
@@ -1162,10 +1162,10 @@ impl AppState {
                         let should_clear = sel_opt.map_or(true, |s| s.is_selected(sx, sy));
                         if should_clear {
                             let idx = (sy * doc_w + sx) as usize * 4;
-                            layer.as_srgb8_mut()[idx] = 0;
-                            layer.as_srgb8_mut()[idx + 1] = 0;
-                            layer.as_srgb8_mut()[idx + 2] = 0;
-                            layer.as_srgb8_mut()[idx + 3] = 0;
+                            layer.as_srgb8_exact_mut()[idx] = 0;
+                            layer.as_srgb8_exact_mut()[idx + 1] = 0;
+                            layer.as_srgb8_exact_mut()[idx + 2] = 0;
+                            layer.as_srgb8_exact_mut()[idx + 3] = 0;
                         }
                     }
                 }
@@ -1180,7 +1180,7 @@ impl AppState {
                         origin,
                         &transform,
                         interp,
-                        layer.as_srgb8_mut(),
+                        layer.as_srgb8_exact_mut(),
                         doc_w,
                         doc_h,
                     );
@@ -1192,7 +1192,7 @@ impl AppState {
                         ph,
                         &quad,
                         interp,
-                        layer.as_srgb8_mut(),
+                        layer.as_srgb8_exact_mut(),
                         doc_w,
                         doc_h,
                     );
@@ -1204,7 +1204,7 @@ impl AppState {
                         ph,
                         mesh_grid,
                         interp,
-                        layer.as_srgb8_mut(),
+                        layer.as_srgb8_exact_mut(),
                         doc_w,
                         doc_h,
                     );
@@ -1217,7 +1217,7 @@ impl AppState {
                         origin,
                         tps,
                         interp,
-                        layer.as_srgb8_mut(),
+                        layer.as_srgb8_exact_mut(),
                         doc_w,
                         doc_h,
                     );
@@ -1316,7 +1316,7 @@ impl AppState {
         self.update_transform_preview();
         if let Some(layer) = self.document.active_layer() {
             let before = self.transform_session.original_layer_pixels.clone();
-            let after = layer.as_srgb8().to_vec();
+            let after = layer.as_srgb8_exact().to_vec();
             if before != after {
                 let mode_name = match self.transform_session.mode {
                     TransformMode::Affine => "Free Transform",
@@ -1374,9 +1374,9 @@ impl AppState {
             let doc_h = self.document.height;
             let color = self.brush.primary_color.to_rgba8();
             if let Some(layer) = self.document.active_layer_mut() {
-                let before = layer.as_srgb8().to_vec();
-                mask.fill_selection(layer.as_srgb8_mut(), doc_w, doc_h, color);
-                let after = layer.as_srgb8().to_vec();
+                let before = layer.as_srgb8_exact().to_vec();
+                mask.fill_selection(layer.as_srgb8_exact_mut(), doc_w, doc_h, color);
+                let after = layer.as_srgb8_exact().to_vec();
                 if before != after {
                     let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Fill Selection", before, after));
                     self.history.push(cmd);
@@ -1392,9 +1392,9 @@ impl AppState {
             let doc_h = self.document.height;
             let color = [0, 0, 0, 0];
             if let Some(layer) = self.document.active_layer_mut() {
-                let before = layer.as_srgb8().to_vec();
-                mask.fill_selection(layer.as_srgb8_mut(), doc_w, doc_h, color);
-                let after = layer.as_srgb8().to_vec();
+                let before = layer.as_srgb8_exact().to_vec();
+                mask.fill_selection(layer.as_srgb8_exact_mut(), doc_w, doc_h, color);
+                let after = layer.as_srgb8_exact().to_vec();
                 if before != after {
                     let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Clear Selection", before, after));
                     self.history.push(cmd);
@@ -1416,9 +1416,9 @@ impl AppState {
                 _ => StrokePosition::Center,
             };
             if let Some(layer) = self.document.active_layer_mut() {
-                let before = layer.as_srgb8().to_vec();
-                mask.stroke_selection(layer.as_srgb8_mut(), doc_w, doc_h, color, width, pos);
-                let after = layer.as_srgb8().to_vec();
+                let before = layer.as_srgb8_exact().to_vec();
+                mask.stroke_selection(layer.as_srgb8_exact_mut(), doc_w, doc_h, color, width, pos);
+                let after = layer.as_srgb8_exact().to_vec();
                 if before != after {
                     let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Stroke Selection", before, after));
                     self.history.push(cmd);

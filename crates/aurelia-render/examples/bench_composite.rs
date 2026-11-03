@@ -37,7 +37,7 @@ fn build_doc(masked: bool, offset: bool, coverage: f32) -> Document {
         }
         if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == id) {
             // A cheap, non-uniform pattern so the blend path cannot be optimised out.
-            for (idx, px) in layer.as_srgb8_mut().chunks_exact_mut(4).enumerate() {
+            for (idx, px) in layer.as_srgb8_exact_mut().chunks_exact_mut(4).enumerate() {
                 let x = (idx as u32) % W;
                 let y = (idx as u32) / W;
                 px[0] = (x % 256) as u8;

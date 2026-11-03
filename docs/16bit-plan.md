@@ -247,6 +247,37 @@ Keeping those out is what lets the representation change without silently changi
 The next sub-step adds `Srgb16` alongside it, which is the point where accessors become
 fallible and conversion becomes explicit.
 
+### Sub-step 2: `Srgb16` and fallible accessors - done
+
+`LayerBuffer::Srgb16(Vec<u16>)` exists, gamma-encoded sRGB at 16 bits, and the accessors are
+now the approved shape:
+
+| Accessor | Behaviour |
+| :--- | :--- |
+| `as_srgb8() -> Option<&[u8]>` | `None` for other representations - the caller decides |
+| `as_srgb8_mut() -> Option<&mut [u8]>` | same |
+| `as_srgb8_exact()` / `as_srgb8_exact_mut()` | returns a view or **panics**; never converts, never allocates |
+| `as_srgb16()` / `as_srgb16_mut()` | the 16-bit view |
+| `read_storage_bytes` / `write_storage_bytes` | format-agnostic byte access, little-endian per channel |
+
+The invariant behind `as_srgb8_exact()` is stated once, in its documentation, rather than
+repeated 170 times: **nothing in the application creates a non-`Srgb8` layer yet** - new
+layers, loaded projects and the fixture builders all produce `Srgb8`, and the only `Srgb16`
+buffers in existence are the ones tests build deliberately. When AUR v3 can produce 16-bit
+documents, every one of those call sites must be revisited, which is exactly why they are
+named rather than hidden behind a blanket accessor.
+
+Three constraints were met with tests rather than promises:
+
+- **History stays format-agnostic** - and it is now genuinely so: the delta writes storage
+  bytes through `write_storage_bytes`, so it never interprets a pixel. `deltas_round_trip_a_sixteen_bit_layer` records and replays an edit on a 16-bit layer byte-exactly.
+- **Compositing dispatches at the boundary** - a 16-bit layer is converted **once per
+  composite** (not per row, not per pixel) and the existing 8-bit path runs on it.
+  `compositing_stages_a_sixteen_bit_layer_at_the_boundary` promotes every layer by `v*257`
+  and requires the output bytes to be identical.
+- **The oracle is untouched**: 92 tests pass, including the 702 combinations.
+
+
 1. `LayerBuffer` with `Srgb8` + `Srgb16`, accessors as specified in proposal section 2.
 2. Conversion boundaries and **per-layer quantisation** (proposal section 4, corrected:
    whole-pass working precision would break byte-identity).

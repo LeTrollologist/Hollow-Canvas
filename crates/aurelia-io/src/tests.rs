@@ -188,10 +188,10 @@ mod tests {
             for y in 0..64 {
                 for x in 0..64 {
                     let idx = ((y * 64 + x) * 4) as usize;
-                    layer.as_srgb8_mut()[idx] = (x * 4) as u8;
-                    layer.as_srgb8_mut()[idx + 1] = (y * 4) as u8;
-                    layer.as_srgb8_mut()[idx + 2] = ((x + y) * 2).min(255) as u8;
-                    layer.as_srgb8_mut()[idx + 3] = 255;
+                    layer.as_srgb8_exact_mut()[idx] = (x * 4) as u8;
+                    layer.as_srgb8_exact_mut()[idx + 1] = (y * 4) as u8;
+                    layer.as_srgb8_exact_mut()[idx + 2] = ((x + y) * 2).min(255) as u8;
+                    layer.as_srgb8_exact_mut()[idx + 3] = 255;
                 }
             }
         }

@@ -337,7 +337,7 @@ fn build_doc(masked: bool, offset: bool, coverage: f32, clipped: bool, all_gener
             doc.add_layer(Some(format!("Layer {i}")))
         };
         if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == id) {
-            for (idx, px) in layer.as_srgb8_mut().chunks_exact_mut(4).enumerate() {
+            for (idx, px) in layer.as_srgb8_exact_mut().chunks_exact_mut(4).enumerate() {
                 let x = (idx as u32) % W;
                 let y = (idx as u32) / W;
                 px[0] = (x % 256) as u8;
@@ -374,7 +374,7 @@ fn build_doc(masked: bool, offset: bool, coverage: f32, clipped: bool, all_gener
 fn stack_from(doc: &Document) -> Stack {
     let mut layers = Vec::new();
     for (index, layer) in doc.layers.iter().enumerate() {
-        let pixels8 = layer.as_srgb8().to_vec();
+        let pixels8 = layer.as_srgb8_exact().to_vec();
         let pixels16: Vec<u16> = pixels8.iter().map(|&v| v as u16 * 257).collect();
         layers.push(ProtoLayer {
             pixels8,

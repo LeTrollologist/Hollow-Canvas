@@ -1,6 +1,6 @@
 use crate::blend::BlendMode;
 use crate::color::{Color, ThemeMode};
-use crate::layer::{Layer, LayerId, LayerMask};
+use crate::layer::{Layer, LayerId, LayerBuffer, LayerMask};
 use crate::pixel::Channel;
 use crate::selection::SelectionMask;
 use serde::{Deserialize, Serialize};
@@ -404,7 +404,7 @@ impl Document {
         let h = self.height;
 
         for layer in &mut self.layers {
-            let mut flipped = vec![0u8; layer.as_srgb8().len()];
+            let mut flipped = vec![0u8; layer.as_srgb8_exact().len()];
             for y in 0..h {
                 for x in 0..w {
                     let src_idx = ((y * w + x) * 4) as usize;
@@ -412,7 +412,7 @@ impl Document {
                     let dst_y = if !horizontal { h - 1 - y } else { y };
                     let dst_idx = ((dst_y * w + dst_x) * 4) as usize;
 
-                    flipped[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8()[src_idx..src_idx + 4]);
+                    flipped[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8_exact()[src_idx..src_idx + 4]);
                 }
             }
             layer.set_pixels(flipped);
@@ -436,7 +436,7 @@ impl Document {
                         (y, old_w - 1 - x)
                     };
                     let dst_idx = ((dst_y * new_w + dst_x) * 4) as usize;
-                    rotated[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8()[src_idx..src_idx + 4]);
+                    rotated[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8_exact()[src_idx..src_idx + 4]);
                 }
             }
             layer.width = new_w;
@@ -475,8 +475,8 @@ impl Document {
                     }
                     let src_idx = ((oy * old_w + ox) * 4) as usize;
                     let dst_idx = ((ny * new_w as i32 + nx) * 4) as usize;
-                    if src_idx + 4 <= layer.as_srgb8().len() && dst_idx + 4 <= new_pixels.len() {
-                        new_pixels[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8()[src_idx..src_idx + 4]);
+                    if src_idx + 4 <= layer.as_srgb8_exact().len() && dst_idx + 4 <= new_pixels.len() {
+                        new_pixels[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8_exact()[src_idx..src_idx + 4]);
                     }
                 }
             }
@@ -568,6 +568,24 @@ impl Document {
             out[..total_bytes].fill(0);
         }
 
+        // Format boundary. Until 16-bit documents exist (AUR v3), a 16-bit layer is
+        // converted **once per composite**, not per row or per pixel, and the compositor
+        // then runs its existing 8-bit path. This is the seam where per-format dispatch
+        // will live; keeping the conversion here means no pixel loop ever sees a temporary.
+        let staged: Vec<Option<Vec<u8>>> = self
+            .layers
+            .iter()
+            .map(|layer| match layer.buffer() {
+                LayerBuffer::Srgb8(_) => None,
+                LayerBuffer::Srgb16(channels) => Some(
+                    channels
+                        .iter()
+                        .map(|&channel| crate::pixel::srgb16_to_srgb8(channel))
+                        .collect(),
+                ),
+            })
+            .collect();
+
         for (layer_idx, layer) in self.layers.iter().enumerate() {
             if layer.is_group() || !self.is_layer_effective_visible(layer.id) {
                 continue;
@@ -640,7 +658,7 @@ impl Document {
             }
 
             // ── Fast path for Normal blend mode with 0 offset and no clipping ──
-            if layer.blend_mode == BlendMode::Normal && layer.offset_x == 0 && layer.offset_y == 0 && prev_layer.is_none() && layer.as_srgb8().len() >= total_bytes {
+            if layer.blend_mode == BlendMode::Normal && layer.offset_x == 0 && layer.offset_y == 0 && prev_layer.is_none() && layer.as_srgb8_exact().len() >= total_bytes {
                 let alpha_mul = (eff_opacity.clamp(0.0, 1.0) * 255.0).round() as u32;
                 // A mask scales the layer's alpha per pixel; a mismatched mask is ignored
                 // rather than silently misaligned.
@@ -650,7 +668,7 @@ impl Document {
                     .filter(|m| m.enabled && m.pixels.len() >= (self.width as usize) * (self.height as usize));
                 for (i, (dst, src)) in out[..total_bytes]
                     .chunks_exact_mut(4)
-                    .zip(layer.as_srgb8()[..total_bytes].chunks_exact(4))
+                    .zip(layer.as_srgb8_exact()[..total_bytes].chunks_exact(4))
                     .enumerate()
                 {
                     let mut sa = (src[3] as u32 * alpha_mul) / 255;
@@ -702,8 +720,16 @@ impl Document {
                 .as_ref()
                 .filter(|m| m.enabled)
                 .map(|m| m.pixels.as_slice());
+            let layer_pixels: &[u8] = match &staged[layer_idx] {
+                Some(converted) => converted,
+                None => layer.as_srgb8_exact(),
+            };
+            let base_index = layer_idx.checked_sub(1);
             let base = prev_layer.map(|b| ClipBase {
-                pixels: b.as_srgb8(),
+                pixels: match base_index.and_then(|index| staged.get(index)).and_then(|s| s.as_deref()) {
+                    Some(converted) => converted,
+                    None => b.as_srgb8_exact(),
+                },
                 offset_x: b.offset_x,
                 offset_y: b.offset_y,
                 width: b.width,
@@ -718,7 +744,7 @@ impl Document {
             // hot path while the maths stays single-sourced in `composite_pixel`.
             macro_rules! run {
                 ($compose:path) => {
-                    compose_layer(out, layer, w, h, eff_opacity, mask, base, layer.as_srgb8(), $compose)
+                    compose_layer(out, layer, w, h, eff_opacity, mask, base, layer_pixels, $compose)
                 };
             }
             match layer.blend_mode {
@@ -1004,7 +1030,7 @@ pub(crate) fn promote_layers(doc: &Document) -> PromotedLayers {
             .iter()
             .map(|layer| {
                 layer
-                    .as_srgb8()
+                    .as_srgb8_exact()
                     .iter()
                     .map(|&v| crate::pixel::srgb8_to_srgb16(v))
                     .collect()

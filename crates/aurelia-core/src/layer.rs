@@ -180,6 +180,22 @@ pub struct AdjustmentConfig {
 pub enum LayerBuffer {
     /// RGBA8, row-major, `len == width * height * 4` for the layer's size.
     Srgb8(Vec<u8>),
+    /// RGBA16, row-major, **gamma-encoded sRGB at 16 bits - not linear light.**
+    ///
+    /// The name carries the constraint: storage precision and colour interpretation are
+    /// separate decisions, and blending happens on the same encoded values as `Srgb8`. Content
+    /// promoted from 8-bit is stored as `v * 257`, which lands exactly on this lattice.
+    Srgb16(Vec<u16>),
+}
+
+/// Which representation a buffer holds.
+///
+/// Cheap to copy and compare, so a compositor can resolve the format once per layer rather
+/// than matching inside a pixel loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PixelFormat {
+    Srgb8,
+    Srgb16,
 }
 
 impl Default for LayerBuffer {
@@ -290,40 +306,166 @@ impl Layer {
     /// The buffer is an implementation detail. Everything outside this module reads and
     /// writes pixels through here, so the storage can gain a 16-bit variant later without
     /// every caller changing.
-    /// The backing bytes, whatever the representation is. Private: the only callers that may
-    /// assume a layout are inside this file.
+    /// The representation this layer holds.
     #[inline]
-    fn bytes(&self) -> &Vec<u8> {
+    pub fn format(&self) -> PixelFormat {
+        match &self.buffer {
+            LayerBuffer::Srgb8(_) => PixelFormat::Srgb8,
+            LayerBuffer::Srgb16(_) => PixelFormat::Srgb16,
+        }
+    }
+
+    /// Read-only view of the buffer, for callers that dispatch on the representation.
+    #[inline]
+    pub fn buffer(&self) -> &LayerBuffer {
+        &self.buffer
+    }
+
+    /// Mutable view of the buffer, for callers that dispatch on the representation.
+    #[inline]
+    pub fn buffer_mut(&mut self) -> &mut LayerBuffer {
+        &mut self.buffer
+    }
+
+    /// The pixels, if the layer holds 8-bit sRGB storage.
+    ///
+    /// Fallible on purpose. A caller that needs 8-bit storage has to say what it does when
+    /// the layer is not 8-bit: convert at a boundary, refuse the operation, or use
+    /// `as_srgb8_exact()` and document where its invariant comes from.
+    #[inline]
+    pub fn as_srgb8(&self) -> Option<&[u8]> {
+        match &self.buffer {
+            LayerBuffer::Srgb8(bytes) => Some(bytes),
+            LayerBuffer::Srgb16(_) => None,
+        }
+    }
+
+    /// Mutable pixels, if the layer holds 8-bit sRGB storage. See `as_srgb8()`.
+    #[inline]
+    pub fn as_srgb8_mut(&mut self) -> Option<&mut [u8]> {
+        match &mut self.buffer {
+            LayerBuffer::Srgb8(bytes) => Some(bytes),
+            LayerBuffer::Srgb16(_) => None,
+        }
+    }
+
+    /// The pixels, asserting 8-bit storage. **Never converts, never allocates** - it returns
+    /// a view or panics.
+    ///
+    /// Every current caller is safe for one reason, and it is worth stating once rather than
+    /// 170 times: nothing in the application creates a non-`Srgb8` layer yet. Project loading
+    /// produces `Srgb8`, new layers are `Srgb8`, and the only `Srgb16` buffers in existence
+    /// are the ones the gate harness builds. When AUR v3 can produce 16-bit documents, each
+    /// of these call sites must be revisited - which is exactly why they are greppable by
+    /// name instead of hidden behind a blanket accessor.
+    #[inline]
+    pub fn as_srgb8_exact(&self) -> &[u8] {
         match &self.buffer {
             LayerBuffer::Srgb8(bytes) => bytes,
+            LayerBuffer::Srgb16(_) => panic!(
+                "layer {} is 16-bit storage; this call site assumed 8-bit - convert at the                  boundary or handle both formats",
+                self.id
+            ),
         }
     }
 
+    /// Mutable variant of `as_srgb8_exact()`. Same invariant, same panic.
     #[inline]
-    fn bytes_mut(&mut self) -> &mut Vec<u8> {
+    pub fn as_srgb8_exact_mut(&mut self) -> &mut [u8] {
         match &mut self.buffer {
             LayerBuffer::Srgb8(bytes) => bytes,
+            LayerBuffer::Srgb16(_) => panic!(
+                "layer {} is 16-bit storage; this call site assumed 8-bit - convert at the                  boundary or handle both formats",
+                self.id
+            ),
         }
     }
 
+    /// The pixels, if the layer holds 16-bit sRGB storage.
     #[inline]
-    pub fn as_srgb8(&self) -> &[u8] {
-        self.bytes()
+    pub fn as_srgb16(&self) -> Option<&[u16]> {
+        match &self.buffer {
+            LayerBuffer::Srgb16(channels) => Some(channels),
+            LayerBuffer::Srgb8(_) => None,
+        }
     }
 
-    /// Mutable pixel access for writing channels in place.
+    /// Mutable 16-bit pixels. See `as_srgb16()`.
     #[inline]
-    pub fn as_srgb8_mut(&mut self) -> &mut [u8] {
-        self.bytes_mut()
+    pub fn as_srgb16_mut(&mut self) -> Option<&mut [u16]> {
+        match &mut self.buffer {
+            LayerBuffer::Srgb16(channels) => Some(channels),
+            LayerBuffer::Srgb8(_) => None,
+        }
     }
 
-    /// Mutable access to the backing store, for changes that alter its length.
+    /// Number of storage bytes, whatever the representation.
+    #[inline]
+    pub fn storage_len(&self) -> usize {
+        match &self.buffer {
+            LayerBuffer::Srgb8(bytes) => bytes.len(),
+            LayerBuffer::Srgb16(channels) => channels.len() * 2,
+        }
+    }
+
+    /// Copies `out.len()` storage bytes at `offset` into `out`, little-endian per channel.
     ///
-    /// Only `resize`, `truncate`, `extend_from_slice`-style operations should use this;
-    /// anything that just writes pixels belongs in `as_srgb8_mut()`.
+    /// This is the format-agnostic byte view history needs: it interprets nothing, so a
+    /// delta recorded against 8-bit bytes stays correct if the layer later holds 16-bit
+    /// storage. Returns false if the range is out of bounds.
+    pub fn read_storage_bytes(&self, offset: usize, out: &mut [u8]) -> bool {
+        if offset + out.len() > self.storage_len() {
+            return false;
+        }
+        match &self.buffer {
+            LayerBuffer::Srgb8(bytes) => out.copy_from_slice(&bytes[offset..offset + out.len()]),
+            LayerBuffer::Srgb16(channels) => {
+                for (index, byte) in out.iter_mut().enumerate() {
+                    let absolute = offset + index;
+                    let channel = channels[absolute / 2];
+                    *byte = if absolute % 2 == 0 {
+                        channel as u8
+                    } else {
+                        (channel >> 8) as u8
+                    };
+                }
+            }
+        }
+        true
+    }
+
+    /// Writes `src` as storage bytes at `offset`, the inverse of `read_storage_bytes`.
+    pub fn write_storage_bytes(&mut self, offset: usize, src: &[u8]) -> bool {
+        if offset + src.len() > self.storage_len() {
+            return false;
+        }
+        match &mut self.buffer {
+            LayerBuffer::Srgb8(bytes) => bytes[offset..offset + src.len()].copy_from_slice(src),
+            LayerBuffer::Srgb16(channels) => {
+                for (index, byte) in src.iter().enumerate() {
+                    let absolute = offset + index;
+                    let channel = &mut channels[absolute / 2];
+                    if absolute % 2 == 0 {
+                        *channel = (*channel & 0xFF00) | *byte as u16;
+                    } else {
+                        *channel = (*channel & 0x00FF) | ((*byte as u16) << 8);
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Mutable access to the 8-bit backing store, for changes that alter its length.
+    ///
+    /// Returns `None` for other representations: a resize must know the format to know what
+    /// it is resizing.
     #[inline]
-    pub fn pixels_vec_mut(&mut self) -> &mut Vec<u8> {
-        self.bytes_mut()
+    pub fn pixels_vec_mut(&mut self) -> Option<&mut Vec<u8>> {
+        match &mut self.buffer {
+            LayerBuffer::Srgb8(bytes) => Some(bytes),
+            LayerBuffer::Srgb16(_) => None,
+        }
     }
 
     /// Replaces the whole pixel buffer.
@@ -502,7 +644,7 @@ impl Layer {
     pub fn pixel_index(&self, x: u32, y: u32) -> Option<usize> {
         if (self.is_raster() || self.is_text()) && x < self.width && y < self.height {
             let idx = ((y as usize) * (self.width as usize) + (x as usize)) * 4;
-            if idx + 3 < self.bytes().len() {
+            if idx + 3 < self.storage_len() {
                 Some(idx)
             } else {
                 None
@@ -515,26 +657,30 @@ impl Layer {
     #[inline]
     pub fn get_pixel(&self, x: u32, y: u32) -> Option<[u8; 4]> {
         let idx = self.pixel_index(x, y)?;
+        let mut bytes = [0u8; 4];
+        if !self.read_storage_bytes(idx, &mut bytes) {
+            return None;
+        }
         Some([
-            self.bytes()[idx],
-            self.bytes()[idx + 1],
-            self.bytes()[idx + 2],
-            self.bytes()[idx + 3],
+            bytes[0],
+            bytes[1],
+            bytes[2],
+            bytes[3],
         ])
     }
 
     #[inline]
     pub fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         if let Some(idx) = self.pixel_index(x, y) {
-            self.bytes_mut()[idx] = color[0];
-            self.bytes_mut()[idx + 1] = color[1];
-            self.bytes_mut()[idx + 2] = color[2];
-            self.bytes_mut()[idx + 3] = color[3];
+            self.write_storage_bytes(idx, &color);
         }
     }
 
     pub fn clear(&mut self) {
-        self.bytes_mut().fill(0);
+        match &mut self.buffer {
+            LayerBuffer::Srgb8(bytes) => bytes.fill(0),
+            LayerBuffer::Srgb16(channels) => channels.fill(0),
+        }
     }
 
     pub fn resize(&mut self, new_w: u32, new_h: u32) {
@@ -550,7 +696,9 @@ impl Layer {
             let src_end = src_start + (copy_w as usize) * 4;
             let dst_start = ((y as usize) * (new_w as usize)) * 4;
             let dst_end = dst_start + (copy_w as usize) * 4;
-            new_pixels[dst_start..dst_end].copy_from_slice(&self.bytes()[src_start..src_end]);
+            // Resize copies rows of 4-byte pixels, so it is 8-bit specific today. A 16-bit
+            // resize belongs with the rest of the 16-bit document plumbing, not here.
+            new_pixels[dst_start..dst_end].copy_from_slice(&self.as_srgb8_exact()[src_start..src_end]);
         }
 
         self.width = new_w;
