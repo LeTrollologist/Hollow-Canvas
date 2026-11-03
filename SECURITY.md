@@ -2,20 +2,7 @@
 
 ## Supported Versions
 
-We provide security updates and patches for the following versions of **Aurelia**:
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
-| 0.17.x  | :white_check_mark: |
-| 0.16.x  | :white_check_mark: |
-| 0.15.x  | :white_check_mark: |
-| 0.14.x  | :white_check_mark: |
-| 0.13.x  | :white_check_mark: |
-| 0.12.x  | :white_check_mark: |
-| 0.11.x  | :white_check_mark: |
-| 0.10.x  | :white_check_mark: |
-| < 0.10.0| :x:                |
+As of November 2nd, 2026, I will provide security updates and patches for only the latest version of **Aurelia**.
 
 ---
 
