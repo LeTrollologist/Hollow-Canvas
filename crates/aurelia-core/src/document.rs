@@ -1,6 +1,6 @@
 use crate::blend::BlendMode;
 use crate::color::{Color, ThemeMode};
-use crate::layer::{Layer, LayerId, LayerBuffer, LayerMask};
+use crate::layer::{Layer, LayerId, LayerBuffer, LayerMask, PixelFormat};
 use crate::pixel::Channel;
 use crate::selection::SelectionMask;
 use serde::{Deserialize, Serialize};
@@ -568,23 +568,26 @@ impl Document {
             out[..total_bytes].fill(0);
         }
 
-        // Format boundary. Until 16-bit documents exist (AUR v3), a 16-bit layer is
-        // converted **once per composite**, not per row or per pixel, and the compositor
-        // then runs its existing 8-bit path. This is the seam where per-format dispatch
-        // will live; keeping the conversion here means no pixel loop ever sees a temporary.
-        let staged: Vec<Option<Vec<u8>>> = self
+        // A 16-bit layer has to be blended at 16 bits. Converting it to 8-bit first would
+        // discard exactly the sub-lattice detail the format exists to carry, which is the
+        // precision Gate 1 measured. So a document holding any 16-bit layer is composited
+        // through the generic working-precision path: real `u16` channels for 16-bit
+        // layers, exact `v * 257` promotion for 8-bit ones, one dispatch per layer and no
+        // conversion inside any pixel loop. Only the *result* is downconverted, because this
+        // function's contract returns an 8-bit buffer - a 16-bit output API arrives with
+        // AUR v3.
+        if self
             .layers
             .iter()
-            .map(|layer| match layer.buffer() {
-                LayerBuffer::Srgb8(_) => None,
-                LayerBuffer::Srgb16(channels) => Some(
-                    channels
-                        .iter()
-                        .map(|&channel| crate::pixel::srgb16_to_srgb8(channel))
-                        .collect(),
-                ),
-            })
-            .collect();
+            .any(|layer| layer.format() != PixelFormat::Srgb8)
+        {
+            let native = promote_layers(self);
+            let composed = compose_u16_prepared(self, &native, include_background);
+            for (index, value) in composed.iter().enumerate() {
+                out[index] = crate::pixel::srgb16_to_srgb8(*value);
+            }
+            return;
+        }
 
         for (layer_idx, layer) in self.layers.iter().enumerate() {
             if layer.is_group() || !self.is_layer_effective_visible(layer.id) {
@@ -720,16 +723,9 @@ impl Document {
                 .as_ref()
                 .filter(|m| m.enabled)
                 .map(|m| m.pixels.as_slice());
-            let layer_pixels: &[u8] = match &staged[layer_idx] {
-                Some(converted) => converted,
-                None => layer.as_srgb8_exact(),
-            };
-            let base_index = layer_idx.checked_sub(1);
+            let layer_pixels: &[u8] = layer.as_srgb8_exact();
             let base = prev_layer.map(|b| ClipBase {
-                pixels: match base_index.and_then(|index| staged.get(index)).and_then(|s| s.as_deref()) {
-                    Some(converted) => converted,
-                    None => b.as_srgb8_exact(),
-                },
+                pixels: b.as_srgb8_exact(),
                 offset_x: b.offset_x,
                 offset_y: b.offset_y,
                 width: b.width,
@@ -1021,19 +1017,20 @@ pub(crate) fn compose_rows<C: Channel, F>(
 ///
 /// A real 16-bit document holds 16-bit buffers; promoting on every composite would be
 /// measuring the conversion, not the compositing.
-pub(crate) struct PromotedLayers(Vec<Vec<u16>>);
+pub(crate) struct PromotedLayers<'a>(Vec<std::borrow::Cow<'a, [u16]>>);
 
 #[allow(dead_code)]
-pub(crate) fn promote_layers(doc: &Document) -> PromotedLayers {
+pub(crate) fn promote_layers(doc: &Document) -> PromotedLayers<'_> {
     PromotedLayers(
         doc.layers
             .iter()
-            .map(|layer| {
-                layer
-                    .as_srgb8_exact()
-                    .iter()
-                    .map(|&v| crate::pixel::srgb8_to_srgb16(v))
-                    .collect()
+            .map(|layer| match layer.buffer() {
+                // A 16-bit layer is composited from its own channels. Converting it to 8-bit
+                // first would throw away exactly the precision the format exists to carry.
+                LayerBuffer::Srgb16(channels) => std::borrow::Cow::Borrowed(channels.as_slice()),
+                LayerBuffer::Srgb8(bytes) => std::borrow::Cow::Owned(
+                    bytes.iter().map(|&v| crate::pixel::srgb8_to_srgb16(v)).collect(),
+                ),
             })
             .collect(),
     )
@@ -1048,7 +1045,7 @@ pub(crate) fn compose_u16(doc: &Document, include_background: bool) -> Vec<u16> 
 #[allow(dead_code)]
 pub(crate) fn compose_u16_prepared(
     doc: &Document,
-    promoted: &PromotedLayers,
+    promoted: &PromotedLayers<'_>,
     include_background: bool,
 ) -> Vec<u16> {
     let (w, h) = (doc.width, doc.height);

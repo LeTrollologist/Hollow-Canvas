@@ -271,10 +271,19 @@ Three constraints were met with tests rather than promises:
 
 - **History stays format-agnostic** - and it is now genuinely so: the delta writes storage
   bytes through `write_storage_bytes`, so it never interprets a pixel. `deltas_round_trip_a_sixteen_bit_layer` records and replays an edit on a 16-bit layer byte-exactly.
-- **Compositing dispatches at the boundary** - a 16-bit layer is converted **once per
-  composite** (not per row, not per pixel) and the existing 8-bit path runs on it.
-  `compositing_stages_a_sixteen_bit_layer_at_the_boundary` promotes every layer by `v*257`
-  and requires the output bytes to be identical.
+- **Compositing blends at 16 bits** - a document holding any 16-bit layer runs the generic
+  working-precision path on **real `u16` channels** (`Cow::Borrowed` from the layer, never a
+  converted copy), with exact `v * 257` promotion for 8-bit layers and one dispatch per layer.
+  Only the *result* is downconverted, because `composite_layers` returns an 8-bit buffer; a
+  16-bit output API arrives with AUR v3.
+  `sixteen_bit_compositing_keeps_detail_below_the_eight_bit_lattice` proves the point that a
+  staged-to-8-bit design would fail: two values half an 8-bit step apart must stay distinct
+  through the blend, while the 8-bit output necessarily collapses them.
+
+  The earlier version of this sub-step converted a 16-bit layer to 8-bit once per composite
+  and called that a boundary. It was a compatibility bridge that silently discarded the
+  precision gate 1 exists to measure - two 16-bit values a half-step apart became one byte
+  *before* the blend saw them. It has been removed rather than kept as a fast path.
 - **The oracle is untouched**: 92 tests pass, including the 702 combinations.
 
 

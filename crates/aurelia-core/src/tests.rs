@@ -1756,18 +1756,18 @@ mod tests {
             start.elapsed().as_secs_f64()
         }
 
-        let cases: Vec<(&str, Document, crate::document::PromotedLayers)> = [
+        // The native 16-bit views borrow the documents, so they are built after the
+        // documents exist rather than carried alongside them.
+        let cases: Vec<(&str, Document)> = vec![
             ("opaque", fixture(1.0, false, false)),
             ("sparse 10%", fixture(0.1, false, false)),
             ("masked", fixture(1.0, true, false)),
             ("clipped", fixture(1.0, false, true)),
-        ]
-        .into_iter()
-        .map(|(label, doc)| {
-            let promoted = crate::document::promote_layers(&doc);
-            (label, doc, promoted)
-        })
-        .collect();
+        ];
+        let native: Vec<_> = cases
+            .iter()
+            .map(|(_, doc)| crate::document::promote_layers(doc))
+            .collect();
 
         // Paired, interleaved rounds: both widths are measured in the same round, so a slow
         // patch of machine hits both and cancels in the ratio. The ratio is the gate; the
@@ -1776,7 +1776,9 @@ mod tests {
         let mut abs8: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
         let mut abs16: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
         for _ in 0..ROUNDS {
-            for (ci, (_, doc, promoted)) in cases.iter().enumerate() {
+            for ci in 0..cases.len() {
+                let doc = &cases[ci].1;
+                let promoted = &native[ci];
                 let t8 = time_one(|| {
                     std::hint::black_box(doc.composite_layers(false));
                 });
@@ -1796,11 +1798,12 @@ mod tests {
             "workload", "u8 MPix/s", "Srgb16", "ratio", "ratio spread"
         );
         let mut sparse_ratio = 1.0f64;
-        for (ci, (label, _, _)) in cases.iter().enumerate() {
+        for ci in 0..cases.len() {
+            let label = cases[ci].0;
             let mut r = ratios[ci].clone();
             r.sort_by(f64::total_cmp);
             let (lo, hi, mid) = (r[0], r[r.len() - 1], r[r.len() / 2]);
-            if *label == "sparse 10%" {
+            if label == "sparse 10%" {
                 sparse_ratio = mid;
             }
             println!(
@@ -1881,5 +1884,37 @@ mod tests {
             sixteen_bit, eight_bit,
             "a v*257 promoted layer must composite to the same bytes"
         );
+    }
+
+    /// Gate 3 requirement: compositing must consume actual 16-bit channels. The two pixels
+    /// below differ by half an 8-bit step, so they collapse to the same byte; if the
+    /// compositor converted to 8-bit before blending, the distinction would be gone.
+    #[test]
+    fn sixteen_bit_compositing_keeps_detail_below_the_eight_bit_lattice() {
+        use crate::layer::LayerBuffer;
+        let mut doc = Document::new(4, 1);
+        doc.is_transparent = true;
+        let layer_id = doc.active_layer_id;
+        let low = crate::pixel::srgb8_to_srgb16(100);
+        let high = low + 128;
+        assert_eq!(crate::pixel::srgb16_to_srgb8(low), crate::pixel::srgb16_to_srgb8(high));
+        let mut channels = vec![0u16; 16];
+        for pixel in 0..4 {
+            channels[pixel * 4 + 3] = 65535;
+        }
+        for channel in 0..3 {
+            channels[channel] = low;
+            channels[4 + channel] = high;
+        }
+        if let Some(layer) = doc.get_layer_mut(layer_id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+        let native = crate::document::promote_layers(&doc);
+        let composed = crate::document::compose_u16_prepared(&doc, &native, false);
+        assert_ne!(composed[0], composed[4], "16-bit compositing collapsed two values");
+        assert_eq!(composed[0], low);
+        assert_eq!(composed[4], high);
+        let eight_bit = doc.composite_layers(false);
+        assert_eq!(eight_bit[0], eight_bit[4], "an 8-bit result cannot carry it");
     }
 }
