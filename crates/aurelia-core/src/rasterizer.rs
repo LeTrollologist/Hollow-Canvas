@@ -65,7 +65,7 @@ impl StrokeRasterizer {
     /// copied rather than normalised and converted back - a round trip through `f32` would be
     /// the very drift the mode exists to prevent.
     #[inline]
-    fn locked_alpha<C: Channel>(destination_alpha: C) -> C {
+    fn locked_alpha(destination_alpha: f32) -> f32 {
         destination_alpha
     }
 
@@ -80,10 +80,111 @@ impl StrokeRasterizer {
         let next = (normalised * (1.0 - amount)).clamp(0.0, 1.0);
         C::from_f32(next)
     }
+
+    /// Reads one pixel into working precision.
+    #[inline]
+    fn read_px<C: Channel>(pixels: &[C], idx: usize) -> [f32; 4] {
+        [
+            pixels[idx].to_f32(),
+            pixels[idx + 1].to_f32(),
+            pixels[idx + 2].to_f32(),
+            pixels[idx + 3].to_f32(),
+        ]
+    }
+
+    /// The only pixel write path in the brush pipeline.
+    #[inline]
+    fn store_px<C: Channel>(pixels: &mut [C], idx: usize, pixel: [f32; 4]) {
+        pixels[idx] = C::from_f32(pixel[0]);
+        pixels[idx + 1] = C::from_f32(pixel[1]);
+        pixels[idx + 2] = C::from_f32(pixel[2]);
+        pixels[idx + 3] = C::from_f32(pixel[3]);
+    }
+
+    /// A colour defined in 8-bit terms - brush settings and background are `Color` - lifted to
+    /// working precision. Deliberately not generic over storage: it knows nothing about it.
+    #[inline]
+    fn u8_px(pixel: [u8; 4]) -> [f32; 4] {
+        [
+            u8::to_f32(pixel[0]),
+            u8::to_f32(pixel[1]),
+            u8::to_f32(pixel[2]),
+            u8::to_f32(pixel[3]),
+        ]
+    }
+
+    #[inline]
+    fn store_px_u8<C: Channel>(pixels: &mut [C], idx: usize, pixel: [u8; 4]) {
+        Self::store_px(pixels, idx, Self::u8_px(pixel));
+    }
+
+    /// Bilinear sample in working precision, for the smudge brush to drag colour from.
+    ///
+    /// Interpolation happens on normalised channels and the caller stores the result through
+    /// `store_px`, so 8-bit and 16-bit storage sample identically. No allocation, no clamp to
+    /// a byte here - the storage channel does that on write.
+    fn sample_px<C: Channel>(pixels: &[C], width: u32, height: u32, x: f32, y: f32) -> [f32; 4] {
+        let cx = x.clamp(0.0, (width as f32) - 1.0);
+        let cy = y.clamp(0.0, (height as f32) - 1.0);
+        let x0 = cx.floor() as u32;
+        let y0 = cy.floor() as u32;
+        let x1 = (x0 + 1).min(width - 1);
+        let y1 = (y0 + 1).min(height - 1);
+        let fx = cx - cx.floor();
+        let fy = cy - cy.floor();
+        let idx00 = ((y0 * width + x0) * 4) as usize;
+        let idx10 = ((y0 * width + x1) * 4) as usize;
+        let idx01 = ((y1 * width + x0) * 4) as usize;
+        let idx11 = ((y1 * width + x1) * 4) as usize;
+        if idx11 + 3 >= pixels.len() {
+            return [0.0, 0.0, 0.0, 0.0];
+        }
+        let mut out = [0.0f32; 4];
+        for channel in 0..4 {
+            let v00 = pixels[idx00 + channel].to_f32();
+            let v10 = pixels[idx10 + channel].to_f32();
+            let v01 = pixels[idx01 + channel].to_f32();
+            let v11 = pixels[idx11 + channel].to_f32();
+            let top = v00 * (1.0 - fx) + v10 * fx;
+            let bottom = v01 * (1.0 - fx) + v11 * fx;
+            out[channel] = top * (1.0 - fy) + bottom * fy;
+        }
+        out
+    }
+    /// Composites one brush stamp into a layer, dispatching on its storage format.
+    ///
+    /// One match per stamp, never per pixel: both arms are the same monomorphised body, so
+    /// there is one implementation of the brush arithmetic rather than one per format.
     fn blend_stamp(
         doc_w: u32,
         doc_h: u32,
-        pixels: &mut [u8],
+        layer: &mut Layer,
+        selection: Option<&SelectionMask>,
+        stamp_center: Vec2,
+        prev_center: Option<Vec2>,
+        radius: f32,
+        brush: &BrushSettings,
+        blend_mode: BlendMode,
+        alpha_locked: bool,
+        bg_color: Color,
+        step_index: usize,
+    ) {
+        match layer.buffer_mut() {
+            crate::layer::LayerBuffer::Srgb8(pixels) => Self::stamp_impl(
+                doc_w, doc_h, pixels, selection, stamp_center, prev_center, radius, brush,
+                blend_mode, alpha_locked, bg_color, step_index,
+            ),
+            crate::layer::LayerBuffer::Srgb16(pixels) => Self::stamp_impl(
+                doc_w, doc_h, pixels, selection, stamp_center, prev_center, radius, brush,
+                blend_mode, alpha_locked, bg_color, step_index,
+            ),
+        }
+    }
+
+    fn stamp_impl<C: Channel + PartialEq>(
+        doc_w: u32,
+        doc_h: u32,
+        pixels: &mut [C],
         selection: Option<&SelectionMask>,
         stamp_center: Vec2,
         prev_center: Option<Vec2>,
@@ -100,6 +201,10 @@ impl StrokeRasterizer {
         let hardness = brush.hardness;
 
         let active_mask = selection.filter(|s| s.has_selection());
+
+        // The brush colour is 8-bit by definition, so it is lifted to working precision
+        // once here rather than converted inside a pixel loop.
+        let stamp_color = Self::u8_px(color.to_rgba8());
 
         if tool == ToolType::Spray {
             let density = (radius * radius * brush.spray_density * 0.4).max(6.0) as usize;
@@ -129,18 +234,18 @@ impl StrokeRasterizer {
                     }
 
                     let idx = ((uiy * doc_w + uix) * 4) as usize;
-                    let dst = [pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]];
-                    if alpha_locked && dst[3] == 0 {
+                    let dst = Self::read_px(pixels, idx);
+                    if alpha_locked && dst[3] <= 0.0 {
                         continue;
                     }
 
                     let p_alpha = (0.25 + 0.75 * hash21(i as u32, 3, seed)) * opacity * 0.45 * mask_factor;
-                    let src = color.to_rgba8();
-                    let mut blended = blend_mode.composite_pixel(dst, src, p_alpha);
+                    let src = stamp_color;
+                    let mut blended = blend_mode.composite_working(dst, src, p_alpha);
                     if alpha_locked {
                         blended[3] = dst[3];
                     }
-                    pixels[idx..idx + 4].copy_from_slice(&blended);
+                    Self::store_px(pixels, idx, blended);
                 }
             }
             return;
@@ -263,18 +368,18 @@ impl StrokeRasterizer {
                     }
 
                     let idx = ((y * doc_w + x) * 4) as usize;
-                    let dst = [pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]];
+                    let dst = Self::read_px(pixels, idx);
 
-                    if alpha_locked && dst[3] == 0 {
+                    if alpha_locked && dst[3] <= 0.0 {
                         continue;
                     }
 
                     let src = match tool {
                         ToolType::Eraser => {
                             if bg_color.a > 0.0 {
-                                bg_color.to_rgba8()
+                                Self::u8_px(bg_color.to_rgba8())
                             } else {
-                                [0, 0, 0, 0]
+                                [0.0, 0.0, 0.0, 0.0]
                             }
                         }
                         ToolType::Smudge => {
@@ -288,12 +393,12 @@ impl StrokeRasterizer {
                                 } else {
                                     Vec2::new(x as f32, y as f32)
                                 };
-                                sample_bilinear_rgba(pixels, doc_w, doc_h, sample_pos.x, sample_pos.y)
+                                Self::sample_px(pixels, doc_w, doc_h, sample_pos.x, sample_pos.y)
                             } else {
                                 dst
                             }
                         }
-                        _ => color.to_rgba8(),
+                        _ => Self::u8_px(color.to_rgba8()),
                     };
 
                     if tool == ToolType::Eraser {
@@ -301,18 +406,18 @@ impl StrokeRasterizer {
                             EraserMode::HardPixel => {
                                 if alpha >= 0.5 {
                                     if bg_color.a > 0.0 {
-                                        pixels[idx..idx + 4].copy_from_slice(&bg_color.to_rgba8());
+                                        Self::store_px_u8(pixels, idx, bg_color.to_rgba8());
                                     } else {
-                                        pixels[idx..idx + 4].copy_from_slice(&[0, 0, 0, 0]);
+                                        Self::store_px_u8(pixels, idx, [0, 0, 0, 0]);
                                     }
                                 }
                             }
                             EraserMode::ColorErase => {
                                 let target = brush.secondary_color.to_rgba8();
                                 let tol = brush.color_erase_tolerance as i32;
-                                let matches = (dst[0] as i32 - target[0] as i32).abs() <= tol
-                                    && (dst[1] as i32 - target[1] as i32).abs() <= tol
-                                    && (dst[2] as i32 - target[2] as i32).abs() <= tol;
+                                let matches = (u8::from_f32(dst[0]) as i32 - target[0] as i32).abs() <= tol
+                                    && (u8::from_f32(dst[1]) as i32 - target[1] as i32).abs() <= tol
+                                    && (u8::from_f32(dst[2]) as i32 - target[2] as i32).abs() <= tol;
                                 if matches {
                                     let current = pixels[idx + 3];
                                     pixels[idx + 3] = Self::scaled_alpha(current, alpha);
@@ -323,27 +428,27 @@ impl StrokeRasterizer {
                                     let current = pixels[idx + 3];
                                     pixels[idx + 3] = Self::scaled_alpha(current, alpha);
                                 } else {
-                                    let mut blended = blend_mode.composite_pixel(dst, src, alpha);
+                                    let mut blended = blend_mode.composite_working(dst, src, alpha);
                                     if alpha_locked {
                                         blended[3] = Self::locked_alpha(dst[3]);
                                     }
-                                    pixels[idx..idx + 4].copy_from_slice(&blended);
+                                    Self::store_px(pixels, idx, blended);
                                 }
                             }
                         }
                     } else if tool == ToolType::Smudge {
                         let strength = brush.smudge_strength.clamp(0.1, 1.0);
-                        let mut blended = blend_mode.composite_pixel(dst, src, alpha * strength);
+                        let mut blended = blend_mode.composite_working(dst, src, alpha * strength);
                         if alpha_locked {
                             blended[3] = Self::locked_alpha(dst[3]);
                         }
-                        pixels[idx..idx + 4].copy_from_slice(&blended);
+                        Self::store_px(pixels, idx, blended);
                     } else {
-                        let mut blended = blend_mode.composite_pixel(dst, src, alpha);
+                        let mut blended = blend_mode.composite_working(dst, src, alpha);
                         if alpha_locked {
                             blended[3] = Self::locked_alpha(dst[3]);
                         }
-                        pixels[idx..idx + 4].copy_from_slice(&blended);
+                        Self::store_px(pixels, idx, blended);
                     }
                 }
             }
@@ -380,7 +485,7 @@ impl StrokeRasterizer {
             Self::blend_stamp(
                 doc_w,
                 doc_h,
-                layer.as_srgb8_exact_mut(),
+                layer,
                 selection,
                 local_p,
                 None,
@@ -445,7 +550,7 @@ impl StrokeRasterizer {
                 Self::blend_stamp(
                     doc_w,
                     doc_h,
-                    layer.as_srgb8_exact_mut(),
+                    layer,
                     selection,
                     local_sp,
                     prev_sp,
@@ -525,7 +630,7 @@ impl StrokeRasterizer {
                 Self::blend_stamp(
                     doc_w,
                     doc_h,
-                    layer.as_srgb8_exact_mut(),
+                    layer,
                     selection,
                     local_sp,
                     prev_sp,

@@ -2000,4 +2000,130 @@ mod tests {
             "the colour-eraser clamp changed its bytes"
         );
     }
+
+    /// All three public painting entry points on a 16-bit layer. They share `blend_stamp`, but
+    /// their geometry and stamp generation differ, so each is driven independently - a shared
+    /// implementation does not mean shared failure modes.
+    #[test]
+    fn painting_entry_points_work_on_sixteen_bit_layers() {
+        use crate::brush::{BrushPoint, BrushSettings, ToolType};
+        use crate::symmetry::SymmetryConfig;
+        use crate::layer::LayerBuffer;
+
+        fn wide_layer() -> Document {
+            let mut doc = Document::new(8, 8);
+            doc.is_transparent = true;
+            let id = doc.active_layer_id;
+            let channels: Vec<u16> = (0..(8 * 8 * 4)).map(|i| (i as u16).wrapping_mul(257)).collect();
+            if let Some(layer) = doc.get_layer_mut(id) {
+                *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+            }
+            doc
+        }
+
+        fn brush() -> BrushSettings {
+            let mut brush = BrushSettings::default();
+            brush.tool = ToolType::Brush;
+            brush.size = 3.0;
+            brush.opacity = 1.0;
+            brush.hardness = 1.0;
+            brush.primary_color = Color::WHITE;
+            brush
+        }
+
+        let point = |x: f32, y: f32| BrushPoint {
+            position: glam::Vec2::new(x, y),
+            pressure: 1.0,
+        };
+
+        // paint_dot
+        let mut doc = wide_layer();
+        crate::rasterizer::StrokeRasterizer::paint_dot(
+            &mut doc, point(4.0, 4.0), &brush(), &SymmetryConfig::default(), None,
+        );
+        let id = doc.active_layer_id;
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(layer.as_srgb16().expect("still 16-bit").len(), 8 * 8 * 4);
+        assert!(
+            layer.as_srgb16().unwrap().iter().any(|&c| c == 65535),
+            "paint_dot painted nothing onto the 16-bit layer"
+        );
+
+        // paint_segment
+        let mut doc = wide_layer();
+        crate::rasterizer::StrokeRasterizer::paint_segment(
+            &mut doc, point(1.0, 1.0), point(6.0, 6.0), &brush(), &SymmetryConfig::default(), None,
+        );
+        let id = doc.active_layer_id;
+        assert_eq!(
+            doc.get_layer(id).expect("layer").format(),
+            crate::layer::PixelFormat::Srgb16
+        );
+        assert!(doc.get_layer(id).unwrap().as_srgb16().unwrap().iter().any(|&c| c == 65535));
+
+        // paint_spline
+        let mut doc = wide_layer();
+        crate::rasterizer::StrokeRasterizer::paint_spline(
+            &mut doc,
+            point(1.0, 4.0),
+            point(3.0, 1.0),
+            point(5.0, 7.0),
+            point(7.0, 4.0),
+            &brush(),
+            &SymmetryConfig::default(),
+            None,
+        );
+        let id = doc.active_layer_id;
+        assert_eq!(
+            doc.get_layer(id).expect("layer").format(),
+            crate::layer::PixelFormat::Srgb16
+        );
+        assert!(doc.get_layer(id).unwrap().as_srgb16().unwrap().iter().any(|&c| c == 65535));
+    }
+
+    /// Painting at partial opacity must keep detail below one 8-bit step: the pixel starts
+    /// off-lattice, and a 50% white dab must land on a value that is not a multiple of 257.
+    #[test]
+    fn painting_keeps_off_lattice_detail_at_partial_opacity() {
+        use crate::brush::{BrushPoint, BrushSettings, ToolType};
+        use crate::symmetry::SymmetryConfig;
+        use crate::layer::LayerBuffer;
+
+        let mut doc = Document::new(6, 6);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        let mid = crate::pixel::srgb8_to_srgb16(100) + 128;
+        let mut channels = vec![0u16; 6 * 6 * 4];
+        for pixel in 0..(6 * 6) {
+            channels[pixel * 4] = mid;
+            channels[pixel * 4 + 1] = mid;
+            channels[pixel * 4 + 2] = mid;
+            channels[pixel * 4 + 3] = 65535;
+        }
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        let mut brush = BrushSettings::default();
+        brush.tool = ToolType::Brush;
+        brush.size = 6.0;
+        brush.opacity = 0.5;
+        brush.hardness = 1.0;
+        brush.primary_color = Color::WHITE;
+        crate::rasterizer::StrokeRasterizer::paint_dot(
+            &mut doc,
+            BrushPoint { position: glam::Vec2::new(3.0, 3.0), pressure: 1.0 },
+            &brush,
+            &SymmetryConfig::default(),
+            None,
+        );
+
+        let painted = doc.get_layer(id).expect("layer").as_srgb16().expect("16-bit");
+        let moved: Vec<u16> = painted.iter().copied().filter(|&c| c != mid && c != 65535 && c != 0).collect();
+        assert!(!moved.is_empty(), "the dab changed nothing");
+        assert!(
+            moved.iter().any(|&c| c % 257 != 0),
+            "every painted value landed on the 8-bit lattice: sub-8-bit detail was lost"
+        );
+    }
 }
