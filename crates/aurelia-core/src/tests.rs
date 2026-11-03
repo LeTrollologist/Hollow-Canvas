@@ -1542,4 +1542,133 @@ mod tests {
             }
         }
     }
+
+    /// Gate 1 of the 16-bit plan: an `Srgb16` composite, downconverted, must reproduce the
+    /// 8-bit result.
+    ///
+    /// Comparison is against fixtures where every layer takes the *general* path, because
+    /// there is no 16-bit fast path (a deliberate deferral): a layer that would have used the
+    /// 8-bit integer fast path has no 16-bit equivalent, and its integer rounding differs from
+    /// the float path's. Comparing across that boundary would compare two algorithms, not two
+    /// storage widths.
+    ///
+    /// The tolerance is one step of the 8-bit output, and the reason is arithmetic rather than
+    /// convenience: the 8-bit chain quantises to 256 levels *between* layers, while the 16-bit
+    /// chain keeps 65536, so a later layer is fed a slightly different input and can round to
+    /// the neighbouring byte. A single-layer document has no inter-layer quantisation, so it
+    /// is required to match exactly - that is the sharp part of this gate.
+    #[test]
+    fn sixteen_bit_compositing_downconverts_to_the_eight_bit_result() {
+        let mut worst_stack_step = 0u8;
+        for &mode in crate::blend::BlendMode::ALL {
+            for &offset in &[(0, 0), (3, 2), (-5, -4)] {
+                for mask_case in 0..3u8 {
+                    for clipping in [false, true] {
+                        for coverage in [1.0f32, 0.5, 0.15] {
+                            let mut doc =
+                                coverage_fixture(mode, offset, mask_case, clipping, coverage, 0);
+                            for layer in doc.layers.iter_mut() {
+                                layer.offset_x = 1;
+                                layer.offset_y = 1;
+                            }
+                            let eight_bit = doc.composite_layers(false);
+                            let sixteen = crate::document::compose_u16(&doc, false);
+                            let downconverted: Vec<u8> = sixteen
+                                .iter()
+                                .map(|&v| crate::pixel::srgb16_to_srgb8(v))
+                                .collect();
+
+                            let step = downconverted
+                                .iter()
+                                .zip(eight_bit.iter())
+                                .map(|(a, b)| a.abs_diff(*b))
+                                .max()
+                                .unwrap_or(0);
+                            worst_stack_step = worst_stack_step.max(step);
+                            assert!(
+                                step <= 1,
+                                "stack drifted by {step} LSB: {mode:?} offset {offset:?} mask {mask_case} clip {clipping} coverage {coverage}"
+                            );
+
+                            // The sharp check: with no inter-layer quantisation, the bytes must
+                            // be identical.
+                            let mut single = Document::new(doc.width, doc.height);
+                            single.is_transparent = true;
+                            let subject = coverage_fixture(mode, offset, mask_case, false, coverage, 0)
+                                .layers
+                                .pop()
+                                .expect("subject layer");
+                            if let Some(slot) = single.layers.first_mut() {
+                                *slot = subject;
+                            }
+                            let single_8 = single.composite_layers(false);
+                            let single_16: Vec<u8> = crate::document::compose_u16(&single, false)
+                                .iter()
+                                .map(|&v| crate::pixel::srgb16_to_srgb8(v))
+                                .collect();
+                            assert_eq!(
+                                single_16, single_8,
+                                "single layer must match exactly: {mode:?} offset {offset:?} mask {mask_case} coverage {coverage}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        println!("worst inter-layer drift: {worst_stack_step} LSB");
+    }
+
+    /// The point of 16-bit storage: values that 8 bits cannot represent must survive a
+    /// composite. The oracle above only proves nothing was lost - this proves something was
+    /// gained.
+    #[test]
+    fn sub_eight_bit_precision_survives_a_composite() {
+        const W: u32 = 16;
+        const H: u32 = 1;
+        let mut doc = Document::new(W, H);
+        doc.is_transparent = true;
+        let base_id = doc.active_layer_id;
+        if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == base_id) {
+            layer.offset_x = 1;
+            let pixels = layer.as_srgb8_mut();
+            for x in 0..W as usize {
+                pixels[x * 4] = 0;
+                pixels[x * 4 + 1] = 0;
+                pixels[x * 4 + 2] = 0;
+                pixels[x * 4 + 3] = 255;
+            }
+        }
+        let top_id = doc.add_layer(Some("ramp".into()));
+        if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == top_id) {
+            layer.offset_x = 1;
+            layer.opacity = 0.5;
+            let pixels = layer.as_srgb8_mut();
+            for x in 0..W as usize {
+                let value = (x * 17) as u8;
+                pixels[x * 4] = value;
+                pixels[x * 4 + 1] = value;
+                pixels[x * 4 + 2] = value;
+                pixels[x * 4 + 3] = 255;
+            }
+        }
+
+        let sixteen = crate::document::compose_u16(&doc, false);
+        let eight_bit = doc.composite_layers(false);
+        let downconverted: Vec<u8> = sixteen
+            .iter()
+            .map(|&v| crate::pixel::srgb16_to_srgb8(v))
+            .collect();
+        assert_eq!(downconverted, eight_bit, "the promotion must not change 8-bit output");
+
+        // A 50% blend of two 8-bit values lands between lattice points for most inputs, so
+        // the 16-bit result must contain values that are not multiples of 257.
+        let off_lattice = sixteen
+            .iter()
+            .filter(|&&v| v % 257 != 0)
+            .count();
+        assert!(
+            off_lattice > 0,
+            "no sub-8-bit detail survived: every channel landed on the lattice"
+        );
+    }
 }

@@ -742,8 +742,8 @@ impl Document {
 
 /// Read-only view of the layer a clipping layer is clipped to.
 #[derive(Clone, Copy)]
-struct ClipBase<'a> {
-    pixels: &'a [u8],
+struct ClipBase<'a, C> {
+    pixels: &'a [C],
     offset_x: i32,
     offset_y: i32,
     width: u32,
@@ -794,7 +794,7 @@ fn compose_layer<F>(
     canvas_h: u32,
     layer_opacity: f32,
     mask: Option<&[u8]>,
-    base: Option<ClipBase<'_>>,
+    base: Option<ClipBase<'_, u8>>,
     compose: F,
 ) where
     F: Fn([f32; 4], [f32; 4], f32) -> [f32; 4] + Sync,
@@ -855,7 +855,7 @@ fn compose_layer<F>(
 /// `tests::general_compositing_is_bit_identical_to_the_reference`.
 #[allow(clippy::too_many_arguments)]
 #[inline]
-fn compose_rows<C: Channel, F>(
+pub(crate) fn compose_rows<C: Channel, F>(
     out: &mut [C],
     y_start: u32,
     y_end: u32,
@@ -864,7 +864,7 @@ fn compose_rows<C: Channel, F>(
     canvas_h: u32,
     layer_opacity: f32,
     mask: Option<&[u8]>,
-    base: Option<ClipBase<'_>>,
+    base: Option<ClipBase<'_, C>>,
     src_pixels: &[C],
     compose: &F,
 ) where
@@ -909,7 +909,7 @@ fn compose_rows<C: Channel, F>(
 
         // The clip base contributes inside a contiguous span of this row too; outside it
         // its alpha is 0, which zeroes this layer's opacity there.
-        let mut base_span: Option<(&[u8], i32, i32, i32, f32)> = None;
+        let mut base_span: Option<(&[C], i32, i32, i32, f32)> = None;
         if let Some(b) = base {
             let b_lim_x = (canvas_w as i32).min(b.width as i32);
             let b_lim_y = (canvas_h as i32).min(b.height as i32);
@@ -951,7 +951,7 @@ fn compose_rows<C: Channel, F>(
                     continue;
                 }
                 let a = row[((x - b_off) as usize) * 4 + 3];
-                opacity *= (a as f32 / 255.0) * base_op;
+                opacity *= a.to_f32() * base_op;
             }
             if opacity <= 0.001 {
                 continue;
@@ -978,4 +978,106 @@ fn compose_rows<C: Channel, F>(
             out[dst_idx + 3] = C::from_f32(blended[3]);
         }
     }
+}
+
+/// Composites a document into `Srgb16` storage.
+///
+/// This is the gate-1 harness for the 16-bit plan (`docs/16bit-plan.md`): it exists so the
+/// oracle can be run against promoted fixtures and compared, after downconversion, with
+/// today's 8-bit output. It is not wired into the application, and no `LayerBuffer` exists
+/// yet - that is gate 3.
+///
+/// There is **no 16-bit fast path** (a deliberate deferral), so every layer takes the general
+/// path. A comparison is therefore only meaningful against 8-bit fixtures that also take the
+/// general path - see the gate-1 tests.
+#[allow(dead_code)]
+pub(crate) fn compose_u16(doc: &Document, include_background: bool) -> Vec<u16> {
+    let (w, h) = (doc.width, doc.height);
+    let mut out = vec![0u16; (w as usize) * (h as usize) * 4];
+
+    if include_background && !doc.is_transparent {
+        let bg = doc.background_color().to_rgba8();
+        let promoted = [
+            crate::pixel::srgb8_to_srgb16(bg[0]),
+            crate::pixel::srgb8_to_srgb16(bg[1]),
+            crate::pixel::srgb8_to_srgb16(bg[2]),
+            crate::pixel::srgb8_to_srgb16(bg[3]),
+        ];
+        for chunk in out.chunks_exact_mut(4) {
+            chunk.copy_from_slice(&promoted);
+        }
+    }
+
+    // Promote the whole document once, so the pass reads 16-bit buffers the way a real
+    // 16-bit document would rather than converting per pixel.
+    let promoted: Vec<Vec<u16>> = doc
+        .layers
+        .iter()
+        .map(|layer| {
+            layer
+                .as_srgb8()
+                .iter()
+                .map(|&v| crate::pixel::srgb8_to_srgb16(v))
+                .collect()
+        })
+        .collect();
+
+    for (index, layer) in doc.layers.iter().enumerate() {
+        if layer.is_group()
+            || layer.is_adjustment()
+            || !doc.is_layer_effective_visible(layer.id)
+        {
+            continue;
+        }
+        let opacity = doc.effective_opacity(layer.id);
+        if opacity <= 0.001 {
+            continue;
+        }
+        let base = if layer.clipping_mask && index > 0 {
+            let b = &doc.layers[index - 1];
+            if !doc.is_layer_effective_visible(b.id) {
+                continue;
+            }
+            Some(ClipBase {
+                pixels: &promoted[index - 1],
+                offset_x: b.offset_x,
+                offset_y: b.offset_y,
+                width: b.width,
+                height: b.height,
+                indexable: b.is_raster() || b.is_text(),
+                opacity: doc.effective_opacity(b.id),
+            })
+        } else {
+            None
+        };
+        let mask = layer
+            .mask
+            .as_ref()
+            .filter(|m| m.enabled)
+            .map(|m| m.pixels.as_slice());
+
+        macro_rules! run {
+            ($compose:path) => {
+                compose_rows(
+                    &mut out, 0, h, layer, w, h, opacity, mask, base, &promoted[index], &$compose,
+                )
+            };
+        }
+        match layer.blend_mode {
+            BlendMode::Normal => run!(crate::blend::compose_normal),
+            BlendMode::Multiply => run!(crate::blend::compose_multiply),
+            BlendMode::Screen => run!(crate::blend::compose_screen),
+            BlendMode::Overlay => run!(crate::blend::compose_overlay),
+            BlendMode::Darken => run!(crate::blend::compose_darken),
+            BlendMode::Lighten => run!(crate::blend::compose_lighten),
+            BlendMode::ColorDodge => run!(crate::blend::compose_color_dodge),
+            BlendMode::ColorBurn => run!(crate::blend::compose_color_burn),
+            BlendMode::HardLight => run!(crate::blend::compose_hard_light),
+            BlendMode::SoftLight => run!(crate::blend::compose_soft_light),
+            BlendMode::Difference => run!(crate::blend::compose_difference),
+            BlendMode::Exclusion => run!(crate::blend::compose_exclusion),
+            BlendMode::Luminosity => run!(crate::blend::compose_luminosity),
+        }
+    }
+    out
 }

@@ -64,6 +64,31 @@ Every place precision changes is specified here, so each can be pinned by a test
 | Export, 8-bit formats | the standard downconvert above |
 
 ### 1.3 Oracle
+The 702-combination oracle runs with fixtures promoted `v * 257`, results downconverted,
+compared against today's 8-bit output. The oracle is not relaxed, re-baselined or
+replaced.
+
+**Measured, and it is exact in one case and bounded in the other:**
+
+| Comparison | Result |
+| :--- | :--- |
+| Single layer, 13 modes x offsets x mask states x coverages | **byte-identical** |
+| Multi-layer stack, same matrix | worst channel drift **1 LSB**, never more |
+
+The reason is arithmetic, not convenience, and it belongs in the plan rather than in a
+tolerance nobody reads: the 8-bit chain quantises to 256 levels *between* layers, while the
+16-bit chain keeps 65536. A later layer is therefore fed a slightly different input and can
+round to the neighbouring byte. With no inter-layer quantisation - a single layer - the
+result is exact.
+
+Two consequences for gate 3:
+
+1. Opening an 8-bit stack as 16-bit and saving it back is **not** guaranteed lossless at the
+   last bit. If that is unacceptable, the answer is to quantise the 16-bit result back to
+   the 8-bit lattice after each layer when the document originated as 8-bit - a per-document
+   flag, not a global rule - and that is a decision for gate 3.
+2. There is no 16-bit fast path, so layers that would have used the 8-bit integer path have\n   no 16-bit equivalent. Fixtures for this oracle must therefore force the general path on
+   both sides, or they compare two algorithms rather than two storage widths.
 
 The 702-combination oracle runs with fixtures promoted `v * 257`, results downconverted,
 compared **byte for byte** against today's 8-bit oracle. It must be identical. The oracle is
