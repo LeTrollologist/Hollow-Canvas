@@ -19,6 +19,17 @@ pub trait Channel: Copy + PartialEq + Send + Sync + 'static {
     /// Working precision -> storage, with the rounding rule the format has always used:
     /// clamp to the unit range, scale, round.
     fn from_f32(value: f32) -> Self;
+
+    /// The value in its own integer scale (`0..=255` for `u8`, `0..=65535` for `u16`).
+    ///
+    /// Distinct from `to_f32` on purpose. Resampling kernels have always interpolated on
+    /// unscaled channel values and rounded at the end; normalising first is mathematically
+    /// equivalent but can land on the other side of a rounding boundary, which would move
+    /// existing 8-bit output. Interpolation uses these; compositing uses the normalised pair.
+    fn to_scaled_f32(self) -> f32;
+
+    /// Rounds a scaled value back into storage, clamping to the format's range.
+    fn from_scaled_f32(value: f32) -> Self;
 }
 
 impl Channel for u8 {
@@ -32,6 +43,16 @@ impl Channel for u8 {
     #[inline]
     fn from_f32(value: f32) -> Self {
         (value.clamp(0.0, 1.0) * 255.0).round() as u8
+    }
+
+    #[inline]
+    fn to_scaled_f32(self) -> f32 {
+        self as f32
+    }
+
+    #[inline]
+    fn from_scaled_f32(value: f32) -> Self {
+        value.round().clamp(0.0, 255.0) as u8
     }
 }
 
@@ -51,6 +72,16 @@ impl Channel for u16 {
     #[inline]
     fn from_f32(value: f32) -> Self {
         (value.clamp(0.0, 1.0) * 65535.0).round() as u16
+    }
+
+    #[inline]
+    fn to_scaled_f32(self) -> f32 {
+        self as f32
+    }
+
+    #[inline]
+    fn from_scaled_f32(value: f32) -> Self {
+        value.round().clamp(0.0, 65535.0) as u16
     }
 }
 

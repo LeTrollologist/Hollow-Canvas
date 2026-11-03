@@ -2575,7 +2575,7 @@ mod tests {
         // pins that behaviour so the fix is a visible, deliberate change to this assertion.
         assert_eq!(
             doc.get_layer(id).unwrap().format(),
-            PixelFormat::Srgb8,
+            PixelFormat::Srgb16,
             "scale_canvas converted a 16-bit layer"
         );
     }

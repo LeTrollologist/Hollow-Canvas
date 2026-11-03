@@ -489,7 +489,11 @@ impl Document {
         self.height = new_h;
     }
 
-    /// Scale canvas and resample all layers using nearest neighbor or bilinear interpolation
+    /// Scale canvas and resample all layers using nearest neighbor or bilinear interpolation.
+    ///
+    /// Each layer is resampled into its **own** storage format: the kernel is shared, and it
+    /// interpolates on unscaled channel values so the 8-bit result is byte-for-byte what it
+    /// always was while a 16-bit layer keeps its precision.
     pub fn scale_canvas(&mut self, new_w: u32, new_h: u32, bilinear: bool) {
         if new_w == 0 || new_h == 0 {
             return;
@@ -497,48 +501,18 @@ impl Document {
         let old_w = self.width;
         let old_h = self.height;
 
-        let scale_x = old_w as f32 / new_w as f32;
-        let scale_y = old_h as f32 / new_h as f32;
-
         for layer in &mut self.layers {
-            let mut new_pixels = vec![0u8; (new_w * new_h * 4) as usize];
-            for ny in 0..new_h {
-                for nx in 0..new_w {
-                    let dst_idx = ((ny * new_w + nx) * 4) as usize;
-                    let px = if bilinear {
-                        let gx = (nx as f32 + 0.5) * scale_x - 0.5;
-                        let gy = (ny as f32 + 0.5) * scale_y - 0.5;
-                        let x0 = (gx.floor() as i32).clamp(0, old_w as i32 - 1) as u32;
-                        let y0 = (gy.floor() as i32).clamp(0, old_h as i32 - 1) as u32;
-                        let x1 = (x0 + 1).min(old_w - 1);
-                        let y1 = (y0 + 1).min(old_h - 1);
-
-                        let fx = (gx - gx.floor()).clamp(0.0, 1.0);
-                        let fy = (gy - gy.floor()).clamp(0.0, 1.0);
-
-                        let p00 = layer.get_pixel(x0, y0).unwrap_or([0, 0, 0, 0]);
-                        let p10 = layer.get_pixel(x1, y0).unwrap_or([0, 0, 0, 0]);
-                        let p01 = layer.get_pixel(x0, y1).unwrap_or([0, 0, 0, 0]);
-                        let p11 = layer.get_pixel(x1, y1).unwrap_or([0, 0, 0, 0]);
-
-                        let mut res = [0u8; 4];
-                        for c in 0..4 {
-                            let top = (p00[c] as f32) * (1.0 - fx) + (p10[c] as f32) * fx;
-                            let bot = (p01[c] as f32) * (1.0 - fx) + (p11[c] as f32) * fx;
-                            res[c] = (top * (1.0 - fy) + bot * fy).round().clamp(0.0, 255.0) as u8;
-                        }
-                        res
-                    } else {
-                        let ox = ((nx as f32 * scale_x).floor() as u32).min(old_w - 1);
-                        let oy = ((ny as f32 * scale_y).floor() as u32).min(old_h - 1);
-                        layer.get_pixel(ox, oy).unwrap_or([0, 0, 0, 0])
-                    };
-                    new_pixels[dst_idx..dst_idx + 4].copy_from_slice(&px);
-                }
-            }
+            let resampled = match layer.buffer() {
+                LayerBuffer::Srgb8(bytes) => LayerBuffer::Srgb8(resample_channels(
+                    bytes, old_w, old_h, new_w, new_h, bilinear,
+                )),
+                LayerBuffer::Srgb16(channels) => LayerBuffer::Srgb16(resample_channels(
+                    channels, old_w, old_h, new_w, new_h, bilinear,
+                )),
+            };
             layer.width = new_w;
             layer.height = new_h;
-            layer.set_pixels(new_pixels);
+            *layer.buffer_mut() = resampled;
         }
 
         self.width = new_w;
@@ -760,6 +734,74 @@ impl Document {
             }
         }
     }
+}
+
+/// Resamples a layer buffer with nearest-neighbour or bilinear filtering.
+///
+/// One implementation for both storage widths. Interpolation happens on **unscaled** channel
+/// values - `0..=255` or `0..=65535` - with the weighted sum rounded once at the end, which is
+/// exactly what the 8-bit path has always done. Normalising first would be equivalent in real
+/// arithmetic but can cross a rounding boundary, so it is not used here.
+fn resample_channels<C: Channel>(
+    source: &[C],
+    old_w: u32,
+    old_h: u32,
+    new_w: u32,
+    new_h: u32,
+    bilinear: bool,
+) -> Vec<C> {
+    let scale_x = old_w as f32 / new_w as f32;
+    let scale_y = old_h as f32 / new_h as f32;
+    let mut out = vec![C::ZERO; (new_w as usize) * (new_h as usize) * 4];
+
+    let pixel = |x: u32, y: u32| -> [C; 4] {
+        let index = ((y * old_w + x) * 4) as usize;
+        if index + 3 < source.len() {
+            [
+                source[index],
+                source[index + 1],
+                source[index + 2],
+                source[index + 3],
+            ]
+        } else {
+            [C::ZERO; 4]
+        }
+    };
+
+    for ny in 0..new_h {
+        for nx in 0..new_w {
+            let dst_idx = ((ny * new_w + nx) * 4) as usize;
+            let sampled = if bilinear {
+                let gx = (nx as f32 + 0.5) * scale_x - 0.5;
+                let gy = (ny as f32 + 0.5) * scale_y - 0.5;
+                let x0 = (gx.floor() as i32).clamp(0, old_w as i32 - 1) as u32;
+                let y0 = (gy.floor() as i32).clamp(0, old_h as i32 - 1) as u32;
+                let x1 = (x0 + 1).min(old_w - 1);
+                let y1 = (y0 + 1).min(old_h - 1);
+                let fx = (gx - gx.floor()).clamp(0.0, 1.0);
+                let fy = (gy - gy.floor()).clamp(0.0, 1.0);
+                let p00 = pixel(x0, y0);
+                let p10 = pixel(x1, y0);
+                let p01 = pixel(x0, y1);
+                let p11 = pixel(x1, y1);
+                let mut result = [C::ZERO; 4];
+                for channel in 0..4 {
+                    let top = p00[channel].to_scaled_f32() * (1.0 - fx)
+                        + p10[channel].to_scaled_f32() * fx;
+                    let bottom = p01[channel].to_scaled_f32() * (1.0 - fx)
+                        + p11[channel].to_scaled_f32() * fx;
+                    result[channel] = C::from_scaled_f32(top * (1.0 - fy) + bottom * fy);
+                }
+                result
+            } else {
+                let ox = ((nx as f32 * scale_x).floor() as u32).min(old_w - 1);
+                let oy = ((ny as f32 * scale_y).floor() as u32).min(old_h - 1);
+                pixel(ox, oy)
+            };
+            out[dst_idx..dst_idx + 4].copy_from_slice(&sampled);
+        }
+    }
+    out
 }
 
 /// Read-only view of the layer a clipping layer is clipped to.
