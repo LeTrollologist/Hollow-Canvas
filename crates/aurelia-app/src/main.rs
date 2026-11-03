@@ -1,6 +1,6 @@
 use glam::Vec2;
 use aurelia_core::brush::{BrushPoint, ToolType};
-use aurelia_core::history::LayerPixelsSnapshotCommand;
+use aurelia_core::history::LayerPixelsDeltaCommand;
 use aurelia_core::rasterizer::StrokeRasterizer;
 use aurelia_core::selection::SelectionMask;
 use aurelia_io::export::{export_flat_image, export_flat_image_with_quality, ExportFormat};
@@ -1539,12 +1539,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     if let Some(layer) = app.state.document.active_layer() {
                         let before = std::mem::take(&mut app.before_stroke_pixels);
                         let after = layer.as_srgb8().to_vec();
-                        let cmd = Box::new(LayerPixelsSnapshotCommand {
-                            layer_id: layer.id,
-                            description: app.state.brush.tool.label(),
-                            before_pixels: before,
-                            after_pixels: after,
-                        });
+                        let cmd = Box::new(LayerPixelsDeltaCommand::new(layer.id, app.state.brush.tool.label(), before, after));
                         app.state.history.push(cmd);
                     }
                 } else {
@@ -1775,12 +1770,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     if let Some(layer) = app.state.document.active_layer_mut() {
                         let before = layer.as_srgb8().to_vec();
                         aurelia_core::filter::filter_invert(layer.as_srgb8_mut(), w, h, sel.as_ref());
-                        let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
-                            layer_id: layer.id,
-                            description: "Invert Colors",
-                            before_pixels: before,
-                            after_pixels: layer.as_srgb8().to_vec(),
-                        });
+                        let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Invert Colors", before, layer.as_srgb8().to_vec()));
                         app.state.history.push(cmd);
                         app.state.set_status("Inverted Colors");
                     }

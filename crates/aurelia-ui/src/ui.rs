@@ -461,12 +461,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 if let Some(layer) = state.document.active_layer_mut() {
                                     let before = layer.as_srgb8().to_vec();
                                     aurelia_core::filter::filter_invert(layer.as_srgb8_mut(), w, h, sel.as_ref());
-                                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
-                                        layer_id: layer.id,
-                                        description: "Invert Colors",
-                                        before_pixels: before,
-                                        after_pixels: layer.as_srgb8().to_vec(),
-                                    });
+                                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Invert Colors", before, layer.as_srgb8().to_vec()));
                                     state.history.push(cmd);
                                     state.set_status("Inverted Colors");
                                 }
@@ -479,12 +474,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 if let Some(layer) = state.document.active_layer_mut() {
                                     let before = layer.as_srgb8().to_vec();
                                     aurelia_core::filter::filter_grayscale(layer.as_srgb8_mut(), w, h, sel.as_ref());
-                                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
-                                        layer_id: layer.id,
-                                        description: "Grayscale",
-                                        before_pixels: before,
-                                        after_pixels: layer.as_srgb8().to_vec(),
-                                    });
+                                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Grayscale", before, layer.as_srgb8().to_vec()));
                                     state.history.push(cmd);
                                     state.set_status("Applied Grayscale");
                                 }
@@ -497,12 +487,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 if let Some(layer) = state.document.active_layer_mut() {
                                     let before = layer.as_srgb8().to_vec();
                                     aurelia_core::filter::filter_sepia(layer.as_srgb8_mut(), w, h, sel.as_ref());
-                                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
-                                        layer_id: layer.id,
-                                        description: "Sepia",
-                                        before_pixels: before,
-                                        after_pixels: layer.as_srgb8().to_vec(),
-                                    });
+                                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Sepia", before, layer.as_srgb8().to_vec()));
                                     state.history.push(cmd);
                                     state.set_status("Applied Sepia Tone");
                                 }

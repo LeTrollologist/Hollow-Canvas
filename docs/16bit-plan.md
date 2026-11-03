@@ -197,6 +197,29 @@ of the document, and it is a *better* design at 8 bits too.
 This is production work in its own right, with its own gate: undoing and redoing a long edit
 session must restore byte-identical state, and the existing tests must keep passing.
 
+**Implemented, separately from any `LayerBuffer` work** (one change, one commit, so a
+regression is attributable):
+
+- `LayerPixelsDeltaCommand` stores the spans of a layer buffer that actually changed, with
+  both states, and drops the full buffers at construction. Spans closer than 64 bytes are
+  merged so a pathological edit cannot fragment into thousands of tiny ones; a length change
+  (canvas resize) falls back to whole-buffer capture, which is the only exact option there.
+- All ten call sites that captured whole layers - brush strokes, filters, fill, clear,
+  stroke-selection, invert, grayscale, sepia - now push the delta command. Full-document
+  snapshots remain for structural operations only.
+- Exactness is tested, not assumed: `delta_replays_undo_and_redo_exactly`,
+  `deltas_handle_scattered_edits_and_no_ops` (non-contiguous edits, a no-op that costs zero,
+  and a length change), and `long_edit_session_undoes_and_redoes_to_identical_bytes` - 300
+  strokes that must undo to the starting buffer, redo to the final buffer, and land on the
+  exact intermediate buffer after a partial undo-then-redo.
+
+**Measured** (`delta_history_retains_a_fraction_of_full_snapshots`, 256x256, 200 strokes):
+retained history **0.18 MB against 100.00 MB - 546x smaller**. The arithmetic that matters
+more is at 1080p: a snapshot step is 16.6 MB, so the 512 MiB default budget retains roughly
+**30** undo steps however large `max_history` is; a delta step for an ordinary dab is under a
+kilobyte, so the budget stops bounding undo depth at all.
+
+
 ## Gate 3 - Production architecture
 
 Only after gates 1 and 2 pass:

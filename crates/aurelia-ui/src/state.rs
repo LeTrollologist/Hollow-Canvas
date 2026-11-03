@@ -981,12 +981,7 @@ impl AppState {
         if let Some(before) = self.filter_original_pixels.take() {
             if let Some(layer) = self.document.active_layer() {
                 if before != layer.as_srgb8() {
-                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
-                        layer_id: layer.id,
-                        description: filter_name,
-                        before_pixels: before,
-                        after_pixels: layer.as_srgb8().to_vec(),
-                    });
+                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, filter_name, before, layer.as_srgb8().to_vec()));
                     self.history.push(cmd);
                     self.set_status(format!("Applied {}", filter_name));
                 }
@@ -1329,12 +1324,7 @@ impl AppState {
                     TransformMode::MeshGrid => "Mesh Grid Warp",
                     TransformMode::ThinPlateSpline => "TPS Landmark Warp",
                 };
-                let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
-                    layer_id: layer.id,
-                    description: mode_name,
-                    before_pixels: before,
-                    after_pixels: after,
-                });
+                let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, mode_name, before, after));
                 self.history.push(cmd);
                 self.set_status(format!("Committed {}", mode_name));
             }
@@ -1388,12 +1378,7 @@ impl AppState {
                 mask.fill_selection(layer.as_srgb8_mut(), doc_w, doc_h, color);
                 let after = layer.as_srgb8().to_vec();
                 if before != after {
-                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
-                        layer_id: layer.id,
-                        description: "Fill Selection",
-                        before_pixels: before,
-                        after_pixels: after,
-                    });
+                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Fill Selection", before, after));
                     self.history.push(cmd);
                     self.set_status("Filled selection with primary color");
                 }
@@ -1411,12 +1396,7 @@ impl AppState {
                 mask.fill_selection(layer.as_srgb8_mut(), doc_w, doc_h, color);
                 let after = layer.as_srgb8().to_vec();
                 if before != after {
-                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
-                        layer_id: layer.id,
-                        description: "Clear Selection",
-                        before_pixels: before,
-                        after_pixels: after,
-                    });
+                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Clear Selection", before, after));
                     self.history.push(cmd);
                     self.set_status("Cleared selected pixels");
                 }
@@ -1440,12 +1420,7 @@ impl AppState {
                 mask.stroke_selection(layer.as_srgb8_mut(), doc_w, doc_h, color, width, pos);
                 let after = layer.as_srgb8().to_vec();
                 if before != after {
-                    let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
-                        layer_id: layer.id,
-                        description: "Stroke Selection",
-                        before_pixels: before,
-                        after_pixels: after,
-                    });
+                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Stroke Selection", before, after));
                     self.history.push(cmd);
                     self.set_status(format!("Stroked selection ({}px)", width));
                 }
