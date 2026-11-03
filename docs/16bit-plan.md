@@ -380,3 +380,27 @@ review should be able to see one conversion pattern, not eleven variants.
 Until this slice lands, painting on a 16-bit layer **panics** rather than silently painting at
 8-bit. A loud, documented failure is the right behaviour for an unimplemented path, and it is
 better than the precision loss a quiet fallback would cause.
+
+### Slice 1: what inspection of the write sites changed
+
+Before writing code I read all of them. They are **not uniform**, and the difference matters:
+
+| Sites | Shape | Genericisation |
+| :--- | :--- | :--- |
+| 2 | read pixel, `composite_pixel`, write back | a `blend_into` helper covers it |
+| 4 | read pixel, `composite_pixel`, **post-process the result**, write back | needs the post-processing moved into working precision |
+| 5 | alpha-locked paths that clamp in **u8 arithmetic** (`new_a * 255.0).round() as u8`) | must reproduce that clamp *exactly* in `f32`, or 8-bit bytes move |
+
+The naive plan - "replace eleven calls to `composite_pixel` with `composite_working`" - is therefore
+wrong: four sites adjust the blended pixel after blending, and five of those adjustments are
+written in 8-bit arithmetic whose rounding is part of the current output. Moving them to `f32`
+without reproducing `(value * 255.0).round() as u8` bit-for-bit would change 8-bit results while
+appearing to be a clean migration - the exact failure the oracle exists to catch.
+
+So slice 1 has a prerequisite that is small but not optional: **express the alpha-lock clamp once, in
+working precision, with a test that pins the u8 rounding to today's bytes** before any stamp site is
+changed. The oracle covers compositing; it does not cover alpha-locked brush clamping, so that test
+has to be new.
+
+That ordering keeps the acceptance criterion that matters most - existing brush tests byte-identical
+for `Srgb8` - as something provable at each step rather than at the end.
