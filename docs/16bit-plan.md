@@ -404,3 +404,78 @@ has to be new.
 
 That ordering keeps the acceptance criterion that matters most - existing brush tests byte-identical
 for `Srgb8` - as something provable at each step rather than at the end.
+
+### Slice 1: full audit of `blend_stamp`
+
+Read top to bottom rather than grepped, because the previous attempt failed precisely by
+treating the sites as independent. There are **two** pixel loops (spray, main) and the sites
+are not interchangeable:
+
+| Site | Shape today | Generic form |
+| :--- | :--- | :--- |
+| spray read | `let dst = [pixels[i], ...]` | `read_px(pixels, idx) -> [f32; 4]` |
+| spray skip | `dst[3] == 0` | `dst[3] <= 0.0` (exact: 0 maps to 0.0) |
+| spray blend | `composite_pixel(dst, src, p_alpha)` | `composite_working(dst, src_f32, p_alpha)` |
+| spray lock | `blended[3] = dst[3]` | `blended[3] = dst[3]` (both `f32` now) |
+| spray write | `copy_from_slice(&blended)` | `store_px(pixels, idx, blended)` |
+| main read | same as spray | same |
+| main lock | `dst[3] == 0`, `blended[3] = dst[3]` | same two changes |
+| eraser hard | `copy_from_slice(&bg_color.to_rgba8())` | `store_px_u8` (colour is 8-bit by API) |
+| eraser hard (no bg) | `copy_from_slice(&[0, 0, 0, 0])` | `store_px_u8(pixels, idx, [0, 0, 0, 0])` |
+| colour-erase match | `dst[0] as i32` vs u8 target | `u8::from_f32(dst[0]) as i32` - the tolerance is defined in 8-bit terms |
+| colour-erase clamp | `(a/255*(1-x)*255).round() as u8` | `scaled_alpha` (already extracted) |
+| soft-erase clamp | same | `scaled_alpha` |
+| soft-erase with bg | `composite_pixel` + lock | blend + lock, as spray |
+| smudge | `composite_pixel` + lock | blend + lock |
+| normal | `composite_pixel` + lock | blend + lock |
+
+Two things the audit settles that the failed attempt got wrong:
+
+1. **The source colour is 8-bit by definition** (brush settings and background are `Color`).
+   It is converted **once per stamp**, before either loop: `let src = u8_px(color.to_rgba8());`.
+   The previous attempt converted per pixel, which is both slower and pointless - and the
+   resulting `C` inference failure is what started the cascade of type errors.
+2. **The two loops share the same five site shapes**, so one set of primitives covers both.
+   No site needs its own variant.
+
+### The boundary
+
+```rust
+fn read_px<C: Channel>(pixels: &[C], idx: usize) -> [f32; 4];
+fn store_px<C: Channel>(pixels: &mut [C], idx: usize, pixel: [f32; 4]);
+fn u8_px(pixel: [u8; 4]) -> [f32; 4];              // 8-bit colour -> working, not generic
+fn store_px_u8<C: Channel>(pixels: &mut [C], idx: usize, pixel: [u8; 4]);
+```
+
+`u8_px` is **not** generic: its input is a colour, its output is working precision, and it
+knows nothing about storage. Making it generic is what broke inference last time.
+
+### Dispatch, once per stamp
+
+Not at the three call sites - inside `blend_stamp` itself, which takes the layer:
+
+```rust
+fn blend_stamp(doc_w, doc_h, layer: &mut Layer, /* geometry, brush, mask */) {
+    let (blend_mode, alpha_locked) = (layer.blend_mode, layer.alpha_locked);
+    match layer.buffer_mut() {
+        LayerBuffer::Srgb8(pixels) => Self::stamp_impl(doc_w, doc_h, pixels, ..., blend_mode, alpha_locked),
+        LayerBuffer::Srgb16(pixels) => Self::stamp_impl(doc_w, doc_h, pixels, ..., blend_mode, alpha_locked),
+    }
+}
+```
+
+One `match` per stamp, two monomorphised bodies, three call sites that stop calling
+`as_srgb8_exact_mut()` and simply pass the layer. Field reads happen **before** the mutable
+borrow, which is the borrow lesson from the earlier `blend_mode` hoist.
+
+### Verification, in order
+
+1. 99 existing tests, including the frozen clamp golden test - after every site group, not
+   only at the end.
+2. 702-case compositor oracle (unchanged path, run anyway).
+3. `paint_dot`, `paint_segment`, `paint_spline` each on an `Srgb16` layer.
+4. Off-lattice value under 50% opacity retains sub-8-bit detail.
+5. Painting benchmark: no meaningful `u8` regression.
+
+Until all five pass, the work stays uncommitted - an unverified rasterizer is worth less than
+none.
