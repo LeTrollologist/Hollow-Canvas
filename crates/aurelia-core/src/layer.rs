@@ -197,10 +197,66 @@ pub struct Layer {
     pub offset_y: i32,
     #[serde(skip)]
     pub pixels: Vec<u8>, // RGBA8, len = width * height * 4
+    /// Optional layer mask applied when compositing.
+    #[serde(default)]
+    pub mask: Option<LayerMask>,
 }
 
 fn default_expanded() -> bool {
     true
+}
+
+/// An 8-bit layer mask: 0 hides the layer's pixels, 255 shows them.
+///
+/// Masks are per-layer and non-destructive: the layer keeps its own pixels and the
+/// mask only scales the alpha used when compositing. `enabled` lets a mask be kept
+/// but ignored without throwing it away.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LayerMask {
+    pub width: u32,
+    pub height: u32,
+    /// `width * height` bytes, row-major.
+    pub pixels: Vec<u8>,
+    pub enabled: bool,
+}
+
+impl LayerMask {
+    /// A uniform mask (`255` = fully visible).
+    pub fn full(width: u32, height: u32, value: u8) -> Self {
+        Self {
+            width,
+            height,
+            pixels: vec![value; (width as usize) * (height as usize)],
+            enabled: true,
+        }
+    }
+
+    /// Mask alpha at a canvas coordinate; anything outside the mask is transparent,
+    /// and a disabled mask is fully visible.
+    #[inline]
+    pub fn alpha_at(&self, x: u32, y: u32) -> u8 {
+        if !self.enabled {
+            return 255;
+        }
+        if x >= self.width || y >= self.height {
+            return 255;
+        }
+        self.pixels
+            .get((y as usize) * (self.width as usize) + x as usize)
+            .copied()
+            .unwrap_or(255)
+    }
+
+    pub fn invert(&mut self) {
+        for p in &mut self.pixels {
+            *p = 255 - *p;
+        }
+    }
+
+    /// True when the mask would change nothing (all visible).
+    pub fn is_all_visible(&self) -> bool {
+        self.pixels.iter().all(|&p| p == 255)
+    }
 }
 
 impl Layer {
@@ -227,6 +283,7 @@ impl Layer {
             offset_x: 0,
             offset_y: 0,
             pixels: vec![0; size],
+            mask: None,
         }
     }
 
@@ -252,6 +309,7 @@ impl Layer {
             offset_x: 0,
             offset_y: 0,
             pixels: Vec::new(),
+            mask: None,
         }
     }
 
@@ -277,6 +335,7 @@ impl Layer {
             offset_x: 0,
             offset_y: 0,
             pixels: Vec::new(),
+            mask: None,
         }
     }
 
@@ -303,6 +362,7 @@ impl Layer {
             offset_x: 0,
             offset_y: 0,
             pixels: vec![0; size],
+            mask: None,
         }
     }
 
@@ -362,6 +422,7 @@ impl Layer {
             offset_x: 0,
             offset_y: 0,
             pixels,
+            mask: None,
         }
     }
 
@@ -447,6 +508,7 @@ impl Layer {
             offset_x: self.offset_x,
             offset_y: self.offset_y,
             pixels: self.pixels.clone(),
+            mask: self.mask.clone(),
         }
     }
 }

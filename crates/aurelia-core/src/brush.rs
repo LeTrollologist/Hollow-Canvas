@@ -268,6 +268,10 @@ pub struct BrushSettings {
     pub velocity_taper_strength: f32, // 0.0 ..= 1.0 (how sharply fast strokes thin out)
     pub velocity_min_size: f32,        // 0.05 ..= 1.0 (minimum tip ratio under max speed)
     pub calligraphy_angle: f32,        // 0.0 ..= 180.0 degrees (chisel nib orientation)
+    /// How strongly stylus tilt widens the stroke (0 disables tilt response).
+    /// Real pens lay flatter as they tilt, spreading the tip over more pixels.
+    #[serde(default)]
+    pub tilt_size_gain: f32,
     pub calligraphy_weight: f32,       // 0.0 ..= 1.0 (0.0 = round, 1.0 = sharp flat chisel)
     // ── Wet Edge Watercolor Effect ──
     pub wet_edge_strength: f32,        // 0.0 ..= 1.0 (dark pigment pooling at stroke boundaries)
@@ -303,6 +307,7 @@ impl Default for BrushSettings {
             velocity_min_size: 0.15,
             calligraphy_angle: 45.0,
             calligraphy_weight: 0.0,
+            tilt_size_gain: 0.0,
             wet_edge_strength: 0.0,
             wet_edge_fringe_width: 0.2,
             stabilization_level: 0,
@@ -432,7 +437,8 @@ impl BrushPreset {
                     velocity_dynamics: true,
                     velocity_taper_strength: 0.85,
                     velocity_min_size: 0.1,
-                    calligraphy_weight: 0.0,
+
+
                     wet_edge_strength: 0.0,
                     ..Default::default()
                 },
@@ -572,4 +578,19 @@ impl BrushPreset {
             },
         ]
     }
+}
+
+/// Size multiplier for a stylus tilted by `(tilt_x, tilt_y)` degrees.
+///
+/// A pen laid flatter spreads its tip over more pixels, so the stroke widens: at a
+/// full 90 degree tilt the width is `1 + gain` times the base size. `gain` of 0
+/// disables the response entirely, which is the default.
+pub fn tilt_size_scale(tilt_x_deg: f32, tilt_y_deg: f32, gain: f32) -> f32 {
+    let gain = gain.clamp(0.0, 1.0);
+    if gain <= 0.0 || !tilt_x_deg.is_finite() || !tilt_y_deg.is_finite() {
+        return 1.0;
+    }
+    let magnitude = (tilt_x_deg * tilt_x_deg + tilt_y_deg * tilt_y_deg).sqrt();
+    let normalised = (magnitude / 90.0).clamp(0.0, 1.0);
+    1.0 + gain * normalised
 }

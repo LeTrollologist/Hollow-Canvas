@@ -255,4 +255,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+
+    #[test]
+    fn layer_mask_survives_a_save_and_load_roundtrip() {
+        let mut doc = Document::new(6, 5);
+        let id = doc.active_layer_id;
+        assert!(doc.add_layer_mask(id, None));
+        assert!(doc.invert_layer_mask(id));
+        if let Some(layer) = doc.active_layer_mut() {
+            layer.set_pixel(1, 1, [10, 20, 30, 255]);
+        }
+
+        let mut buf = Cursor::new(Vec::new());
+        save_project_to_writer(&doc, &mut buf).expect("save");
+        buf.set_position(0);
+        let loaded = load_project_from_reader(buf).expect("load");
+
+        let mask = loaded.get_layer(id).expect("layer").mask.as_ref().expect("mask");
+        assert_eq!((mask.width, mask.height), (6, 5));
+        assert!(mask.enabled);
+        assert!(mask.pixels.iter().all(|&p| p == 0), "the inverted mask is all hidden");
+        // Pixels themselves are untouched by the mask.
+        assert_eq!(loaded.get_layer(id).unwrap().get_pixel(1, 1), Some([10, 20, 30, 255]));
+    }
+
+    #[test]
+    fn layers_without_masks_still_roundtrip() {
+        let doc = Document::new(4, 4);
+        let mut buf = Cursor::new(Vec::new());
+        save_project_to_writer(&doc, &mut buf).expect("save");
+        buf.set_position(0);
+        let loaded = load_project_from_reader(buf).expect("load");
+        assert!(loaded.layers.iter().all(|l| l.mask.is_none()));
+    }
 }

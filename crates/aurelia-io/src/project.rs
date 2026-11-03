@@ -12,6 +12,8 @@ use std::path::Path;
 use thiserror::Error;
 
 const AUR_MAGIC_V1: &[u8; 4] = b"AUR\x01";
+/// v2 appends a per-layer mask section (flag byte, enabled byte, width*height bytes).
+const AUR_MAGIC_V2: &[u8; 4] = b"AUR\x02";
 const HCV_MAGIC_V2: &[u8; 4] = b"HCV\x02";
 const HCV_MAGIC_V3: &[u8; 4] = b"HCV\x03";
 const HCV_MAGIC_V4: &[u8; 4] = b"HCV\x04";
@@ -30,7 +32,7 @@ pub enum ProjectError {
 }
 
 pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result<(), ProjectError> {
-    writer.write_all(AUR_MAGIC_V1)?;
+    writer.write_all(AUR_MAGIC_V2)?;
     writer.write_all(&doc.width.to_le_bytes())?;
     writer.write_all(&doc.height.to_le_bytes())?;
     writer.write_all(&doc.active_layer_id.to_le_bytes())?;
@@ -179,6 +181,20 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
             writer.write_all(&comp_len.to_le_bytes())?;
             writer.write_all(&compressed)?;
         }
+
+        // Layer mask (AUR v2+): 0 = none, 1 = enabled flag + raw mask bytes.
+        match &layer.mask {
+            Some(mask)
+                if mask.pixels.len() == (doc.width as usize) * (doc.height as usize)
+                    && mask.width == doc.width
+                    && mask.height == doc.height =>
+            {
+                writer.write_all(&[1u8])?;
+                writer.write_all(&[u8::from(mask.enabled)])?;
+                writer.write_all(&mask.pixels)?;
+            }
+            _ => writer.write_all(&[0u8])?,
+        }
     }
 
     // Save flat preview thumbnail
@@ -220,7 +236,8 @@ pub fn save_project_file(doc: &Document, path: impl AsRef<Path>) -> Result<(), P
 pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, ProjectError> {
     let mut magic = [0u8; 4];
     reader.read_exact(&mut magic)?;
-    let is_aur = &magic == AUR_MAGIC_V1;
+    let is_aur_v2 = &magic == AUR_MAGIC_V2;
+    let is_aur = &magic == AUR_MAGIC_V1 || is_aur_v2;
     // AUR v1 reuses the legacy HCV v5 body layout, so legacy files stay readable.
     let is_v5 = &magic == HCV_MAGIC_V5 || is_aur;
     let is_v4 = &magic == HCV_MAGIC_V4;
@@ -587,6 +604,23 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         layer.blend_mode = blend_mode;
         layer.offset_x = offset_x;
         layer.offset_y = offset_y;
+
+        if is_aur_v2 {
+            reader.read_exact(&mut buf1)?;
+            if buf1[0] == 1 {
+                reader.read_exact(&mut buf1)?;
+                let enabled = buf1[0] != 0;
+                let mask_len = (width as usize) * (height as usize);
+                let mut mask_pixels = vec![0u8; mask_len];
+                reader.read_exact(&mut mask_pixels)?;
+                layer.mask = Some(aurelia_core::layer::LayerMask {
+                    width,
+                    height,
+                    pixels: mask_pixels,
+                    enabled,
+                });
+            }
+        }
 
         layers.push(layer);
     }

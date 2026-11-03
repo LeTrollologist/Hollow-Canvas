@@ -1108,4 +1108,77 @@ mod tests {
         assert!(doc.layers.iter().any(|l| l.id == doc.active_layer_id));
         assert!(doc.get_layer(base).is_some());
     }
+
+    /// Masks scale a layer's alpha at composite time and never touch its pixels.
+    #[test]
+    fn layer_masks_hide_pixels_when_compositing() {
+        let mut doc = Document::new(8, 8);
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.active_layer_mut() {
+            for px in layer.pixels.chunks_exact_mut(4) {
+                px.copy_from_slice(&[255, 255, 255, 255]);
+            }
+        }
+
+        assert!(doc.add_layer_mask(id, None), "a mask can be created");
+        assert_eq!(doc.composite_layers(false)[3], 255, "a fresh mask is fully visible");
+
+        assert!(doc.invert_layer_mask(id));
+        let flat = doc.composite_layers(false);
+        assert_eq!(&flat[0..4], &[0, 0, 0, 0], "an inverted mask hides the layer");
+
+        // Disabling keeps the mask but ignores it.
+        assert!(doc.set_layer_mask_enabled(id, false));
+        assert_eq!(doc.composite_layers(false)[3], 255, "a disabled mask is ignored");
+
+        assert!(doc.remove_layer_mask(id));
+        assert!(doc.get_layer(id).unwrap().mask.is_none());
+        assert_eq!(doc.composite_layers(false)[3], 255, "the layer itself was never altered");
+    }
+
+    #[test]
+    fn mask_from_selection_only_keeps_the_selected_area() {
+        let mut doc = Document::new(4, 4);
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.active_layer_mut() {
+            for px in layer.pixels.chunks_exact_mut(4) {
+                px.copy_from_slice(&[255, 0, 0, 255]);
+            }
+        }
+        let sel = crate::selection::SelectionMask::from_rect(4, 4, glam::vec2(0.0, 0.0), glam::vec2(2.0, 2.0));
+        assert!(doc.add_layer_mask(id, Some(&sel)));
+
+        let flat = doc.composite_layers(false);
+        assert_eq!(flat[3], 255, "inside the selection stays visible");
+        let outside = ((3 * 4) + 3) * 4;
+        assert_eq!(flat[outside + 3], 0, "outside the selection is hidden");
+    }
+
+    #[test]
+    fn duplicating_a_layer_copies_its_mask() {
+        let mut doc = Document::new(4, 4);
+        let id = doc.active_layer_id;
+        assert!(doc.add_layer_mask(id, None));
+        assert!(doc.invert_layer_mask(id));
+        let dup = doc.duplicate_active_layer().expect("duplicate");
+        let copy = doc.get_layer(dup).unwrap();
+        assert_eq!(copy.mask.as_ref().map(|m| m.pixels[0]), Some(0));
+        // The original is untouched.
+        assert_eq!(doc.get_layer(id).unwrap().mask.as_ref().map(|m| m.pixels[0]), Some(0));
+    }
+
+
+    #[test]
+    fn tilt_widens_the_stroke_up_to_the_gain() {
+        use crate::brush::tilt_size_scale;
+        assert_eq!(tilt_size_scale(0.0, 0.0, 1.0), 1.0, "an upright pen is unaffected");
+        assert_eq!(tilt_size_scale(80.0, 40.0, 0.0), 1.0, "gain 0 disables tilt response");
+        assert!((tilt_size_scale(90.0, 0.0, 1.0) - 2.0).abs() < 1e-3, "full tilt doubles the width");
+        let half = tilt_size_scale(45.0, 0.0, 1.0);
+        assert!(half > 1.2 && half < 1.8, "half tilt lands in between: {half}");
+        let x = tilt_size_scale(60.0, 0.0, 0.5);
+        let y = tilt_size_scale(0.0, 60.0, 0.5);
+        assert!((x - y).abs() < 1e-4, "both axes are equivalent");
+        assert!(tilt_size_scale(f32::NAN, 10.0, 1.0) == 1.0, "garbage tilt is ignored");
+    }
 }

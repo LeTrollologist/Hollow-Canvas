@@ -92,21 +92,80 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
 
 ---
 
+## Shipped in v2.5.0
+
+### Layer masks
+
+- [x] `LayerMask { width, height, pixels, enabled }` on every layer, composited into
+  the alpha of the fast path, the general (offset/blend) path and adjustment layers.
+- [x] Create from the current selection, invert, enable/disable, remove; masks copy
+  with the layer and never modify pixels.
+- [x] **AUR v2** project format with a per-layer mask section; AUR v1 files still load
+  and simply have no masks.
+- [ ] Painting *into* a mask with the brush (next: route freehand strokes at a mask
+  target, the same way strokes currently route at layer pixels).
+
+### Stylus tilt
+
+- [x] `pen_tilt` (sampled since 2.0, previously unused) folds into freehand stroke width
+  via `brush::tilt_size_scale`, exposed as the **Tilt widens** slider. Off by default,
+  freehand tools only, never mutates the stored brush size.
+
+### Performance baseline
+
+`cargo run --release -p aurelia-render --example bench_composite` (no dependencies):
+
+| Shape of work | Measured | target |
+| :--- | ---: | ---: |
+| Plain 4-layer stack | 113.1 MPix/s | >= 40 |
+| With a layer mask | 92.6 MPix/s | >= 30 |
+| Offset + general blend path | 25.7 MPix/s | >= 60 (open) |
+
 ## Next (ordered)
 
-1. ⏳ **Layer raster masks** — per-layer `Option<Vec<u8>>` mask, paint-mode toggle, AUR v2 bump with AUR v1 fallback.
-2. ⏳ **Layer styles** — stroke, glow, drop shadow as composite-time effects.
-3. ⏳ **Tilt-aware brush dynamics** — consume `pen_tilt` for size/opacity curves.
-4. ⏳ **Selection combine modes** — Replace / Union / Subtract / Intersect applied to new selections (wand, marquee, lasso).
-5. ⏳ **Preferences UI** — expose autosave interval, undo budget, JPEG quality, theme.
-6. ⏳ **Multi-document tabs** — `Vec<Document>` + per-tab history/path/dirty state.
-7. ⏳ **History panel** — visible undo stack with memory readout.
+1. **Mask painting** ? target a mask with the brush, keeping it non-destructive.
+2. **General-path compositing speed** ? 25.7 MPix/s is ~4x slower than the fast path;
+   the per-pixel closure and the offset branch are the cost. Target 60 MPix/s.
+3. **Layer styles** ? stroke, glow, drop shadow as composite-time effects.
+4. **Selection combine modes** ? Replace / Union / Subtract / Intersect for new selections.
+5. **Preferences UI** ? autosave interval, undo budget, JPEG quality, theme.
+6. **History panel** ? visible undo stack with memory readout.
+7. **Multi-document tabs** ? see the design below.
 
-## Deferred (needs an architecture decision)
+## Designed, not built
 
-- 💤 **Cross-platform port** — the app is Win32 + GDI (`SetDIBitsToDevice`) with a hand-rolled message loop; moving to `eframe`/`winit`/`wgpu` is a rewrite of `aurelia-app`, not a patch. Until then the README claims Windows only.
-- 💤 **ICC colour management / 16-bit pipelines** — every layer is 8-bit sRGB `Vec<u8>`; a colour-managed float pipeline touches the rasterizer, filters, blend modes and the project format.
-- 💤 **PSD import/export**, **APNG / animated WebP / MP4 export** — need third-party codecs (the `image` crate cannot write animated WebP).
-- 💤 **`render_ui` split** — 3.4k-line function; panel extraction is mechanical but touch-heavy, best done behind the new tests.
-- 💤 **VPack + Ed25519 signing** — retired in v2.1.0 for simplicity: releases are now a portable zip, an Inno Setup installer and a SHA-256 manifest. `keys/aurelia-publisher.*` are kept unused so signing can return without minting a new identity. If it does, the plan is a `sign` stage between `verify` and `publish`, plus a `.vpack` (or `.zip.sig`) asset — not a change to the stage order.
-- 💤 **Code-signing certificate** — the installer and `aurelia.exe` are unsigned, so SmartScreen warns on first run; an Authenticode certificate would remove that prompt and is the higher-value integrity upgrade compared with archive signing.
+### Colour management / higher bit depth
+
+The 8-bit assumption is everywhere: `Layer { pixels: Vec<u8> }`, the rasterizer,
+filters, blend modes and the project format. The staged plan that avoids a rewrite:
+
+1. Introduce `PixelFormat` on `Document` (`Srgb8`, `Linear16`) and a `LayerBuffer`
+   abstraction that only the compositor dereferences, keeping `Vec<u8>` behind it.
+2. Move filters and blend modes to operate on `LayerBuffer`, converting at the edges;
+   the fast path stays 8-bit when the document is `Srgb8`.
+3. Add an ICC profile reference to the project header (v3) and a working-space
+   conversion at export; keep sRGB as the only output until colour proofing exists.
+4. 16-bit only after the above is green in tests ? the risk is silent banding in blend
+   modes, not the storage.
+
+### Multi-document
+
+`AppState` owns exactly one `Document`, and ~40 places reach into `state.document`
+directly. The plan:
+
+1. Introduce `DocumentId` + `Vec<Document>` inside `AppState` with `active` accessor;
+   replace `state.document` call sites mechanically (compiler-guided).
+2. Per-document: history stack, file path, dirty flag, pan/zoom, selection, timeline.
+   These already live in `AppState`, so they move into a `DocumentSession` struct.
+3. UI: a tab strip above the canvas, drag-reorder, `Ctrl+Tab` cycling, close prompting
+   for dirty documents (the existing quit guard already knows how to ask).
+4. Autosave keys by document id; the recovery dialog lists every snapshot.
+
+### Deferred (unchanged)
+
+- ?? **Cross-platform port** ? the host is Win32 + GDI; `eframe`/`winit`/`wgpu` is a rewrite.
+- ?? **PSD import/export, animated WebP / MP4** ? needs third-party codecs.
+- ?? **`render_ui` split** ? mechanical but touch-heavy; best done behind the new tests.
+- ?? **ED25519 signing** ? retired in 2.1.0; plan is a `sign` stage between verify and publish.
+- ?? **Authenticode certificate** ? still the highest-value integrity upgrade; the
+   unsigned installer keeps 2-4 generic heuristic detections.

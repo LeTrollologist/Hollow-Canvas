@@ -1,6 +1,7 @@
 use crate::blend::BlendMode;
 use crate::color::{Color, ThemeMode};
-use crate::layer::{Layer, LayerId};
+use crate::layer::{Layer, LayerId, LayerMask};
+use crate::selection::SelectionMask;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,6 +266,52 @@ impl Document {
             self.active_layer_id = self.layers[next_idx].id;
         }
         Some(removed)
+    }
+
+    /// Replaces `layer_id`'s mask with one derived from `selection`.
+    ///
+    /// `None` (or a selection that does not cover the canvas) produces a fully
+    /// visible mask, which is the state a fresh mask starts in before it is painted.
+    pub fn add_layer_mask(&mut self, layer_id: LayerId, selection: Option<&SelectionMask>) -> bool {
+        let (w, h) = (self.width, self.height);
+        let Some(layer) = self.layers.iter_mut().find(|l| l.id == layer_id) else {
+            return false;
+        };
+        let mut mask = LayerMask::full(w, h, 255);
+        if let Some(sel) = selection.filter(|s| s.has_selection()) {
+            if sel.width == w && sel.height == h && sel.mask.len() == mask.pixels.len() {
+                mask.pixels.copy_from_slice(&sel.mask);
+            }
+        }
+        layer.mask = Some(mask);
+        true
+    }
+
+    pub fn invert_layer_mask(&mut self, layer_id: LayerId) -> bool {
+        match self.layers.iter_mut().find(|l| l.id == layer_id).and_then(|l| l.mask.as_mut()) {
+            Some(mask) => {
+                mask.invert();
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn set_layer_mask_enabled(&mut self, layer_id: LayerId, enabled: bool) -> bool {
+        match self.layers.iter_mut().find(|l| l.id == layer_id).and_then(|l| l.mask.as_mut()) {
+            Some(mask) => {
+                mask.enabled = enabled;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn remove_layer_mask(&mut self, layer_id: LayerId) -> bool {
+        match self.layers.iter_mut().find(|l| l.id == layer_id) {
+            Some(layer) => layer.mask.take().is_some(),
+            None => false,
+        }
     }
 
     pub fn move_layer(&mut self, id: LayerId, delta: i32) {
@@ -559,6 +606,9 @@ impl Document {
                             }
 
                             let mut opacity = eff_opacity;
+                            if let Some(m) = layer.mask.as_ref().filter(|m| m.enabled) {
+                                opacity *= m.alpha_at(x, y) as f32 / 255.0;
+                            }
                             if let Some(base) = prev_layer {
                                 let bx = x as i32 - base.offset_x;
                                 let by = y as i32 - base.offset_y;
@@ -591,8 +641,21 @@ impl Document {
             // ── Fast path for Normal blend mode with 0 offset and no clipping ──
             if layer.blend_mode == BlendMode::Normal && layer.offset_x == 0 && layer.offset_y == 0 && prev_layer.is_none() && layer.pixels.len() >= total_bytes {
                 let alpha_mul = (eff_opacity.clamp(0.0, 1.0) * 255.0).round() as u32;
-                for (dst, src) in out[..total_bytes].chunks_exact_mut(4).zip(layer.pixels[..total_bytes].chunks_exact(4)) {
-                    let sa = (src[3] as u32 * alpha_mul) / 255;
+                // A mask scales the layer's alpha per pixel; a mismatched mask is ignored
+                // rather than silently misaligned.
+                let mask = layer
+                    .mask
+                    .as_ref()
+                    .filter(|m| m.enabled && m.pixels.len() >= (self.width as usize) * (self.height as usize));
+                for (i, (dst, src)) in out[..total_bytes]
+                    .chunks_exact_mut(4)
+                    .zip(layer.pixels[..total_bytes].chunks_exact(4))
+                    .enumerate()
+                {
+                    let mut sa = (src[3] as u32 * alpha_mul) / 255;
+                    if let Some(m) = mask {
+                        sa = sa * m.pixels[i] as u32 / 255;
+                    }
                     if sa == 0 {
                         continue;
                     }
@@ -643,6 +706,9 @@ impl Document {
                     };
 
                     let mut opacity = eff_opacity;
+                    if let Some(m) = layer.mask.as_ref().filter(|m| m.enabled) {
+                        opacity *= m.alpha_at(x, y) as f32 / 255.0;
+                    }
                     if let Some(base) = prev_layer {
                         let bx = x as i32 - base.offset_x;
                         let by = y as i32 - base.offset_y;

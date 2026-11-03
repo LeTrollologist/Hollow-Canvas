@@ -88,6 +88,15 @@
 **Aurelia** is a lightweight, studio-grade digital illustration and raster graphics workbench engineered from the ground up in Rust. Designed for artists, concept designers, and technical illustrators who demand absolute precision, low latency, and deterministic offline reliability.
 
 ### Key Highlights
+
+- **Layer Raster Masks**: per-layer 8-bit masks created from the selection, with invert /
+  enable / remove and AUR v2 persistence. Non-destructive - a mask only scales alpha while
+  compositing, and a masked 4-layer 1080p composite still runs at 92 MPix/s.
+- **Tilt-Aware Strokes**: `WM_POINTER` tilt now widens freehand strokes (0 = off), so laying
+  the pen flatter behaves like a real brush instead of a constant-width line.
+- **Measured Performance**: `cargo run --release -p aurelia-render --example bench_composite`
+  reports composite throughput (113 MPix/s plain, 92 MPix/s masked here) against targets in
+  ROADMAP.md.
  
 - 🖥 **Windows-Native Architecture (Win32 + GDI, pure Rust)**: A hand-rolled `GetMessageW` message loop and `SetDIBitsToDevice` blit feed a software framebuffer; `egui` 0.28 supplies widgets and layout on top. No C++ runtime, no GPU driver dependency, no external UI framework.
   - **Zero C++ Dependencies**: 100% memory-safe Rust with instant compilation and zero OS-specific C runtime bottlenecks.

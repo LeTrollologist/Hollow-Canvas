@@ -306,6 +306,8 @@ struct AureliaDesktopApp {
     pen_pressure: Option<f32>,
     /// Tilt in degrees from the pen, reserved for tilt-aware brush dynamics.
     pen_tilt: (f32, f32),
+    /// Stylus-tilt size multiplier applied to freehand strokes this event.
+    stroke_size_scale: f32,
     /// Last window title pushed to Win32, to avoid redundant SetWindowTextW calls.
     last_window_title: String,
     /// Timestamp of the previous autosave check.
@@ -664,6 +666,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             if msg == WM_POINTERUP {
                 app.pen_pressure = None;
                 app.pen_tilt = (0.0, 0.0);
+            app.stroke_size_scale = 1.0;
                 return 0;
             }
 
@@ -983,6 +986,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         _ => velocity_pressure,
                     };
 
+                    // Tilt response: a pen laid flatter spreads its tip, so the stroke
+                    // widens. Gain 0 (the default) leaves the width untouched.
+                    app.stroke_size_scale = aurelia_core::brush::tilt_size_scale(
+                        app.pen_tilt.0,
+                        app.pen_tilt.1,
+                        app.state.brush.tilt_size_gain,
+                    );
+
                     // Compute S-Level Global Stroke Stabilization & Lazy Rope Pull
                     let stab_level = app.state.brush.stabilization_level;
                     let target_pos = if stab_level == 0 {
@@ -1041,22 +1052,24 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         } else {
                             let sel = app.state.selection.as_ref();
                             if n == 2 {
+                                let stroke_brush = app.tilted_brush();
                                 StrokeRasterizer::paint_segment(
                                     &mut app.state.document,
                                     app.stroke_points[0],
                                     app.stroke_points[1],
-                                    &app.state.brush,
+                                    &stroke_brush,
                                     &app.state.symmetry,
                                     sel,
                                 );
                             } else if n >= 3 {
+                                let stroke_brush = app.tilted_brush();
                                 StrokeRasterizer::paint_spline(
                                     &mut app.state.document,
                                     app.stroke_points[n - 3],
                                     app.stroke_points[n - 2],
                                     app.stroke_points[n - 1],
                                     app.stroke_points[n - 1],
-                                    &app.state.brush,
+                                    &stroke_brush,
                                     &app.state.symmetry,
                                     sel,
                                 );
@@ -1493,22 +1506,24 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     let n = app.stroke_points.len();
                     let sel = app.state.selection.as_ref();
                     if n == 2 {
+                        let stroke_brush = app.tilted_brush();
                         StrokeRasterizer::paint_segment(
                             &mut app.state.document,
                             app.stroke_points[0],
                             app.stroke_points[1],
-                            &app.state.brush,
+                            &stroke_brush,
                             &app.state.symmetry,
                             sel,
                         );
                     } else if n >= 3 {
+                        let stroke_brush = app.tilted_brush();
                         StrokeRasterizer::paint_spline(
                             &mut app.state.document,
                             app.stroke_points[n - 3],
                             app.stroke_points[n - 2],
                             app.stroke_points[n - 1],
                             app.stroke_points[n - 1],
-                            &app.state.brush,
+                            &stroke_brush,
                             &app.state.symmetry,
                             sel,
                         );
@@ -2581,7 +2596,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stroke_perspective_axis: None,
         has_initialized_view: false,
         pen_pressure: None,
-        pen_tilt: (0.0, 0.0),
+        pen_tilt: (0.0, 0.0), stroke_size_scale: 1.0,
         last_window_title: String::new(),
         last_autosave_tick: Instant::now(),
     });
@@ -2695,4 +2710,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+impl AureliaDesktopApp {
+    /// Brush settings with the current stylus tilt folded into the stroke width.
+    ///
+    /// `Copy` means this is free, and the user's brush size is never modified.
+    fn tilted_brush(&self) -> aurelia_core::brush::BrushSettings {
+        let mut brush = self.state.brush.clone();
+        if self.stroke_size_scale > 1.0001 {
+            brush.size = (brush.size * self.stroke_size_scale).clamp(1.0, 400.0);
+        }
+        brush
+    }
 }

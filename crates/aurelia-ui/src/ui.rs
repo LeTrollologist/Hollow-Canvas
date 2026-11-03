@@ -23,6 +23,10 @@ enum LayerCommand {
     AddChild(LayerId),
     Duplicate(LayerId),
     RasterizeActiveText,
+    MaskFromSelection(LayerId),
+    MaskInvert(LayerId),
+    MaskToggle(LayerId),
+    MaskRemove(LayerId),
 }
 
 /// Helper to render a custom studio tool button with a crisp vector-drawn icon
@@ -1279,6 +1283,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     ui.add_space(4.0);
                     design::slider_row(ui, "Chisel", &mut state.brush.calligraphy_weight, 0.0..=1.0, 0.01, 2, "");
+                    design::slider_row(ui, "Tilt widens", &mut state.brush.tilt_size_gain, 0.0..=1.0, 0.01, 2, "");
                     if state.brush.calligraphy_weight > 0.001 {
                         design::slider_row(ui, "Chisel angle", &mut state.brush.calligraphy_angle, 0.0..=180.0, 1.0, 0, "°");
                     }
@@ -1808,6 +1813,21 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                         }
 
                                         // Editable Layer/Group Name — takes the space that is left.
+                                        {
+                                            let mask = state.document.layers[i].mask.as_ref();
+                                            if let Some(mask) = mask {
+                                                ui.label(
+                                                    RichText::new("\u{25D0}")
+                                                        .size(11.0)
+                                                        .color(if mask.enabled { accent_c32 } else { design::TEXT_MUTED }),
+                                                )
+                                                .on_hover_text(if mask.enabled {
+                                                    "Has a layer mask"
+                                                } else {
+                                                    "Has a disabled layer mask"
+                                                });
+                                            }
+                                        }
                                         let name_w = (ui.available_width() - 92.0).clamp(48.0, 150.0);
                                         let name_edit = egui::TextEdit::singleline(&mut state.document.layers[i].name)
                                             .desired_width(name_w);
@@ -1877,6 +1897,47 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                         ui.horizontal(|ui| {
                                             if ui.add(egui::Slider::new(&mut state.document.layers[i].opacity, 0.0..=1.0).text("Opacity")).changed() {
                                                 ctx.request_repaint();
+                                            }
+                                        });
+
+
+                                        // Layer mask controls. Masks are non-destructive: they
+                                        // only scale alpha while compositing and can be
+                                        // disabled without being thrown away.
+                                        let has_mask = state.document.layers[i].mask.is_some();
+                                        let mask_on = state.document.layers[i]
+                                            .mask
+                                            .as_ref()
+                                            .map(|m| m.enabled)
+                                            .unwrap_or(false);
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Mask:").size(9.5).color(Color32::from_rgb(172, 161, 130)));
+                                            if ui
+                                                .small_button("From selection")
+                                                .on_hover_text("Create a mask from the current selection (fully visible when nothing is selected)")
+                                                .clicked()
+                                            {
+                                                layer_commands.push(LayerCommand::MaskFromSelection(layer_id));
+                                            }
+                                            if ui
+                                                .add_enabled(has_mask, egui::Button::new("Invert").small())
+                                                .clicked()
+                                            {
+                                                layer_commands.push(LayerCommand::MaskInvert(layer_id));
+                                            }
+                                            if ui
+                                                .add_enabled(has_mask, egui::Button::new(if mask_on { "On" } else { "Off" }).small())
+                                                .on_hover_text("Enable or disable the mask (it is kept)")
+                                                .clicked()
+                                            {
+                                                layer_commands.push(LayerCommand::MaskToggle(layer_id));
+                                            }
+                                            if ui
+                                                .add_enabled(has_mask, egui::Button::new("Remove").small())
+                                                .on_hover_text("Remove the mask")
+                                                .clicked()
+                                            {
+                                                layer_commands.push(LayerCommand::MaskRemove(layer_id));
                                             }
                                         });
 
@@ -1984,6 +2045,30 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 // to be active.
                                 state.document.active_layer_id = id;
                                 state.document.duplicate_active_layer();
+                            }
+                            LayerCommand::MaskFromSelection(id) => {
+                                // Clone the selection so the document can borrow mutably.
+                                let selection = state.selection.clone();
+                                state.document.add_layer_mask(id, selection.as_ref());
+                                state.set_status("Layer mask created");
+                            }
+                            LayerCommand::MaskInvert(id) => {
+                                state.document.invert_layer_mask(id);
+                                state.set_status("Layer mask inverted");
+                            }
+                            LayerCommand::MaskToggle(id) => {
+                                let next = !state
+                                    .document
+                                    .get_layer(id)
+                                    .and_then(|l| l.mask.as_ref())
+                                    .map(|m| m.enabled)
+                                    .unwrap_or(false);
+                                state.document.set_layer_mask_enabled(id, next);
+                                state.set_status(if next { "Layer mask enabled" } else { "Layer mask disabled" });
+                            }
+                            LayerCommand::MaskRemove(id) => {
+                                state.document.remove_layer_mask(id);
+                                state.set_status("Layer mask removed");
                             }
                             LayerCommand::RasterizeActiveText => {
                                 state.rasterize_active_text_layer();
