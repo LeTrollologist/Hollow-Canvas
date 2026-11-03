@@ -340,3 +340,43 @@ Three constraints were met with tests rather than promises:
 intent was in fact linear-light storage, gate 1 cannot hold (the oracle becomes impossible)
 and the whole shape changes: it becomes a compositing-semantics change with a user-visible
 output change, rather than a storage change behind a safety net.
+
+---
+
+## Step 4: making the rest of the app format-aware
+
+Approved order, each slice its own commit and its own tests:
+
+1. **Brush rasterization and basic painting** - a 16-bit document you cannot paint on is not
+   usable, so this comes before filters.
+2. Erasing and fill.
+3. Geometric transforms and resampling.
+4. Individual filters, simplest first.
+5. Selection-based operations and the remaining rasterizer paths.
+
+### Slice 1, scoped
+
+The whole brush pipeline - `paint_dot`, `paint_segment`, `paint_spline` - funnels through
+`StrokeRasterizer::blend_stamp`, which is ~270 lines with **11 pixel-write sites** and takes
+`pixels: &mut [u8]`. Genericising that one function over `Channel` makes every brush path
+format-aware in a single change, which is why it is slice 1 rather than five separate ones.
+
+Approach:
+
+- `blend_stamp<C: Channel + PartialEq>`, with the per-pixel blend routed through
+  `composite_working` (already the single source of the blend maths) so `u8` and `u16` run
+  the same arithmetic.
+- Call sites dispatch **once per stamp**, not per pixel: `match layer.buffer_mut()` at the
+  entry point, exactly as the compositor does.
+- The 8-bit path must stay byte-identical: the 702-case oracle and the existing brush tests
+  are the gate, plus a benchmark check that painting throughput has not moved.
+- New test: paint a dab on an `Srgb16` layer and assert (a) it does not panic, (b) the
+  painted pixel is 16-bit, (c) an off-lattice value under 50% opacity keeps sub-8-bit
+  detail - the same standard the compositor test holds.
+
+Risk worth naming: eleven write sites is eleven chances to convert to `u8` "just here". A
+review should be able to see one conversion pattern, not eleven variants.
+
+Until this slice lands, painting on a 16-bit layer **panics** rather than silently painting at
+8-bit. A loud, documented failure is the right behaviour for an unimplemented path, and it is
+better than the precision loss a quiet fallback would cause.
