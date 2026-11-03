@@ -1917,4 +1917,87 @@ mod tests {
         let eight_bit = doc.composite_layers(false);
         assert_eq!(eight_bit[0], eight_bit[4], "an 8-bit result cannot carry it");
     }
+
+    /// GOLDEN: the alpha-lock and eraser-clamp paths as they behave **today**.
+    ///
+    /// Captured before any refactor, with no dependency on the helper the refactor will
+    /// introduce - otherwise the test would happily reproduce whatever mistake the extraction
+    /// made. Bytes here are facts recorded from the current implementation, not a re-derivation
+    /// of its arithmetic.
+    #[test]
+    fn brush_alpha_clamping_matches_the_recorded_bytes() {
+        use crate::brush::BrushPoint;
+
+        fn prepared() -> (Document, crate::brush::BrushSettings) {
+            let mut doc = Document::new(3, 3);
+            doc.is_transparent = true;
+            let id = doc.active_layer_id;
+            if let Some(layer) = doc.get_layer_mut(id) {
+                layer.alpha_locked = true;
+                for pixel in layer.as_srgb8_exact_mut().chunks_exact_mut(4) {
+                    pixel.copy_from_slice(&[100, 150, 200, 128]);
+                }
+            }
+            let mut brush = crate::brush::BrushSettings::default();
+            brush.tool = crate::brush::ToolType::Brush;
+            brush.size = 16.0;
+            brush.opacity = 1.0;
+            brush.hardness = 1.0;
+            brush.primary_color = Color::WHITE;
+            (doc, brush)
+        }
+
+        let paint = |doc: &mut Document, brush: &crate::brush::BrushSettings| {
+            crate::rasterizer::StrokeRasterizer::paint_dot(
+                doc,
+                BrushPoint {
+                    position: glam::Vec2::new(1.0, 1.0),
+                    pressure: 1.0,
+                },
+                brush,
+                &crate::symmetry::SymmetryConfig::default(),
+                None,
+            );
+        };
+
+        // 1. Alpha-locked painting: the alpha channel must come back untouched, the colour must move.
+        let (mut doc, brush) = prepared();
+        paint(&mut doc, &brush);
+        let painted = doc.active_layer().expect("layer").as_srgb8_exact().to_vec();
+        // Recorded from the implementation as it stood before any refactor: white painted over
+        // the whole dab, and the alpha channel left at exactly 128 - that is what alpha-lock
+        // means, and it must survive the extraction unchanged.
+        let expected_locked: Vec<u8> = std::iter::repeat([255u8, 255, 255, 128])
+            .take(9)
+            .flatten()
+            .collect();
+        assert_eq!(painted, expected_locked, "alpha-locked painting changed its bytes");
+
+        // 2. Soft eraser over a transparent background: the alpha-clamp path.
+        let (mut doc, mut brush) = prepared();
+        brush.tool = crate::brush::ToolType::Eraser;
+        brush.eraser_mode = crate::brush::EraserMode::Soft;
+        brush.eraser_to_background = false;
+        paint(&mut doc, &brush);
+        let erased = doc.active_layer().expect("layer").as_srgb8_exact().to_vec();
+        // Full strength drives the clamp to zero: (128/255 * (1 - 1.0)).round() * 255 -> 0.
+        let expected_erased: Vec<u8> = std::iter::repeat([100u8, 150, 200, 0])
+            .take(9)
+            .flatten()
+            .collect();
+        assert_eq!(erased, expected_erased, "the soft-eraser clamp changed its bytes");
+
+        // 3. Colour erase: the other alpha-clamp path.
+        let (mut doc, mut brush) = prepared();
+        brush.tool = crate::brush::ToolType::Eraser;
+        brush.eraser_mode = crate::brush::EraserMode::ColorErase;
+        brush.secondary_color = Color::from_rgba8(100, 150, 200, 255);
+        brush.color_erase_tolerance = 4;
+        paint(&mut doc, &brush);
+        let color_erased = doc.active_layer().expect("layer").as_srgb8_exact().to_vec();
+        assert_eq!(
+            color_erased, expected_erased,
+            "the colour-eraser clamp changed its bytes"
+        );
+    }
 }
