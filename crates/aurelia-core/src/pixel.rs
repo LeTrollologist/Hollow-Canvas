@@ -9,7 +9,7 @@
 //! are exact in both directions for every value of the type, which is asserted below.
 
 /// One channel of layer storage.
-pub trait Channel: Copy + PartialEq + 'static {
+pub trait Channel: Copy + PartialEq + Send + Sync + 'static {
     /// The all-zero value, used for transparent-pixel checks and buffer initialisation.
     const ZERO: Self;
 

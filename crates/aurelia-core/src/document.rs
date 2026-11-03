@@ -718,7 +718,7 @@ impl Document {
             // hot path while the maths stays single-sourced in `composite_pixel`.
             macro_rules! run {
                 ($compose:path) => {
-                    compose_layer(out, layer, w, h, eff_opacity, mask, base, $compose)
+                    compose_layer(out, layer, w, h, eff_opacity, mask, base, layer.as_srgb8(), $compose)
                 };
             }
             match layer.blend_mode {
@@ -787,14 +787,15 @@ pub(crate) fn parallel_degree(pixels: u32) -> usize {
 /// of rows and writes only to its own slice of `out`, so the result cannot depend on
 /// scheduling - see `tests::parallel_compositing_matches_the_serial_reference`.
 #[allow(clippy::too_many_arguments)]
-fn compose_layer<F>(
-    out: &mut [u8],
+pub(crate) fn compose_layer<C: Channel, F>(
+    out: &mut [C],
     layer: &Layer,
     canvas_w: u32,
     canvas_h: u32,
     layer_opacity: f32,
     mask: Option<&[u8]>,
-    base: Option<ClipBase<'_, u8>>,
+    base: Option<ClipBase<'_, C>>,
+    src_pixels: &[C],
     compose: F,
 ) where
     F: Fn([f32; 4], [f32; 4], f32) -> [f32; 4] + Sync,
@@ -811,7 +812,7 @@ fn compose_layer<F>(
             layer_opacity,
             mask,
             base,
-            layer.as_srgb8(),
+            src_pixels,
             &compose,
         );
         return;
@@ -820,7 +821,6 @@ fn compose_layer<F>(
     let bytes_per_row = canvas_w as usize * 4;
     let rows_per_thread = canvas_h.div_ceil(threads as u32);
     let compose = &compose;
-    let src_pixels = layer.as_srgb8();
     std::thread::scope(|scope| {
         for (index, slice) in out
             .chunks_mut(rows_per_thread as usize * bytes_per_row)
@@ -990,8 +990,41 @@ pub(crate) fn compose_rows<C: Channel, F>(
 /// There is **no 16-bit fast path** (a deliberate deferral), so every layer takes the general
 /// path. A comparison is therefore only meaningful against 8-bit fixtures that also take the
 /// general path - see the gate-1 tests.
+/// A document's layers promoted to `Srgb16` storage, owned so a measurement can exclude the
+/// promotion from the thing being measured.
+///
+/// A real 16-bit document holds 16-bit buffers; promoting on every composite would be
+/// measuring the conversion, not the compositing.
+pub(crate) struct PromotedLayers(Vec<Vec<u16>>);
+
+#[allow(dead_code)]
+pub(crate) fn promote_layers(doc: &Document) -> PromotedLayers {
+    PromotedLayers(
+        doc.layers
+            .iter()
+            .map(|layer| {
+                layer
+                    .as_srgb8()
+                    .iter()
+                    .map(|&v| crate::pixel::srgb8_to_srgb16(v))
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
 #[allow(dead_code)]
 pub(crate) fn compose_u16(doc: &Document, include_background: bool) -> Vec<u16> {
+    let promoted = promote_layers(doc);
+    compose_u16_prepared(doc, &promoted, include_background)
+}
+
+#[allow(dead_code)]
+pub(crate) fn compose_u16_prepared(
+    doc: &Document,
+    promoted: &PromotedLayers,
+    include_background: bool,
+) -> Vec<u16> {
     let (w, h) = (doc.width, doc.height);
     let mut out = vec![0u16; (w as usize) * (h as usize) * 4];
 
@@ -1007,20 +1040,6 @@ pub(crate) fn compose_u16(doc: &Document, include_background: bool) -> Vec<u16> 
             chunk.copy_from_slice(&promoted);
         }
     }
-
-    // Promote the whole document once, so the pass reads 16-bit buffers the way a real
-    // 16-bit document would rather than converting per pixel.
-    let promoted: Vec<Vec<u16>> = doc
-        .layers
-        .iter()
-        .map(|layer| {
-            layer
-                .as_srgb8()
-                .iter()
-                .map(|&v| crate::pixel::srgb8_to_srgb16(v))
-                .collect()
-        })
-        .collect();
 
     for (index, layer) in doc.layers.iter().enumerate() {
         if layer.is_group()
@@ -1039,7 +1058,7 @@ pub(crate) fn compose_u16(doc: &Document, include_background: bool) -> Vec<u16> 
                 continue;
             }
             Some(ClipBase {
-                pixels: &promoted[index - 1],
+                pixels: &promoted.0[index - 1],
                 offset_x: b.offset_x,
                 offset_y: b.offset_y,
                 width: b.width,
@@ -1058,8 +1077,8 @@ pub(crate) fn compose_u16(doc: &Document, include_background: bool) -> Vec<u16> 
 
         macro_rules! run {
             ($compose:path) => {
-                compose_rows(
-                    &mut out, 0, h, layer, w, h, opacity, mask, base, &promoted[index], &$compose,
+                compose_layer(
+                    &mut out, layer, w, h, opacity, mask, base, &promoted.0[index], $compose,
                 )
             };
         }

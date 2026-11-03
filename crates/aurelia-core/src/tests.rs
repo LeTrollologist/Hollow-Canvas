@@ -1671,4 +1671,155 @@ mod tests {
             "no sub-8-bit detail survived: every channel landed on the lattice"
         );
     }
+
+    /// Gate 2 of the 16-bit plan (`docs/16bit-plan.md`): throughput against the generic u8
+    /// baseline, and the memory cost including undo history.
+    ///
+    /// Every layer is forced down the general path, because that is what a 16-bit document
+    /// has - there is no 16-bit fast path - and because the baseline must be the generic u8
+    /// path rather than a fixture dominated by the integer fast path.
+    ///
+    /// Timing is reported, not asserted: a shared machine is not a reliable oracle, and a
+    /// flaky performance assertion in a unit suite trains people to ignore it. Memory *is*
+    /// asserted, because it is arithmetic rather than measurement.
+    #[test]
+    #[ignore = "measurement, not a correctness gate; run with --ignored --nocapture"]
+    fn gate_2_throughput_and_memory() {
+        use std::time::Instant;
+
+        const W: u32 = 1920;
+        const H: u32 = 1080;
+        const LAYERS: u32 = 4;
+        const ITERS: u32 = 20;
+        const ROUNDS: u32 = 5;
+
+        fn fixture(coverage: f32, masked: bool, clipped: bool) -> Document {
+            let mut doc = Document::new(W, H);
+            doc.is_transparent = true;
+            for i in 0..LAYERS {
+                let id = if i == 0 {
+                    doc.active_layer_id
+                } else {
+                    doc.add_layer(Some(format!("Layer {i}")))
+                };
+                if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == id) {
+                    // General path for every layer: no 16-bit fast path exists.
+                    layer.offset_x = 1;
+                    layer.offset_y = 1;
+                    let pixels = layer.as_srgb8_mut();
+                    for (idx, px) in pixels.chunks_exact_mut(4).enumerate() {
+                        let x = (idx as u32) % W;
+                        let y = (idx as u32) / W;
+                        px[0] = (x % 256) as u8;
+                        px[1] = (y % 256) as u8;
+                        px[2] = ((x ^ y) % 256) as u8;
+                        px[3] = if coverage >= 1.0
+                            || ((x * 7 + y * 13) % 100) < (coverage * 100.0) as u32
+                        {
+                            255
+                        } else {
+                            0
+                        };
+                    }
+                    if clipped && i == 2 {
+                        layer.clipping_mask = true;
+                    }
+                }
+                if masked && i == 2 {
+                    let mut mask = crate::layer::LayerMask::full(W, H, 255);
+                    for (idx, p) in mask.pixels.iter_mut().enumerate() {
+                        *p = if idx % 7 == 0 { 64 } else { 255 };
+                    }
+                    if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == id) {
+                        layer.mask = Some(mask);
+                    }
+                }
+            }
+            doc
+        }
+
+        fn median(mut samples: Vec<f64>) -> f64 {
+            samples.sort_by(f64::total_cmp);
+            samples[samples.len() / 2]
+        }
+
+        fn measure<F: FnMut()>(mut body: F) -> f64 {
+            let megapixels = (W as f64 * H as f64 * ITERS as f64) / 1_000_000.0;
+            let mut samples = Vec::new();
+            for _ in 0..ROUNDS {
+                let start = Instant::now();
+                for _ in 0..ITERS {
+                    body();
+                }
+                samples.push(start.elapsed().as_secs_f64());
+            }
+            megapixels / median(samples)
+        }
+
+        let cases = [
+            ("opaque", fixture(1.0, false, false)),
+            ("sparse 10%", fixture(0.1, false, false)),
+            ("masked", fixture(1.0, true, false)),
+            ("clipped", fixture(1.0, false, true)),
+        ];
+
+        println!("gate 2 - {W}x{H}, {LAYERS} layers, all layers general path");
+        println!("{:<12} {:>14} {:>14} {:>10}", "workload", "u8 baseline", "Srgb16", "delta");
+        let mut results = Vec::new();
+        for (label, doc) in &cases {
+            let eight = measure(|| {
+                std::hint::black_box(doc.composite_layers(false));
+            });
+            // Promote once, outside the measurement: a real 16-bit document already holds
+            // 16-bit buffers, so timing the promotion would measure the conversion instead
+            // of the compositing.
+            let promoted = crate::document::promote_layers(doc);
+            let sixteen = measure(|| {
+                std::hint::black_box(crate::document::compose_u16_prepared(doc, &promoted, false));
+            });
+            println!(
+                "{:<12} {:>14.1} {:>14.1} {:>9.0}%",
+                label,
+                eight,
+                sixteen,
+                100.0 * (sixteen / eight - 1.0)
+            );
+            results.push((label, eight, sixteen));
+        }
+
+        // Memory: arithmetic, so it is asserted rather than reported.
+        let per_layer_8 = W as usize * H as usize * 4;
+        let doc_8 = per_layer_8 * LAYERS as usize;
+        let per_layer_16 = per_layer_8 * 2;
+        let doc_16 = doc_8 * 2;
+        let steps = 20usize;
+        let per_stroke_8 = per_layer_8 * 2 * steps; // before + after, one layer
+        let per_stroke_16 = per_layer_16 * 2 * steps;
+        let full_doc_8 = doc_8 * 2 * steps;
+        let full_doc_16 = doc_16 * 2 * steps;
+        let mb = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
+
+        println!("
+memory:");
+        println!("  one layer              {:>8.1} MB -> {:>8.1} MB", mb(per_layer_8), mb(per_layer_16));
+        println!("  {LAYERS}-layer document        {:>8.1} MB -> {:>8.1} MB", mb(doc_8), mb(doc_16));
+        println!("  history, per-stroke x{steps}  {:>8.1} MB -> {:>8.1} MB", mb(per_stroke_8), mb(per_stroke_16));
+        println!("  history, full doc x{steps}   {:>8.1} MB -> {:>8.1} MB", mb(full_doc_8), mb(full_doc_16));
+        assert_eq!(per_layer_16, per_layer_8 * 2);
+        assert_eq!(doc_16, doc_8 * 2);
+        assert_eq!(per_stroke_16, per_stroke_8 * 2);
+        assert_eq!(full_doc_16, full_doc_8 * 2);
+
+        // Report, do not assert, the plan's thresholds - the numbers are for review.
+        let (_, opaque_8, opaque_16) = results[0];
+        println!("
+gate 2 thresholds:");
+        println!("  opaque general >= 60 MPix/s: {opaque_16:.1} -> {}", if opaque_16 >= 60.0 { "PASS" } else { "FAIL" });
+        println!("  baseline for reference:      {opaque_8:.1} MPix/s");
+        for (label, eight, sixteen) in &results {
+            let delta = sixteen / eight - 1.0;
+            let verdict = if *sixteen >= 120.0 && delta >= -0.4 { "within budget" } else { "OUTSIDE BUDGET" };
+            println!("  {label:<12} correction {:+.0}% at {sixteen:.1} MPix/s -> {verdict}", delta * 100.0);
+        }
+    }
 }
