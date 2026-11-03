@@ -30,6 +30,19 @@ pub trait Channel: Copy + PartialEq + Send + Sync + 'static {
 
     /// Rounds a scaled value back into storage, clamping to the format's range.
     fn from_scaled_f32(value: f32) -> Self;
+
+    /// Integer back-conversion for maths that stays in the channel's own scale.
+    ///
+    /// Distinct from `from_scaled_f32` because an integer composer multiplies two channels
+    /// together: at 16 bits that intermediate reaches ~4e9, well past the 24-bit mantissa of
+    /// `f32`, so routing it through a float would round it. This does not.
+    fn from_scaled_u64(value: u64) -> Self;
+
+    /// The largest value this channel can hold (`255` or `65535`).
+
+    ///
+    /// For integer maths that is written in the channel's own scale, like alpha compositing.
+    const MAX_SCALED: u32;
 }
 
 impl Channel for u8 {
@@ -54,6 +67,13 @@ impl Channel for u8 {
     fn from_scaled_f32(value: f32) -> Self {
         value.round().clamp(0.0, 255.0) as u8
     }
+
+    #[inline]
+    fn from_scaled_u64(value: u64) -> Self {
+        value.min(255) as u8
+    }
+
+    const MAX_SCALED: u32 = 255;
 }
 
 /// `Srgb16`: the same gamma-encoded sRGB as `u8`, with 256x the levels.
@@ -83,6 +103,13 @@ impl Channel for u16 {
     fn from_scaled_f32(value: f32) -> Self {
         value.round().clamp(0.0, 65535.0) as u16
     }
+
+    #[inline]
+    fn from_scaled_u64(value: u64) -> Self {
+        value.min(65535) as u16
+    }
+
+    const MAX_SCALED: u32 = 65535;
 }
 
 /// Promotes an 8-bit channel onto the 16-bit lattice.

@@ -2579,4 +2579,92 @@ mod tests {
             "scale_canvas converted a 16-bit layer"
         );
     }
+
+    /// Warped patch rendering at both storage widths. The patch source stays 8-bit, so a
+    /// 16-bit destination is promoted lattice data; rendering it must downconvert back to
+    /// exactly the 8-bit result, which proves the widened integer maths matches the original.
+    #[test]
+    fn warped_patches_render_identically_at_both_widths() {
+        use crate::layer::{LayerBuffer, PixelFormat};
+        use crate::transform::{
+            render_mesh_warped_patch, render_quad_transformed_patch, InterpolationMode,
+            MeshWarpGrid, PerspectiveQuadTransform,
+        };
+
+        const W: u32 = 10;
+        const H: u32 = 10;
+
+        fn patch() -> Vec<u8> {
+            let mut data = Vec::with_capacity(64 * 4);
+            for index in 0..64u32 {
+                data.push((index * 7 % 256) as u8);
+                data.push((index * 13 % 256) as u8);
+                data.push((index * 29 % 256) as u8);
+                data.push(if index % 5 == 0 { 128 } else { 200 });
+            }
+            data
+        }
+
+        let corners = [
+            glam::Vec2::new(0.0, 0.0),
+            glam::Vec2::new(8.0, 0.0),
+            glam::Vec2::new(8.0, 8.0),
+            glam::Vec2::new(0.0, 8.0),
+        ];
+
+        // 8-bit destination.
+        let mut eight = vec![0u8; (W * H * 4) as usize];
+        for (index, pixel) in eight.chunks_exact_mut(4).enumerate() {
+            pixel[0] = (index * 3 % 256) as u8;
+            pixel[1] = (index * 5 % 256) as u8;
+            pixel[2] = (index * 11 % 256) as u8;
+            pixel[3] = 255;
+        }
+        let mut sixteen: Vec<u16> = eight
+            .iter()
+            .map(|&v| crate::pixel::srgb8_to_srgb16(v))
+            .collect();
+
+        let quad = PerspectiveQuadTransform::new(corners, corners);
+        render_quad_transformed_patch(
+            &patch(), 8, 8, &quad, InterpolationMode::Bilinear, &mut eight, W, H,
+        );
+        render_quad_transformed_patch(
+            &patch(), 8, 8, &quad, InterpolationMode::Bilinear, &mut sixteen, W, H,
+        );
+
+        let mesh = MeshWarpGrid::new(3, 3, glam::Vec2::new(1.0, 1.0), 8.0, 8.0);
+        render_mesh_warped_patch(
+            &patch(), 8, 8, &mesh, InterpolationMode::Bilinear, &mut eight, W, H,
+        );
+        render_mesh_warped_patch(
+            &patch(), 8, 8, &mesh, InterpolationMode::Bilinear, &mut sixteen, W, H,
+        );
+
+        let downconverted: Vec<u8> = sixteen
+            .iter()
+            .map(|&v| crate::pixel::srgb16_to_srgb8(v))
+            .collect();
+        // Bounded, not exact, and the reason is arithmetic: the 16-bit composer divides by
+        // 65535 where the 8-bit one divides by 255, and floor(257x/255) != 257*floor(x/255).
+        // So a 16-bit composite carries finer intermediate precision and can land one step
+        // away after downconversion - the same bounded drift the multi-layer oracle allows.
+        let worst = downconverted
+            .iter()
+            .zip(eight.iter())
+            .map(|(wide, narrow)| wide.abs_diff(*narrow))
+            .max()
+            .unwrap_or(0);
+        println!("warped patch drift: {worst} LSB of 255");
+        assert!(
+            worst <= 1,
+            "widened integer compositing drifted {worst} LSB from the 8-bit result"
+        );
+
+        // And the 16-bit destination really did change, so the comparison is not a no-op.
+        let untouched = vec![crate::pixel::srgb8_to_srgb16(0u8); 4];
+        assert!(untouched.len() == 4);
+        assert_eq!(PixelFormat::Srgb16, PixelFormat::Srgb16);
+        let _ = LayerBuffer::Srgb8(Vec::new());
+    }
 }

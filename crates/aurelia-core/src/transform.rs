@@ -1,3 +1,4 @@
+use crate::pixel::Channel;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -826,43 +827,48 @@ pub fn sample_interpolated(
 
 /// Alpha-composites a source pixel onto destination buffer
 #[inline]
-fn composite_pixel_in_place(dst: &mut [u8], dst_idx: usize, r: u8, g: u8, b: u8, a: u8) {
+fn composite_pixel_in_place<C: Channel>(dst: &mut [C], dst_idx: usize, r: u8, g: u8, b: u8, a: u8) {
     if a == 0 || dst_idx + 3 >= dst.len() {
         return;
     }
 
-    let cur_a = dst[dst_idx + 3] as u32;
-    let new_a = a as u32;
+    // The same integer maths as before, written against the channel's own maximum so
+    // it works at either width. For u8 the max is 255 and every intermediate is identical.
+    let max = C::MAX_SCALED as u64;
+    let scale = |value: u8| -> u64 { value as u64 * max / 255 };
+    let cur_a = dst[dst_idx + 3].to_scaled_f32() as u64;
+    let new_a = scale(a);
 
-    if new_a == 255 || cur_a == 0 {
-        dst[dst_idx] = r;
-        dst[dst_idx + 1] = g;
-        dst[dst_idx + 2] = b;
-        dst[dst_idx + 3] = a;
+    if new_a == max || cur_a == 0 {
+        dst[dst_idx] = C::from_scaled_u64(scale(r));
+        dst[dst_idx + 1] = C::from_scaled_u64(scale(g));
+        dst[dst_idx + 2] = C::from_scaled_u64(scale(b));
+        dst[dst_idx + 3] = C::from_scaled_u64(new_a);
     } else {
-        let inv_a = 255 - new_a;
-        let out_a = new_a + cur_a * inv_a / 255;
+        let inv_a = max - new_a;
+        let out_a = new_a + cur_a * inv_a / max;
         if out_a > 0 {
-            let out_r = ((r as u32 * new_a + dst[dst_idx] as u32 * cur_a * inv_a / 255) / out_a) as u8;
-            let out_g = ((g as u32 * new_a + dst[dst_idx + 1] as u32 * cur_a * inv_a / 255) / out_a) as u8;
-            let out_b = ((b as u32 * new_a + dst[dst_idx + 2] as u32 * cur_a * inv_a / 255) / out_a) as u8;
-            dst[dst_idx] = out_r;
-            dst[dst_idx + 1] = out_g;
-            dst[dst_idx + 2] = out_b;
-            dst[dst_idx + 3] = out_a.min(255) as u8;
+            let blend = |dst_channel: C, src_channel: u64| -> C {
+                let existing = dst_channel.to_scaled_f32() as u64;
+                C::from_scaled_u64((src_channel * new_a + existing * cur_a * inv_a / max) / out_a)
+            };
+            dst[dst_idx] = blend(dst[dst_idx], scale(r));
+            dst[dst_idx + 1] = blend(dst[dst_idx + 1], scale(g));
+            dst[dst_idx + 2] = blend(dst[dst_idx + 2], scale(b));
+            dst[dst_idx + 3] = C::from_scaled_u64(out_a.min(max));
         }
     }
 }
 
 /// Transforms an Affine patch and composites it onto a target layer canvas
-pub fn render_transformed_patch(
+pub fn render_transformed_patch<C: Channel>(
     src_patch: &[u8],
     patch_w: u32,
     patch_h: u32,
     patch_origin: Vec2,
     transform: &AffineTransform2D,
     interp: InterpolationMode,
-    dst_layer_pixels: &mut [u8],
+    dst_layer_pixels: &mut [C],
     doc_w: u32,
     doc_h: u32,
 ) {
@@ -912,13 +918,13 @@ pub fn render_transformed_patch(
 }
 
 /// Renders a Perspective Quad warped patch onto target layer canvas
-pub fn render_quad_transformed_patch(
+pub fn render_quad_transformed_patch<C: Channel>(
     src_patch: &[u8],
     patch_w: u32,
     patch_h: u32,
     quad: &PerspectiveQuadTransform,
     interp: InterpolationMode,
-    dst_layer_pixels: &mut [u8],
+    dst_layer_pixels: &mut [C],
     doc_w: u32,
     doc_h: u32,
 ) {
@@ -961,13 +967,13 @@ pub fn render_quad_transformed_patch(
 }
 
 /// Renders a Mesh Grid warped patch onto target layer canvas
-pub fn render_mesh_warped_patch(
+pub fn render_mesh_warped_patch<C: Channel>(
     src_patch: &[u8],
     patch_w: u32,
     patch_h: u32,
     mesh: &MeshWarpGrid,
     interp: InterpolationMode,
-    dst_layer_pixels: &mut [u8],
+    dst_layer_pixels: &mut [C],
     doc_w: u32,
     doc_h: u32,
 ) {
@@ -1007,14 +1013,14 @@ pub fn render_mesh_warped_patch(
 }
 
 /// Renders a Thin Plate Spline (TPS) warped patch onto target layer canvas
-pub fn render_tps_warped_patch(
+pub fn render_tps_warped_patch<C: Channel>(
     src_patch: &[u8],
     patch_w: u32,
     patch_h: u32,
     patch_origin: Vec2,
     tps: &ThinPlateSpline2D,
     interp: InterpolationMode,
-    dst_layer_pixels: &mut [u8],
+    dst_layer_pixels: &mut [C],
     doc_w: u32,
     doc_h: u32,
 ) {
