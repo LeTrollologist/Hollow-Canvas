@@ -1317,6 +1317,7 @@ mod tests {
         mask_case: u8,
         clipping: bool,
         coverage: f32,
+        base_case: u8,
     ) -> Document {
         const W: u32 = 12;
         const H: u32 = 9;
@@ -1362,6 +1363,25 @@ mod tests {
             _ => {}
         }
 
+        // `base_case` stresses the corners of the clip-base lookup: a pixel buffer that
+        // ends early, a layer whose own size disagrees with the canvas, and a layer kind
+        // that `get_pixel` refuses to answer for. The clipping layer reads all three.
+        if clipping && base_case != 0 {
+            if let Some(layer) = doc.layers.get_mut(1) {
+                match base_case {
+                    1 => {
+                        let keep = layer.pixels.len() / 2;
+                        layer.pixels.truncate(keep);
+                    }
+                    2 => {
+                        layer.width = W + 5;
+                        layer.height = H + 2;
+                    }
+                    _ => layer.kind = crate::layer::LayerKind::Group,
+                }
+            }
+        }
+
         if clipping {
             let clip = doc.add_layer(Some("clip".into()));
             if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == clip) {
@@ -1388,7 +1408,7 @@ mod tests {
                 for mask_case in 0..3u8 {
                     for clipping in [false, true] {
                         for coverage in [1.0f32, 0.5, 0.15] {
-                            let doc = coverage_fixture(mode, offset, mask_case, clipping, coverage);
+                            let doc = coverage_fixture(mode, offset, mask_case, clipping, coverage, 0);
                             let got = doc.composite_layers(false);
                             let want = reference_composite(&doc, false);
                             assert_eq!(
@@ -1398,6 +1418,43 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Clipping reads its base through a different code path than it used to: the base
+    /// span is resolved once per row instead of per pixel. These are the corners where
+    /// that can disagree - a short pixel buffer, a layer size that is not the canvas, and
+    /// a layer kind that reports no pixel at all.
+    #[test]
+    fn clipping_edge_cases_are_bit_identical_to_the_reference() {
+        for &mode in crate::blend::BlendMode::ALL {
+            for &offset in &[(0, 0), (3, 2), (-5, -4)] {
+                for base_case in 1..=3u8 {
+                    for coverage in [1.0f32, 0.15] {
+                        let doc = coverage_fixture(mode, offset, 0, true, coverage, base_case);
+                        let got = doc.composite_layers(false);
+                        let want = reference_composite(&doc, false);
+                        assert_eq!(
+                            got, want,
+                            "mismatch: {mode:?} offset {offset:?} base_case {base_case} coverage {coverage}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Compositing is a pure function of the document: the same document must produce the
+    /// same bytes every time, whatever order the layers were built or visited in.
+    #[test]
+    fn compositing_is_deterministic_across_repeated_runs() {
+        for &mode in crate::blend::BlendMode::ALL {
+            let doc = coverage_fixture(mode, (3, -2), 1, true, 0.5, 0);
+            let first = doc.composite_layers(false);
+            for run in 1..5 {
+                let again = doc.composite_layers(false);
+                assert_eq!(first, again, "{mode:?} differed on run {run}");
             }
         }
     }

@@ -1,5 +1,38 @@
 use serde::{Deserialize, Serialize};
 
+/// One blend mode's pixel maths as a plain item function.
+///
+/// `composite_pixel` is marked `#[inline]` and the mode here is a literal, so each of
+/// these collapses to just that mode's branch of float maths. A compositing loop that is
+/// driven by one of them therefore has no per-pixel `match` and no indirect call, while
+/// the maths itself stays single-sourced in `composite_pixel`.
+macro_rules! define_compositors {
+    ($($name:ident => $mode:ident),+ $(,)?) => {
+        $(
+            #[inline]
+            pub fn $name(dst: [u8; 4], src: [u8; 4], layer_opacity: f32) -> [u8; 4] {
+                BlendMode::$mode.composite_pixel(dst, src, layer_opacity)
+            }
+        )+
+    };
+}
+
+define_compositors! {
+    compose_normal => Normal,
+    compose_multiply => Multiply,
+    compose_screen => Screen,
+    compose_overlay => Overlay,
+    compose_darken => Darken,
+    compose_lighten => Lighten,
+    compose_color_dodge => ColorDodge,
+    compose_color_burn => ColorBurn,
+    compose_hard_light => HardLight,
+    compose_soft_light => SoftLight,
+    compose_difference => Difference,
+    compose_exclusion => Exclusion,
+    compose_luminosity => Luminosity,
+}
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum BlendMode {

@@ -696,79 +696,187 @@ impl Document {
             // The blend itself is untouched (still `composite_pixel`), so output is
             // bit-identical to the straightforward implementation - see the
             // equivalence tests in `tests.rs`.
-            let mask = layer.mask.as_ref().filter(|m| m.enabled);
-            // Copy the mode out of the layer so the inner loop reads a local instead of
-            // a field through a reference each pixel.
-            let blend_mode = layer.blend_mode;
-            let mask_w = self.width as usize;
-            let opacity = eff_opacity;
-            let x_start = layer.offset_x.max(0) as u32;
-            let x_end = (self.width as i32 + layer.offset_x).min(self.width as i32);
-            if x_start >= x_end as u32 {
+            let mask = layer
+                .mask
+                .as_ref()
+                .filter(|m| m.enabled)
+                .map(|m| m.pixels.as_slice());
+            let base = prev_layer.map(|b| ClipBase {
+                pixels: &b.pixels,
+                offset_x: b.offset_x,
+                offset_y: b.offset_y,
+                width: b.width,
+                height: b.height,
+                indexable: b.is_raster() || b.is_text(),
+                opacity: self.effective_opacity(b.id),
+            });
+            let (w, h) = (self.width, self.height);
+
+            // Resolve the mode once, outside the pixel loop: every arm runs the same loop
+            // monomorphised for a single mode, so the blend dispatch disappears from the
+            // hot path while the maths stays single-sourced in `composite_pixel`.
+            macro_rules! run {
+                ($compose:path) => {
+                    compose_general(out, layer, w, h, eff_opacity, mask, base, $compose)
+                };
+            }
+            match layer.blend_mode {
+                BlendMode::Normal => run!(crate::blend::compose_normal),
+                BlendMode::Multiply => run!(crate::blend::compose_multiply),
+                BlendMode::Screen => run!(crate::blend::compose_screen),
+                BlendMode::Overlay => run!(crate::blend::compose_overlay),
+                BlendMode::Darken => run!(crate::blend::compose_darken),
+                BlendMode::Lighten => run!(crate::blend::compose_lighten),
+                BlendMode::ColorDodge => run!(crate::blend::compose_color_dodge),
+                BlendMode::ColorBurn => run!(crate::blend::compose_color_burn),
+                BlendMode::HardLight => run!(crate::blend::compose_hard_light),
+                BlendMode::SoftLight => run!(crate::blend::compose_soft_light),
+                BlendMode::Difference => run!(crate::blend::compose_difference),
+                BlendMode::Exclusion => run!(crate::blend::compose_exclusion),
+                BlendMode::Luminosity => run!(crate::blend::compose_luminosity),
+            }
+        }
+    }
+}
+
+/// Read-only view of the layer a clipping layer is clipped to.
+#[derive(Clone, Copy)]
+struct ClipBase<'a> {
+    pixels: &'a [u8],
+    offset_x: i32,
+    offset_y: i32,
+    width: u32,
+    height: u32,
+    /// `Layer::get_pixel` only answers for raster and text layers; for anything else it
+    /// reports "no pixel", which the reference implementation treats as alpha 0.
+    indexable: bool,
+    /// Cached `effective_opacity` of the base layer.
+    opacity: f32,
+}
+
+/// Composites one layer, honouring its offset, mask, clip base and blend mode.
+///
+/// The loop body performs exactly the operations the reference implementation does, in
+/// the same order - only the dead work is removed. See
+/// `tests::general_compositing_is_bit_identical_to_the_reference`.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn compose_general<F>(
+    out: &mut [u8],
+    layer: &Layer,
+    canvas_w: u32,
+    canvas_h: u32,
+    layer_opacity: f32,
+    mask: Option<&[u8]>,
+    base: Option<ClipBase<'_>>,
+    compose: F,
+) where
+    F: Fn([u8; 4], [u8; 4], f32) -> [u8; 4],
+{
+    // The reference reads its source through `Layer::get_pixel`, which answers only for
+    // raster and text layers; for anything else every source is transparent and the layer
+    // writes nothing at all.
+    if !layer.is_raster() && !layer.is_text() {
+        return;
+    }
+
+    let stride = canvas_w as usize;
+    let src_stride = layer.width as usize;
+    let x_start = layer.offset_x.max(0);
+    let x_end = (canvas_w as i32 + layer.offset_x).min(canvas_w as i32);
+    if x_start >= x_end {
+        return;
+    }
+    // `get_pixel` clamps to the layer's own size as well as the canvas.
+    let src_lim_x = (canvas_w as i32).min(layer.width as i32);
+    let src_lim_y = (canvas_h as i32).min(layer.height as i32);
+
+    for y in 0..canvas_h {
+        let src_y = y as i32 - layer.offset_y;
+        if src_y < 0 || src_y >= src_lim_y {
+            continue;
+        }
+        // Resolve the part of this row the layer can actually contribute: contiguous, so
+        // the inner loop reads the buffer directly instead of calling `get_pixel` and
+        // checking bounds for every pixel. A pixel outside it is transparent, which is a
+        // no-op, so skipping it is exact.
+        let row_start = (src_y as usize) * src_stride * 4;
+        let available = layer.pixels.len().saturating_sub(row_start) / 4;
+        let lim = src_lim_x.min(available as i32);
+        let lo = x_start.max(layer.offset_x);
+        let hi = x_end.min(layer.offset_x.saturating_add(lim));
+        if lo >= hi {
+            continue;
+        }
+        let dst_row = (y as usize) * stride;
+
+        // The clip base contributes inside a contiguous span of this row too; outside it
+        // its alpha is 0, which zeroes this layer's opacity there.
+        let mut base_span: Option<(&[u8], i32, i32, i32, f32)> = None;
+        if let Some(b) = base {
+            let b_lim_x = (canvas_w as i32).min(b.width as i32);
+            let b_lim_y = (canvas_h as i32).min(b.height as i32);
+            let by = y as i32 - b.offset_y;
+            if !b.indexable || by < 0 || by >= b_lim_y {
                 continue;
             }
-            for y in 0..self.height {
-                let src_y = y as i32 - layer.offset_y;
-                if src_y < 0 || src_y >= self.height as i32 {
-                    continue;
-                }
-                let src_row = (src_y as usize) * mask_w;
-                let dst_row = (y as usize) * mask_w;
-                for x in x_start..x_end as u32 {
-                    let src_col = (x as i32 - layer.offset_x) as usize;
-                    let si = (src_row + src_col) * 4;
-                    if si + 3 >= layer.pixels.len() {
-                        break;
-                    }
-                    // Fully transparent source is a mathematical no-op; skipping it is
-                    // exact and is the single biggest win on real artwork.
-                    if layer.pixels[si + 3] == 0 {
-                        continue;
-                    }
-                    let dst_idx = (dst_row + x as usize) * 4;
-                    if dst_idx + 3 >= out.len() {
-                        break;
-                    }
+            let b_row_start = (by as usize) * (b.width as usize) * 4;
+            let b_available = b.pixels.len().saturating_sub(b_row_start) / 4;
+            let b_lim = b_lim_x.min(b_available as i32);
+            let b_lo = x_start.max(b.offset_x);
+            let b_hi = x_end.min(b.offset_x.saturating_add(b_lim));
+            if b_lo >= b_hi {
+                continue;
+            }
+            base_span = Some((&b.pixels[b_row_start..], b_lo, b_hi, b.offset_x, b.opacity));
+        }
 
-                    let mut opacity = opacity;
-                    if let Some(m) = mask {
-                        if let Some(&mv) = m.pixels.get((y as usize) * mask_w + x as usize) {
-                            opacity *= mv as f32 / 255.0;
-                        }
-                    }
-                    if let Some(base) = prev_layer {
-                        let bx = x as i32 - base.offset_x;
-                        let by = y as i32 - base.offset_y;
-                        let base_a = if bx >= 0 && bx < self.width as i32 && by >= 0 && by < self.height as i32 {
-                            base.get_pixel(bx as u32, by as u32).map(|p| p[3] as f32 / 255.0).unwrap_or(0.0)
-                        } else {
-                            0.0
-                        };
-                        opacity *= base_a * self.effective_opacity(base.id);
-                    }
-                    if opacity <= 0.001 {
-                        continue;
-                    }
+        for x in lo..hi {
+            let si = row_start + ((x - layer.offset_x) as usize) * 4;
+            // Compositing a fully transparent source is a no-op by definition; skipping
+            // it before the float work is exact and is the biggest win on sparse art.
+            if layer.pixels[si + 3] == 0 {
+                continue;
+            }
+            let dst_idx = (dst_row + x as usize) * 4;
+            if dst_idx + 3 >= out.len() {
+                break;
+            }
 
-                    let dst_px = [
-                        out[dst_idx],
-                        out[dst_idx + 1],
-                        out[dst_idx + 2],
-                        out[dst_idx + 3],
-                    ];
-                    let src_px = [
-                        layer.pixels[si],
-                        layer.pixels[si + 1],
-                        layer.pixels[si + 2],
-                        layer.pixels[si + 3],
-                    ];
-                    let blended = blend_mode.composite_pixel(dst_px, src_px, opacity);
-                    out[dst_idx] = blended[0];
-                    out[dst_idx + 1] = blended[1];
-                    out[dst_idx + 2] = blended[2];
-                    out[dst_idx + 3] = blended[3];
+            let mut opacity = layer_opacity;
+            if let Some(m) = mask {
+                if let Some(&mv) = m.get(y as usize * stride + x as usize) {
+                    opacity *= mv as f32 / 255.0;
                 }
             }
+            if let Some((row, b_lo, b_hi, b_off, base_op)) = base_span {
+                if x < b_lo || x >= b_hi {
+                    continue;
+                }
+                let a = row[((x - b_off) as usize) * 4 + 3];
+                opacity *= (a as f32 / 255.0) * base_op;
+            }
+            if opacity <= 0.001 {
+                continue;
+            }
+
+            let dst_px = [
+                out[dst_idx],
+                out[dst_idx + 1],
+                out[dst_idx + 2],
+                out[dst_idx + 3],
+            ];
+            let src_px = [
+                layer.pixels[si],
+                layer.pixels[si + 1],
+                layer.pixels[si + 2],
+                layer.pixels[si + 3],
+            ];
+            let blended = compose(dst_px, src_px, opacity);
+            out[dst_idx] = blended[0];
+            out[dst_idx + 1] = blended[1];
+            out[dst_idx + 2] = blended[2];
+            out[dst_idx + 3] = blended[3];
         }
     }
 }

@@ -25,3 +25,6 @@ build.out
 test.log
 test.err
 ui-*.png
+
+# benchmark / build logs
+*.log
