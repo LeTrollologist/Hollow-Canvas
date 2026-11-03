@@ -479,4 +479,42 @@ mod tests {
         // The unmodified file still loads, so the rejections above are not just a broken fixture.
         assert!(load_project_from_reader(&bytes[..]).is_ok());
     }
+
+    /// Saving builds an 8-bit composite for the thumbnail. That pass must not be able to
+    /// quantise the layers it is previewing: the preview is a *view*, and storage is not
+    /// allowed to follow it. Values here are deliberately off the `v*257` lattice, so any
+    /// 8-bit trip anywhere in the save path would be visible.
+    #[test]
+    fn saving_a_sixteen_bit_document_does_not_quantize_its_layers() {
+        let mut doc = Document::new(4, 3);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        let channels: Vec<u16> = (0..(4 * 3 * 4))
+            .map(|index| (index as u16).wrapping_mul(1013).wrapping_add(7))
+            .collect();
+        assert!(
+            channels.iter().any(|channel| channel % 257 != 0),
+            "the fixture must be off the 8-bit lattice, or it proves nothing"
+        );
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels.clone());
+        }
+
+        // The 8-bit preview the writer builds while saving.
+        let preview_before = doc.composite_layers(true);
+
+        let mut bytes = Vec::new();
+        save_project_to_writer(&doc, &mut bytes).expect("save");
+        let loaded = load_project_from_reader(&bytes[..]).expect("load");
+
+        let layer = loaded.get_layer(id).expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16, "storage must stay 16-bit");
+        assert_eq!(
+            layer.as_srgb16().expect("16-bit storage"),
+            channels.as_slice(),
+            "the preview pass quantised the layer it was previewing"
+        );
+        // And the reopened document previews identically, so the round trip is stable.
+        assert_eq!(loaded.composite_layers(true), preview_before);
+    }
 }
