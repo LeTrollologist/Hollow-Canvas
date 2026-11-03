@@ -2236,4 +2236,77 @@ mod tests {
             "the ellipse fill landed on the 8-bit lattice: sub-8-bit detail was lost"
         );
     }
+
+    /// Polygon **fill and outline** on 16-bit storage. The outline is expected to work already - it
+    /// routes through `paint_segment`, which paints at either width - so this pins both paths
+    /// rather than assuming the shared one covers the other.
+    #[test]
+    fn polygon_fill_and_outline_work_on_sixteen_bit_layers() {
+        use crate::brush::{BrushSettings, ShapeFillMode, ToolType};
+        use crate::layer::{LayerBuffer, PixelFormat};
+        use crate::symmetry::SymmetryConfig;
+
+        let mid = crate::pixel::srgb8_to_srgb16(70) + 128;
+
+        let wide_doc = || {
+            let mut doc = Document::new(9, 9);
+            doc.is_transparent = true;
+            let id = doc.active_layer_id;
+            let mut channels = vec![0u16; 9 * 9 * 4];
+            for pixel in 0..(9 * 9) {
+                for channel in 0..3 {
+                    channels[pixel * 4 + channel] = mid;
+                }
+                channels[pixel * 4 + 3] = 65535;
+            }
+            if let Some(layer) = doc.get_layer_mut(id) {
+                *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+            }
+            doc
+        };
+
+        let triangle = [
+            glam::Vec2::new(4.0, 1.0),
+            glam::Vec2::new(1.0, 8.0),
+            glam::Vec2::new(7.0, 8.0),
+        ];
+
+        let mut brush = BrushSettings::default();
+        brush.tool = ToolType::Polygon;
+        brush.secondary_color = Color::WHITE;
+        brush.primary_color = Color::WHITE;
+        brush.opacity = 0.5;
+
+        // Fill: the interior must move, the format must not, and detail must survive.
+        brush.shape_fill_mode = ShapeFillMode::Fill;
+        let mut doc = wide_doc();
+        let id = doc.active_layer_id;
+        crate::rasterizer::StrokeRasterizer::rasterize_polygon(
+            &mut doc, &triangle, &brush, &SymmetryConfig::default(), None,
+        );
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16, "polygon fill changed storage format");
+        let filled = layer.as_srgb16().expect("16-bit")[(4 * 9 + 4) * 4];
+        assert_ne!(filled, mid, "the polygon interior was not filled");
+        assert!(
+            filled % 257 != 0,
+            "the polygon fill landed on the 8-bit lattice: sub-8-bit detail was lost"
+        );
+
+        // Outline: painting must happen, and must stay 16-bit.
+        brush.shape_fill_mode = ShapeFillMode::Stroke;
+        let mut doc = wide_doc();
+        let id = doc.active_layer_id;
+        crate::rasterizer::StrokeRasterizer::rasterize_polygon(
+            &mut doc, &triangle, &brush, &SymmetryConfig::default(), None,
+        );
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16, "polygon outline changed storage format");
+        let painted = layer.as_srgb16().expect("16-bit");
+        let changed = painted
+            .chunks_exact(4)
+            .filter(|pixel| pixel[0] != mid)
+            .count();
+        assert!(changed > 0, "the polygon outline painted nothing onto the 16-bit layer");
+    }
 }

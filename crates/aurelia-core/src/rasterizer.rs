@@ -761,7 +761,6 @@ impl StrokeRasterizer {
     fn ellipse_impl<C: Channel + PartialEq>(
         pixels: &mut [C],
         doc_w: u32,
-        doc_h: u32,
         min_x: u32,
         max_x: u32,
         min_y: u32,
@@ -871,15 +870,46 @@ impl StrokeRasterizer {
             let blend_mode = layer.blend_mode;
             match layer.buffer_mut() {
                 LayerBuffer::Srgb8(pixels) => Self::ellipse_impl(
-                    pixels, doc_w, doc_h, min_x, max_x, min_y, max_y, sc, rx_sq, ry_sq,
+                    pixels, doc_w, min_x, max_x, min_y, max_y, sc, rx_sq, ry_sq,
                     half_w, mode, brush, active_mask, blend_mode,
                 ),
                 LayerBuffer::Srgb16(pixels) => Self::ellipse_impl(
-                    pixels, doc_w, doc_h, min_x, max_x, min_y, max_y, sc, rx_sq, ry_sq,
+                    pixels, doc_w, min_x, max_x, min_y, max_y, sc, rx_sq, ry_sq,
                     half_w, mode, brush, active_mask, blend_mode,
                 ),
             }
         }
+    }
+
+    /// Polygon fill, dispatching once per shape. The outline needs none of this: it runs
+    /// through `paint_segment`, which already paints at either storage width.
+    #[allow(clippy::too_many_arguments)]
+    fn polygon_fill_impl<C: Channel + PartialEq>(
+        pixels: &mut [C],
+        doc_w: u32,
+        doc_h: u32,
+        shape: &SelectionMask,
+        active_mask: Option<&SelectionMask>,
+        fill_col: [u8; 4],
+        blend_mode: BlendMode,
+        opacity: f32,
+    ) {
+        let fill_working = Self::u8_px(fill_col);
+            for y in 0..doc_h {
+                for x in 0..doc_w {
+                    if shape.get_value(x, y) > 8 {
+                        if let Some(sel) = active_mask {
+                            if sel.get_value(x, y) < 8 {
+                                continue;
+                            }
+                        }
+                        let idx = ((y * doc_w + x) * 4) as usize;
+                        let dst = Self::read_px(pixels, idx);
+                        let blended = blend_mode.composite_working(dst, fill_working, opacity);
+                        Self::store_px(pixels, idx, blended);
+                    }
+                }
+            }
     }
 
     pub fn rasterize_polygon(
@@ -904,20 +934,14 @@ impl StrokeRasterizer {
             };
 
             let fill_col = brush.secondary_color.to_rgba8();
-            for y in 0..doc_h {
-                for x in 0..doc_w {
-                    if mask.get_value(x, y) > 8 {
-                        if let Some(sel) = active_mask {
-                            if sel.get_value(x, y) < 8 {
-                                continue;
-                            }
-                        }
-                        let idx = ((y * doc_w + x) * 4) as usize;
-                        let dst = [layer.as_srgb8_exact()[idx], layer.as_srgb8_exact()[idx + 1], layer.as_srgb8_exact()[idx + 2], layer.as_srgb8_exact()[idx + 3]];
-                        let blended = layer.blend_mode.composite_pixel(dst, fill_col, brush.opacity);
-                        layer.as_srgb8_exact_mut()[idx..idx + 4].copy_from_slice(&blended);
-                    }
-                }
+            let (fill_mode, fill_opacity) = (layer.blend_mode, brush.opacity);
+            match layer.buffer_mut() {
+                LayerBuffer::Srgb8(pixels) => Self::polygon_fill_impl(
+                    pixels, doc_w, doc_h, &mask, active_mask, fill_col, fill_mode, fill_opacity,
+                ),
+                LayerBuffer::Srgb16(pixels) => Self::polygon_fill_impl(
+                    pixels, doc_w, doc_h, &mask, active_mask, fill_col, fill_mode, fill_opacity,
+                ),
             }
         }
 
