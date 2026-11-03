@@ -1494,12 +1494,21 @@ impl StrokeRasterizer {
         layer: &mut Layer,
         config: &crate::layer::TextLayerConfig,
         font_ref: &FontArc,
-    ) {
+    ) -> bool {
+        // Text is the one operation still 8-bit only, and refusing is deliberate: the glyph
+        // loop composites coverage through hand-written source-over maths rather than the
+        // shared blend, so converting it means first deciding whether its rounding may move.
+        // Until that decision has a golden baseline, a 16-bit layer is reported as
+        // unsupported instead of being silently skipped or panicking.
+        if layer.format() != crate::layer::PixelFormat::Srgb8 {
+            return false;
+        }
+
         // Clear destination layer buffer to transparent
         layer.as_srgb8_exact_mut().fill(0);
 
         if config.content.is_empty() || layer.width == 0 || layer.height == 0 {
-            return;
+            return true;
         }
 
         let lines = Self::wrap_text_lines(
@@ -1596,6 +1605,7 @@ impl StrokeRasterizer {
                 current_x += scaled_font.h_advance(glyph_id) + config.letter_spacing;
             }
         }
+        true
     }
 
     /// Rasterize formatted text directly onto the active layer.

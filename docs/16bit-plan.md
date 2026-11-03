@@ -502,3 +502,30 @@ keeps the filled values from being quantised.
 Still 8-bit only: `flood_fill` and its write path, `rasterize_magic_wand`'s buffer sampling,
 and text. `flood_fill` gets the same treatment next, with the seed-comparison contract above
 pinned by a test before and after the change.
+
+### Step 2 closed
+
+| Operation | Status | Test |
+| :--- | :--- | :--- |
+| Erasing | generic, via the stamp | brush suite |
+| Rectangle fill | generic | `shape_fill_writes_native_sixteen_bit_values` |
+| Rectangle outline | generic already (routes through `paint_segment`) | polygon/rect tests |
+| Ellipse fill + stroke | generic | `ellipse_writes_native_sixteen_bit_values` |
+| Polygon fill | generic | `polygon_fill_and_outline_work_on_sixteen_bit_layers` |
+| Polygon outline | generic already | same |
+| Gradient | generic, interpolation untouched | `gradient_writes_native_sixteen_bit_values` |
+| Flood fill | generic, seed comparison in 8-bit | `flood_fill_writes_native_values_and_respects_barriers` |
+| Magic wand sampling | generic, via the shared snapshot | covered by the fill test |
+| Text | **refused on 16-bit, deliberately** | `text_reports_unsupported_on_sixteen_bit_layers` |
+
+**The text decision.** Text composites glyph coverage through hand-written source-over
+mathematics rather than the shared blend, so converting it means deciding whether its
+rounding may move - and it has no golden baseline to prove it did not. Rather than guess,
+`rasterize_text_layer_config` now returns `bool`: `false` for a non-8-bit layer, having
+touched nothing. A test asserts both the `false` and that the layer is **unchanged** rather
+than cleared - the failure mode worth guarding, since the function clears its buffer first.
+
+The remaining work, when text is taken up, is to capture a golden baseline from the current
+8-bit output first, then route the glyph loop through `read_px`/`store_px` and decide the
+rounding question against that baseline. That ordering is the same one the alpha clamp
+needed, and for the same reason.

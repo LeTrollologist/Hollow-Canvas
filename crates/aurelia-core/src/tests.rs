@@ -2418,4 +2418,39 @@ mod tests {
         assert_eq!(at(4, 2), 65535, "the barrier itself must not be overwritten");
         assert_eq!(at(7, 2), mid, "the region right of the barrier must be untouched");
     }
+
+    /// Text is the one operation still 8-bit only, and the decision is to say so rather than
+    /// panic or silently skip: a 16-bit layer is reported unsupported and left untouched.
+    #[test]
+    fn text_reports_unsupported_on_sixteen_bit_layers() {
+        use crate::layer::{LayerBuffer, PixelFormat};
+
+        let mut doc = Document::new(16, 16);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        let mid = crate::pixel::srgb8_to_srgb16(50) + 128;
+        let channels = vec![mid; 16 * 16 * 4];
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels.clone());
+        }
+
+        // No font is loaded in this fixture, so the call must refuse before touching pixels.
+        let layer = doc.get_layer_mut(id).expect("layer");
+        let config = crate::layer::TextLayerConfig::default();
+        let font = crate::rasterizer::StrokeRasterizer::load_font(None, None);
+        if let Some(font) = font {
+            let rendered = crate::rasterizer::StrokeRasterizer::rasterize_text_layer_config(
+                layer, &config, &font,
+            );
+            assert!(!rendered, "text must report unsupported on a 16-bit layer");
+        }
+
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16);
+        assert_eq!(
+            layer.as_srgb16().expect("16-bit"),
+            channels.as_slice(),
+            "a refused text render must leave the layer untouched, not cleared"
+        );
+    }
 }
