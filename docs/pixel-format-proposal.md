@@ -275,6 +275,61 @@ Steps 1–2 are safe independently of the 16-bit decision; step 3 is the point o
 
 ---
 
+## 9. Prototype results (gate 6) - measured
+
+`crates/aurelia-render/examples/proto_pixel_format.rs` implements the ?3 + ?4 model in
+isolation and was run on an Intel Alder Lake (12 logical cores), rustc 1.93.1, release
+profile, 1920x1080, 4 layers, 20 iterations x 5 interleaved rounds, medians.
+
+### Correctness of the model, proven not assumed
+
+The prototype asserts, before measuring anything, that:
+
+- the `u8` instantiation reproduces `Document::composite_layers` **byte for byte**; and
+- a `v * 257` `u16` document downconverts to the **same bytes**.
+
+Both hold on all five fixtures (opaque, sparse, masked, clipped, and the mixed bench
+fixture). That is the `v * 257` lattice gate demonstrated empirically rather than argued.
+
+### Throughput (MPix/s, median of 5 interleaved rounds)
+
+| Workload | production u8 | candidate u8 | candidate u16 |
+| :--- | ---: | ---: | ---: |
+| opaque (bench shape: 3 fast + 1 general) | 74.6 | 43.1 | 43.5 |
+| opaque, all layers general | 24.6 | 37.8 | 41.3 |
+| sparse 10%, all layers general | 168.7 | 285.7 | 175.5 |
+| masked, all layers general | 35.1 | 47.6 | 46.3 |
+| clipped, all layers general | 35.7 | 47.7 | 44.2 |
+
+### Gate 6 verdict: **T4 fails, and not for the expected reason**
+
+- **T4 on the bench fixture: 43.5 MPix/s against a 60 MPix/s gate - FAIL.**
+- **The storage width is not the cause.** The bench fixture lets three layers take the
+  8-bit integer fast path; a 16-bit document cannot have that fast path under decision 5,
+  so every layer pays general-path cost. The *8-bit* all-general figure (24.6 MPix/s) is the
+  same ceiling or lower, and the candidate u16 (41.3) beats it.
+- **Width matters only where the loop is bandwidth-bound.** Opaque is compute-bound and
+  pays +9% for double width (37.8 -> 41.3, within noise). Sparse is bandwidth-bound - it
+  does almost no arithmetic per pixel because transparency is skipped - and pays **-39%**
+  (285.7 -> 175.5). Sparse is the realistic artwork case, so this is the number to respect.
+- **The generic model is faster than today's general path on every all-general workload**
+  (37.8 vs 24.6 opaque, 285.7 vs 168.7 sparse, 47.6 vs 35.1 masked, 47.7 vs 35.7 clipped).
+
+### Consequences for this proposal
+
+1. **Gates 1-5 stand, but the target for a 16-bit document cannot be T4 as defined.** T4 was
+   set on a mixed fixture dominated by the 8-bit fast path. Either the 16-bit target is
+   defined against the general path, or a 16-bit fast path is built (decision 5 deferred
+   that as a second project). This is a decision for review, not a number to lower quietly.
+2. **?4.1 is corrected by this measurement.** "Intermediate results stay in working
+   precision for the whole pass" would change output - it is precisely the per-layer
+   quantisation that makes the oracle byte-identical. The first implementation therefore
+   quantises per layer, and a whole-pass f32 buffer is a *separate* proposal that would
+   need its own oracle re-baselining. Consequently the scratch question in ?4.3 shrinks:
+   there is no document-wide f32 image, only per-band conversion buffers.
+3. **Step 2 of the migration is worth doing on its own.** The generic model beats the
+   current general path on every workload measured, independent of any 16-bit decision.
+
 ## Open questions for review
 
 1. **`Option` vs panic** in `as_srgb8` (§2 rule 1) — is `as_srgb8_exact` acceptable, or

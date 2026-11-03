@@ -319,6 +319,22 @@ A prototype measuring four workloads - opaque, sparse, masked, clipped - validat
 computation model before the architecture is approved, with the kill criterion stated in
 advance: if it cannot hold T4 on opaque, the storage change does not ship in that form.
 
+**Prototype result (gate 6, measured).** `crates/aurelia-render/examples/proto_pixel_format.rs`
+implements the model in isolation and asserts, before measuring, that its `u8` instantiation
+reproduces the production compositor byte for byte and that a `v * 257` 16-bit document
+downconverts to the same bytes - both hold. Throughput: **T4 fails at 43.5 MPix/s against 60,
+and the storage width is not the cause.** The bench fixture lets three of four layers use the
+8-bit fast path, which a 16-bit document cannot have under the decision to keep the fast path
+8-bit; the all-general 8-bit baseline is 24.6 MPix/s, the same ceiling or lower. Width costs
++9% where the loop is compute-bound (opaque) and **-39% where it is bandwidth-bound (sparse)**,
+which is the realistic artwork case. The generic model is faster than today's general path on
+every all-general workload, so migrating to it pays for itself independent of 16-bit.
+
+Two things the prototype changed: the first implementation must quantise **per layer** (that
+is what keeps the oracle byte-identical; a whole-pass f32 buffer is a separate proposal with
+its own re-baselining), and the 16-bit performance target must be defined against the general
+path rather than the mixed fixture - or a 16-bit fast path must be built.
+
 ### Multi-document
 
 `AppState` owns exactly one `Document`, and ~40 places reach into `state.document`
