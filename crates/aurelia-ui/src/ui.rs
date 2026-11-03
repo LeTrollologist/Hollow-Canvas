@@ -152,7 +152,15 @@ fn restore_and_preview(state: &mut AppState, apply: impl Fn(&mut [u8], u32, u32)
     }
 }
 
+/// Screen size in physical pixels (egui reports points).
+fn screen_px(ctx: &egui::Context) -> (f32, f32) {
+    let ppp = ctx.pixels_per_point().max(0.01);
+    let sr = ctx.screen_rect();
+    (sr.width() * ppp, sr.height() * ppp)
+}
+
 pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+    state.ui_ppp = ctx.pixels_per_point().max(0.01);
     let accent = state.document.theme.accent_color();
     let [ar, ag, ab, _] = accent.to_rgba8();
     let accent_c32 = Color32::from_rgb(ar, ag, ab);
@@ -171,7 +179,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         egui::TopBottomPanel::top("header_panel")
             .frame(design::bar_frame(design::INK_PANEL))
             .show(ctx, |ui| {
-                state.header_h = ui.max_rect().height() + 10.0; // bar_frame pads 5 px top/bottom
+                state.header_h = (ui.max_rect().height() + 10.0) * state.ui_ppp; // bar_frame pads 5 px top/bottom
                 // A shallow gradient under the bar reads as a lit edge rather than a border.
                 let bar_rect = ui.max_rect();
                 design::vgradient(
@@ -559,8 +567,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 ui.close_menu();
                             }
                             if ui.button("⛶ Fit to Screen (Ctrl+0)").clicked() {
-                                let sr = ctx.screen_rect();
-                                state.reset_view_centered(sr.width(), sr.height());
+                                let (sw, sh) = screen_px(ctx);
+                                state.reset_view_centered(sw, sh);
                                 ui.close_menu();
                             }
                             if ui.button("1:1 Actual Size (100% / Ctrl+1)").clicked() {
@@ -774,7 +782,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         egui::TopBottomPanel::bottom("status_bar")
             .frame(design::bar_frame(design::INK_SUNKEN))
             .show(ctx, |ui| {
-                state.footer_h = ui.max_rect().height() + 10.0;
+                state.footer_h = (ui.max_rect().height() + 10.0) * state.ui_ppp;
                 let bar_rect = ui.max_rect();
                 design::vgradient(
                     ui.painter(),
@@ -829,7 +837,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .resizable(true)
             .frame(crate::design::panel_frame(crate::design::INK_PANEL))
             .show(ctx, |ui| {
-                state.left_panel_w = ui.max_rect().width() + 2.0 * design::PANEL_PAD;
+                state.left_panel_w = (ui.max_rect().width() + 2.0 * design::PANEL_PAD) * state.ui_ppp;
                 let panel_rect = ui.max_rect();
                 design::vgradient(ui.painter(), panel_rect, design::INK_PANEL_TOP, design::INK_PANEL_BOTTOM);
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -1321,7 +1329,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .resizable(true)
             .frame(crate::design::panel_frame(crate::design::INK_PANEL))
             .show(ctx, |ui| {
-                state.right_panel_w = ui.max_rect().width() + 2.0 * design::PANEL_PAD;
+                state.right_panel_w = (ui.max_rect().width() + 2.0 * design::PANEL_PAD) * state.ui_ppp;
                 let panel_rect = ui.max_rect();
                 design::vgradient(ui.painter(), panel_rect, design::INK_PANEL_TOP, design::INK_PANEL_BOTTOM);
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -1376,8 +1384,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         let canvas_center_x = doc_w * 0.5 - state.pan.x / state.zoom;
                         let canvas_center_y = doc_h * 0.5 - state.pan.y / state.zoom;
 
-                        let win_w_f = ctx.screen_rect().width();
-                        let win_h_f = ctx.screen_rect().height();
+                        let (win_w_f, win_h_f) = screen_px(ctx);
                         let open_vp_w = (win_w_f - state.left_panel_w - state.right_panel_w - 20.0).max(100.0);
                         let open_vp_h = (win_h_f - state.header_h - state.footer_h - 10.0).max(100.0);
 
@@ -2079,8 +2086,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             state.resize_canvas_h = state.document.height;
                         }
                         if op(ui, "⛶ Fit") {
-                            let sr = ctx.screen_rect();
-                            state.reset_view_centered(sr.width(), sr.height());
+                            let (sw, sh) = screen_px(ctx);
+                            state.reset_view_centered(sw, sh);
                         }
                         if op(ui, "100%") {
                             state.reset_view();
@@ -3244,7 +3251,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         let win_h = win_size.y;
 
         let to_screen_pos = |cv_pt: glam::Vec2| -> egui::Pos2 {
-            let s_pt = state.canvas_to_screen(cv_pt, win_w, win_h);
+            let s_pt = state.canvas_to_ui(cv_pt, win_w, win_h);
             egui::pos2(s_pt.x, s_pt.y)
         };
 
@@ -3401,8 +3408,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             let c_sec = Color32::from_rgb(255, 255, 255);
 
             for (i, &(p0, p1)) in mask.cached_boundary.iter().enumerate() {
-                let s0 = state.canvas_to_screen(p0, win_w, win_h);
-                let s1 = state.canvas_to_screen(p1, win_w, win_h);
+                let s0 = state.canvas_to_ui(p0, win_w, win_h);
+                let s1 = state.canvas_to_ui(p1, win_w, win_h);
                 let is_pri = (((i as f32) * 0.5 + phase * 4.0) as usize) % 2 == 0;
                 let stroke_c = if is_pri { c_pri } else { c_sec };
                 painter.line_segment([egui::pos2(s0.x, s0.y), egui::pos2(s1.x, s1.y)], egui::Stroke::new(1.3_f32, stroke_c));
@@ -3455,13 +3462,13 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
         let stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(236, 167, 19));
 
         for i in 0..state.lasso_points.len() - 1 {
-            let p0 = state.canvas_to_screen(state.lasso_points[i], win_w, win_h);
-            let p1 = state.canvas_to_screen(state.lasso_points[i + 1], win_w, win_h);
+            let p0 = state.canvas_to_ui(state.lasso_points[i], win_w, win_h);
+            let p1 = state.canvas_to_ui(state.lasso_points[i + 1], win_w, win_h);
             painter.line_segment([egui::pos2(p0.x, p0.y), egui::pos2(p1.x, p1.y)], stroke);
         }
         if state.lasso_points.len() >= 3 {
-            let p_last = state.canvas_to_screen(*state.lasso_points.last().unwrap(), win_w, win_h);
-            let p_first = state.canvas_to_screen(state.lasso_points[0], win_w, win_h);
+            let p_last = state.canvas_to_ui(*state.lasso_points.last().unwrap(), win_w, win_h);
+            let p_first = state.canvas_to_ui(state.lasso_points[0], win_w, win_h);
             painter.line_segment(
                 [egui::pos2(p_last.x, p_last.y), egui::pos2(p_first.x, p_first.y)],
                 egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(0, 240, 255, 120)),
@@ -3516,8 +3523,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             let top_left = glam::Vec2::new(config.pos_x, config.pos_y);
             let bottom_right = top_left + glam::Vec2::new(text_box_w, text_box_h);
 
-            let s_min = state.canvas_to_screen(top_left, win_w, win_h);
-            let s_max = state.canvas_to_screen(bottom_right, win_w, win_h);
+            let s_min = state.canvas_to_ui(top_left, win_w, win_h);
+            let s_max = state.canvas_to_ui(bottom_right, win_w, win_h);
             let screen_rect = egui::Rect::from_min_max(egui::pos2(s_min.x, s_min.y), egui::pos2(s_max.x, s_max.y));
 
             // Draw crisp bounding outline with handles
@@ -4361,7 +4368,7 @@ fn render_transform_gizmos(
                 .iter()
                 .map(|&c| {
                     let tc = session.transform.forward(c);
-                    let sp = state.canvas_to_screen(tc, win_w, win_h);
+                    let sp = state.canvas_to_ui(tc, win_w, win_h);
                     egui::pos2(sp.x, sp.y)
                 })
                 .collect();
@@ -4400,7 +4407,7 @@ fn render_transform_gizmos(
             }
 
             // Draw pivot point
-            let pivot_sp = state.canvas_to_screen(session.transform.pivot + session.transform.translation, win_w, win_h);
+            let pivot_sp = state.canvas_to_ui(session.transform.pivot + session.transform.translation, win_w, win_h);
             painter.circle_stroke(egui::pos2(pivot_sp.x, pivot_sp.y), 6.0, Stroke::new(1.5_f32, white));
             painter.circle_filled(egui::pos2(pivot_sp.x, pivot_sp.y), 2.0, accent_c32);
         }
@@ -4410,7 +4417,7 @@ fn render_transform_gizmos(
                 .dst_corners
                 .iter()
                 .map(|&c| {
-                    let sp = state.canvas_to_screen(c, win_w, win_h);
+                    let sp = state.canvas_to_ui(c, win_w, win_h);
                     egui::pos2(sp.x, sp.y)
                 })
                 .collect();
@@ -4445,8 +4452,8 @@ fn render_transform_gizmos(
             // Draw horizontal mesh lines
             for r in 0..rows {
                 for c in 0..(cols - 1) {
-                    let p0 = state.canvas_to_screen(mesh.get_vertex(r, c), win_w, win_h);
-                    let p1 = state.canvas_to_screen(mesh.get_vertex(r, c + 1), win_w, win_h);
+                    let p0 = state.canvas_to_ui(mesh.get_vertex(r, c), win_w, win_h);
+                    let p1 = state.canvas_to_ui(mesh.get_vertex(r, c + 1), win_w, win_h);
                     painter.line_segment([egui::pos2(p0.x, p0.y), egui::pos2(p1.x, p1.y)], Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(100, 180, 255, 160)));
                 }
             }
@@ -4454,8 +4461,8 @@ fn render_transform_gizmos(
             // Draw vertical mesh lines
             for c in 0..cols {
                 for r in 0..(rows - 1) {
-                    let p0 = state.canvas_to_screen(mesh.get_vertex(r, c), win_w, win_h);
-                    let p1 = state.canvas_to_screen(mesh.get_vertex(r + 1, c), win_w, win_h);
+                    let p0 = state.canvas_to_ui(mesh.get_vertex(r, c), win_w, win_h);
+                    let p1 = state.canvas_to_ui(mesh.get_vertex(r + 1, c), win_w, win_h);
                     painter.line_segment([egui::pos2(p0.x, p0.y), egui::pos2(p1.x, p1.y)], Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(100, 180, 255, 160)));
                 }
             }
@@ -4464,7 +4471,7 @@ fn render_transform_gizmos(
             for r in 0..rows {
                 for c in 0..cols {
                     let v_can = mesh.get_vertex(r, c);
-                    let v_sp = state.canvas_to_screen(v_can, win_w, win_h);
+                    let v_sp = state.canvas_to_ui(v_can, win_w, win_h);
                     let pos = egui::pos2(v_sp.x, v_sp.y);
                     let is_corner = (r == 0 || r == rows - 1) && (c == 0 || c == cols - 1);
                     let radius = if is_corner { 5.0 } else { 4.0 };
@@ -4477,8 +4484,8 @@ fn render_transform_gizmos(
         }
         aurelia_core::transform::TransformMode::ThinPlateSpline => {
             for (i, (&src_can, &tgt_can)) in session.tps_source_pins.iter().zip(session.tps_target_pins.iter()).enumerate() {
-                let src_sp = state.canvas_to_screen(src_can, win_w, win_h);
-                let tgt_sp = state.canvas_to_screen(tgt_can, win_w, win_h);
+                let src_sp = state.canvas_to_ui(src_can, win_w, win_h);
+                let tgt_sp = state.canvas_to_ui(tgt_can, win_w, win_h);
                 let p_src = egui::pos2(src_sp.x, src_sp.y);
                 let p_tgt = egui::pos2(tgt_sp.x, tgt_sp.y);
 

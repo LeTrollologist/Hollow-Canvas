@@ -188,6 +188,10 @@ pub struct AppState {
     pub right_panel_w: f32,
     pub header_h: f32,
     pub footer_h: f32,
+    /// egui pixels-per-point for the current frame. Panel sizes above and all
+    /// view geometry (`pan`, `zoom`, `viewport_*`) are in physical pixels; egui
+    /// layout and painting are in points. Convert with this at the boundary.
+    pub ui_ppp: f32,
     pub perspective: aurelia_core::perspective::PerspectiveConfig,
     pub show_perspective_dock: bool,
     pub active_adjustment_modal: Option<u64>,
@@ -402,6 +406,7 @@ impl AppState {
             right_panel_w: 324.0,
             header_h: 38.0,
             footer_h: 30.0,
+            ui_ppp: 1.0,
             perspective: {
                 let mut p = aurelia_core::perspective::PerspectiveConfig::default();
                 p.init_for_canvas(width, height);
@@ -928,6 +933,13 @@ impl AppState {
         let canvas_size = Vec2::new(self.document.width as f32, self.document.height as f32);
         let offset = (canvas_pos - canvas_size * 0.5) * self.zoom;
         center + offset
+    }
+
+    /// Canvas position -> egui point-space position, for painting overlays with egui.
+    /// `win_w`/`win_h` are the egui screen size in points.
+    pub fn canvas_to_ui(&self, canvas_pos: Vec2, win_w: f32, win_h: f32) -> Vec2 {
+        let ppp = self.ui_ppp.max(0.01);
+        self.canvas_to_screen(canvas_pos, win_w * ppp, win_h * ppp) / ppp
     }
 
     pub fn fit_tracing_to_canvas(&mut self) {
