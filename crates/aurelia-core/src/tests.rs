@@ -2126,4 +2126,65 @@ mod tests {
             "every painted value landed on the 8-bit lattice: sub-8-bit detail was lost"
         );
     }
+
+    /// Step 2 of slice 1: a shape fill must write natively into 16-bit storage and keep detail
+    /// below the 8-bit lattice, while selection coverage behaves exactly as it does at 8 bits.
+    #[test]
+    fn shape_fill_writes_native_sixteen_bit_values() {
+        use crate::brush::{BrushSettings, ShapeFillMode, ToolType};
+        use crate::layer::{LayerBuffer, PixelFormat};
+        use crate::selection::SelectionMask;
+        use crate::symmetry::SymmetryConfig;
+
+        let mut doc = Document::new(8, 8);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        let mid = crate::pixel::srgb8_to_srgb16(80) + 128;
+        let mut channels = vec![0u16; 8 * 8 * 4];
+        for pixel in 0..(8 * 8) {
+            channels[pixel * 4] = mid;
+            channels[pixel * 4 + 1] = mid;
+            channels[pixel * 4 + 2] = mid;
+            channels[pixel * 4 + 3] = 65535;
+        }
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        let mut brush = BrushSettings::default();
+        brush.tool = ToolType::Rect;
+        brush.shape_fill_mode = ShapeFillMode::Fill;
+        brush.secondary_color = Color::WHITE;
+        brush.opacity = 0.5;
+
+        // A selection covering the left half only, so coverage is exercised at 16 bits too.
+        let mask = SelectionMask::from_rect(
+            8,
+            8,
+            glam::Vec2::new(0.0, 0.0),
+            glam::Vec2::new(4.0, 8.0),
+        );
+
+        crate::rasterizer::StrokeRasterizer::rasterize_rect(
+            &mut doc,
+            glam::Vec2::new(0.0, 0.0),
+            glam::Vec2::new(8.0, 8.0),
+            &brush,
+            &SymmetryConfig::default(),
+            Some(&mask),
+        );
+
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16, "the fill must not change storage format");
+        let painted = layer.as_srgb16().expect("16-bit");
+
+        let left = painted[(2 * 8 + 1) * 4];
+        let right = painted[(2 * 8 + 6) * 4];
+        assert_ne!(left, mid, "the selected half was not filled");
+        assert_eq!(right, mid, "the unselected half must be untouched");
+        assert!(
+            left % 257 != 0,
+            "the fill landed on the 8-bit lattice: sub-8-bit detail was lost"
+        );
+    }
 }

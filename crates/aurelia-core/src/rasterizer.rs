@@ -2,7 +2,7 @@ use crate::blend::BlendMode;
 use crate::brush::{BrushPoint, BrushSettings, EraserMode, GradientType, ShapeFillMode, TextAlign, ToolType};
 use crate::color::Color;
 use crate::document::Document;
-use crate::layer::Layer;
+use crate::layer::{Layer, LayerBuffer};
 use crate::pixel::Channel;
 use crate::selection::SelectionMask;
 use crate::symmetry::SymmetryConfig;
@@ -116,6 +116,46 @@ impl StrokeRasterizer {
     #[inline]
     fn store_px_u8<C: Channel>(pixels: &mut [C], idx: usize, pixel: [u8; 4]) {
         Self::store_px(pixels, idx, Self::u8_px(pixel));
+    }
+
+    /// Fills axis-aligned boxes, one dispatch per operation rather than per pixel.
+    ///
+    /// Selection coverage is applied exactly as the 8-bit path applied it - the mask test
+    /// happens before any pixel work - and the fill colour is lifted once, not per pixel.
+    fn fill_boxes<C: Channel + PartialEq>(
+        pixels: &mut [C],
+        doc_w: u32,
+        doc_h: u32,
+        sym_boxes: &[Vec2],
+        sym_ends: &[Vec2],
+        mask: Option<&SelectionMask>,
+        fill_col: [u8; 4],
+        mode: BlendMode,
+        opacity: f32,
+    ) {
+        let fill_working = Self::u8_px(fill_col);
+        for (b0, b1) in sym_boxes.iter().zip(sym_ends.iter()) {
+            let bx0 = b0.x.min(b1.x).floor().max(0.0) as u32;
+            let bx1 = b0.x.max(b1.x).ceil().min(doc_w as f32) as u32;
+            let by0 = b0.y.min(b1.y).floor().max(0.0) as u32;
+            let by1 = b0.y.max(b1.y).ceil().min(doc_h as f32) as u32;
+            for y in by0..by1 {
+                for x in bx0..bx1 {
+                    if let Some(mask) = mask {
+                        if mask.get_value(x, y) < 8 {
+                            continue;
+                        }
+                    }
+                    let idx = ((y * doc_w + x) * 4) as usize;
+                    if idx + 3 >= pixels.len() {
+                        continue;
+                    }
+                    let dst = Self::read_px(pixels, idx);
+                    let blended = mode.composite_working(dst, fill_working, opacity);
+                    Self::store_px(pixels, idx, blended);
+                }
+            }
+        }
     }
 
     /// Bilinear sample in working precision, for the smudge brush to drag colour from.
@@ -687,26 +727,17 @@ impl StrokeRasterizer {
             let sym_boxes = symmetry.transform_points(Vec2::new(min_x, min_y), doc_w as f32, doc_h as f32);
             let sym_ends = symmetry.transform_points(Vec2::new(max_x, max_y), doc_w as f32, doc_h as f32);
 
-            for (b0, b1) in sym_boxes.into_iter().zip(sym_ends.into_iter()) {
-                let bx0 = b0.x.min(b1.x).floor().max(0.0) as u32;
-                let bx1 = b0.x.max(b1.x).ceil().min(doc_w as f32) as u32;
-                let by0 = b0.y.min(b1.y).floor().max(0.0) as u32;
-                let by1 = b0.y.max(b1.y).ceil().min(doc_h as f32) as u32;
-
-                let fill_col = brush.secondary_color.to_rgba8();
-                for y in by0..by1 {
-                    for x in bx0..bx1 {
-                        if let Some(mask) = active_mask {
-                            if mask.get_value(x, y) < 8 {
-                                continue;
-                            }
-                        }
-                        let idx = ((y * doc_w + x) * 4) as usize;
-                        let dst = [layer.as_srgb8_exact()[idx], layer.as_srgb8_exact()[idx + 1], layer.as_srgb8_exact()[idx + 2], layer.as_srgb8_exact()[idx + 3]];
-                        let blended = layer.blend_mode.composite_pixel(dst, fill_col, brush.opacity);
-                        layer.as_srgb8_exact_mut()[idx..idx + 4].copy_from_slice(&blended);
-                    }
-                }
+            let fill_col = brush.secondary_color.to_rgba8();
+            let (fill_mode, fill_opacity) = (layer.blend_mode, brush.opacity);
+            match layer.buffer_mut() {
+                LayerBuffer::Srgb8(pixels) => Self::fill_boxes(
+                    pixels, doc_w, doc_h, &sym_boxes, &sym_ends, active_mask, fill_col,
+                    fill_mode, fill_opacity,
+                ),
+                LayerBuffer::Srgb16(pixels) => Self::fill_boxes(
+                    pixels, doc_w, doc_h, &sym_boxes, &sym_ends, active_mask, fill_col,
+                    fill_mode, fill_opacity,
+                ),
             }
         }
 
