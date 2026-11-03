@@ -2453,4 +2453,41 @@ mod tests {
             "a refused text render must leave the layer untouched, not cleared"
         );
     }
+
+    /// Step 3 begins with resize: a 16-bit layer must keep its format and copy its overlapping
+    /// region channel-for-channel, with new space zero-filled and nothing sampled or blended.
+    #[test]
+    fn resize_preserves_sixteen_bit_channels() {
+        use crate::layer::{LayerBuffer, PixelFormat};
+
+        let mut doc = Document::new(4, 3);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        let channels: Vec<u16> = (0..(4 * 3 * 4))
+            .map(|index| (index as u16).wrapping_mul(1013).wrapping_add(7))
+            .collect();
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels.clone());
+        }
+
+        // Grow: the original 4x3 region must be copied verbatim, the rest zero.
+        doc.get_layer_mut(id).expect("layer").resize(6, 5);
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16, "resize changed storage format");
+        let grown = layer.as_srgb16().expect("16-bit");
+        assert_eq!(grown.len(), 6 * 5 * 4);
+        for y in 0..3usize {
+            let src = &channels[y * 4 * 4..(y + 1) * 4 * 4];
+            let dst = &grown[y * 6 * 4..y * 6 * 4 + 4 * 4];
+            assert_eq!(dst, src, "row {y} was not copied verbatim");
+        }
+        assert_eq!(grown[(0 * 6 + 5) * 4], 0, "new space must be zero-filled");
+
+        // Shrink: the surviving region is the top-left corner, still exact.
+        doc.get_layer_mut(id).expect("layer").resize(2, 2);
+        let shrunk = doc.get_layer(id).expect("layer").as_srgb16().expect("16-bit");
+        for y in 0..2usize {
+            assert_eq!(&shrunk[y * 2 * 4..(y + 1) * 2 * 4], &channels[y * 4 * 4..y * 4 * 4 + 2 * 4]);
+        }
+    }
 }

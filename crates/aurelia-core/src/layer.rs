@@ -198,6 +198,34 @@ pub enum PixelFormat {
     Srgb16,
 }
 
+/// Copies the overlapping region of a buffer into a new size, zero-filling the rest.
+///
+/// Row-wise, channel-agnostic and non-interpolating: the destination pixel at `(x, y)` is the
+/// source pixel at `(x, y)` when both exist. Sharing it between widths is what keeps an 8-bit
+/// resize and a 16-bit resize doing the same thing.
+fn resized_channels<T: Copy + Default>(
+    source: &[T],
+    old_w: u32,
+    old_h: u32,
+    new_w: u32,
+    new_h: u32,
+) -> Vec<T> {
+    let mut out = vec![T::default(); (new_w as usize) * (new_h as usize) * 4];
+    let copy_w = (old_w.min(new_w) as usize) * 4;
+    let copy_h = old_h.min(new_h) as usize;
+    for y in 0..copy_h {
+        let src_start = y * (old_w as usize) * 4;
+        let dst_start = y * (new_w as usize) * 4;
+        let available = source.len().saturating_sub(src_start).min(copy_w);
+        if available == 0 {
+            break;
+        }
+        out[dst_start..dst_start + available]
+            .copy_from_slice(&source[src_start..src_start + available]);
+    }
+    out
+}
+
 impl Default for LayerBuffer {
     fn default() -> Self {
         LayerBuffer::Srgb8(Vec::new())
@@ -687,23 +715,21 @@ impl Layer {
         if self.width == new_w && self.height == new_h {
             return;
         }
-        let mut new_pixels = vec![0u8; (new_w as usize) * (new_h as usize) * 4];
-        let copy_w = self.width.min(new_w);
-        let copy_h = self.height.min(new_h);
+        let (old_w, old_h) = (self.width, self.height);
 
-        for y in 0..copy_h {
-            let src_start = ((y as usize) * (self.width as usize)) * 4;
-            let src_end = src_start + (copy_w as usize) * 4;
-            let dst_start = ((y as usize) * (new_w as usize)) * 4;
-            let dst_end = dst_start + (copy_w as usize) * 4;
-            // Resize copies rows of 4-byte pixels, so it is 8-bit specific today. A 16-bit
-            // resize belongs with the rest of the 16-bit document plumbing, not here.
-            new_pixels[dst_start..dst_end].copy_from_slice(&self.as_srgb8_exact()[src_start..src_end]);
-        }
-
+        // One copy loop for both storage widths: `resized_channels` moves rows of 4 channels and
+        // fills new space with zero, which is what the 8-bit path has always done. No sampling,
+        // no interpolation - so no interpolation semantics can drift here.
+        self.buffer = match &self.buffer {
+            LayerBuffer::Srgb8(bytes) => {
+                LayerBuffer::Srgb8(resized_channels(bytes, old_w, old_h, new_w, new_h))
+            }
+            LayerBuffer::Srgb16(channels) => {
+                LayerBuffer::Srgb16(resized_channels(channels, old_w, old_h, new_w, new_h))
+            }
+        };
         self.width = new_w;
         self.height = new_h;
-        self.buffer = LayerBuffer::Srgb8(new_pixels);
     }
 
     pub fn duplicate(&self, new_id: LayerId) -> Self {
