@@ -1740,52 +1740,83 @@ mod tests {
 
         fn median(mut samples: Vec<f64>) -> f64 {
             samples.sort_by(f64::total_cmp);
+            samples[samples.len() / 2];
             samples[samples.len() / 2]
         }
 
-        fn measure<F: FnMut()>(mut body: F) -> f64 {
-            let megapixels = (W as f64 * H as f64 * ITERS as f64) / 1_000_000.0;
-            let mut samples = Vec::new();
-            for _ in 0..ROUNDS {
-                let start = Instant::now();
-                for _ in 0..ITERS {
-                    body();
-                }
-                samples.push(start.elapsed().as_secs_f64());
+        /// One timed block, in seconds.
+        fn time_one<F: FnMut()>(mut body: F) -> f64 {
+            let start = Instant::now();
+            for _ in 0..ITERS {
+                body();
             }
-            megapixels / median(samples)
+            start.elapsed().as_secs_f64()
         }
 
-        let cases = [
+        let cases: Vec<(&str, Document, crate::document::PromotedLayers)> = [
             ("opaque", fixture(1.0, false, false)),
             ("sparse 10%", fixture(0.1, false, false)),
             ("masked", fixture(1.0, true, false)),
             ("clipped", fixture(1.0, false, true)),
-        ];
+        ]
+        .into_iter()
+        .map(|(label, doc)| {
+            let promoted = crate::document::promote_layers(&doc);
+            (label, doc, promoted)
+        })
+        .collect();
 
-        println!("gate 2 - {W}x{H}, {LAYERS} layers, all layers general path");
-        println!("{:<12} {:>14} {:>14} {:>10}", "workload", "u8 baseline", "Srgb16", "delta");
-        let mut results = Vec::new();
-        for (label, doc) in &cases {
-            let eight = measure(|| {
-                std::hint::black_box(doc.composite_layers(false));
-            });
-            // Promote once, outside the measurement: a real 16-bit document already holds
-            // 16-bit buffers, so timing the promotion would measure the conversion instead
-            // of the compositing.
-            let promoted = crate::document::promote_layers(doc);
-            let sixteen = measure(|| {
-                std::hint::black_box(crate::document::compose_u16_prepared(doc, &promoted, false));
-            });
-            println!(
-                "{:<12} {:>14.1} {:>14.1} {:>9.0}%",
-                label,
-                eight,
-                sixteen,
-                100.0 * (sixteen / eight - 1.0)
-            );
-            results.push((label, eight, sixteen));
+        // Paired, interleaved rounds: both widths are measured in the same round, so a slow
+        // patch of machine hits both and cancels in the ratio. The ratio is the gate; the
+        // absolute numbers are context.
+        let mut ratios: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+        let mut abs8: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+        let mut abs16: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+        for _ in 0..ROUNDS {
+            for (ci, (_, doc, promoted)) in cases.iter().enumerate() {
+                let t8 = time_one(|| {
+                    std::hint::black_box(doc.composite_layers(false));
+                });
+                let t16 = time_one(|| {
+                    std::hint::black_box(crate::document::compose_u16_prepared(doc, promoted, false));
+                });
+                abs8[ci].push(t8);
+                abs16[ci].push(t16);
+                ratios[ci].push(t8 / t16);
+            }
         }
+
+        let megapixels = (W as f64 * H as f64 * ITERS as f64) / 1_000_000.0;
+        println!("gate 2 - {W}x{H}, {LAYERS} layers, all layers general path, {ROUNDS} paired rounds");
+        println!(
+            "{:<12} {:>12} {:>12} {:>10} {:>16}",
+            "workload", "u8 MPix/s", "Srgb16", "ratio", "ratio spread"
+        );
+        let mut sparse_ratio = 1.0f64;
+        for (ci, (label, _, _)) in cases.iter().enumerate() {
+            let mut r = ratios[ci].clone();
+            r.sort_by(f64::total_cmp);
+            let (lo, hi, mid) = (r[0], r[r.len() - 1], r[r.len() / 2]);
+            if *label == "sparse 10%" {
+                sparse_ratio = mid;
+            }
+            println!(
+                "{:<12} {:>12.1} {:>12.1} {:>10.2} {:>16}",
+                label,
+                megapixels / median(abs8[ci].clone()),
+                megapixels / median(abs16[ci].clone()),
+                mid,
+                format!("{lo:.2} .. {hi:.2}")
+            );
+        }
+
+        println!("\nGate 2 thresholds (ratios, not absolutes):");
+        println!(
+            "  sparse regression budget: Srgb16 >= 60% of u8 -> {:.0}% {}",
+            sparse_ratio * 100.0,
+            if sparse_ratio >= 0.6 { "PASS (provisional)" } else { "FAIL" }
+        );
+        println!("  absolute thresholds are recorded as context only, per the approved change");
 
         // Memory: arithmetic, so it is asserted rather than reported.
         let per_layer_8 = W as usize * H as usize * 4;
@@ -1799,8 +1830,7 @@ mod tests {
         let full_doc_16 = doc_16 * 2 * steps;
         let mb = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
 
-        println!("
-memory:");
+        println!("\nMemory:");
         println!("  one layer              {:>8.1} MB -> {:>8.1} MB", mb(per_layer_8), mb(per_layer_16));
         println!("  {LAYERS}-layer document        {:>8.1} MB -> {:>8.1} MB", mb(doc_8), mb(doc_16));
         println!("  history, per-stroke x{steps}  {:>8.1} MB -> {:>8.1} MB", mb(per_stroke_8), mb(per_stroke_16));
@@ -1809,17 +1839,5 @@ memory:");
         assert_eq!(doc_16, doc_8 * 2);
         assert_eq!(per_stroke_16, per_stroke_8 * 2);
         assert_eq!(full_doc_16, full_doc_8 * 2);
-
-        // Report, do not assert, the plan's thresholds - the numbers are for review.
-        let (_, opaque_8, opaque_16) = results[0];
-        println!("
-gate 2 thresholds:");
-        println!("  opaque general >= 60 MPix/s: {opaque_16:.1} -> {}", if opaque_16 >= 60.0 { "PASS" } else { "FAIL" });
-        println!("  baseline for reference:      {opaque_8:.1} MPix/s");
-        for (label, eight, sixteen) in &results {
-            let delta = sixteen / eight - 1.0;
-            let verdict = if *sixteen >= 120.0 && delta >= -0.4 { "within budget" } else { "OUTSIDE BUDGET" };
-            println!("  {label:<12} correction {:+.0}% at {sixteen:.1} MPix/s -> {verdict}", delta * 100.0);
-        }
     }
 }

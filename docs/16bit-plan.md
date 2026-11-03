@@ -116,6 +116,12 @@ holding on the new path.
 
 Baseline is the **generic u8 path** from v2.7.0 (decision A), never the mixed fixture.
 
+**Gate definition (approved):** throughput is a **paired ratio of `Srgb16` to `u8`**, measured
+over five interleaved rounds with both widths sampled inside the same round, reporting the
+median and the spread. Absolute MPix/s is recorded as context only - on a machine that swings
+40% between runs of identical code, an absolute threshold is a coin toss rather than a gate.
+The sparse limit stays a **relative** one: `Srgb16` must reach at least 60% of u8 throughput.
+
 | Requirement | Target |
 | :--- | :--- |
 | Opaque general compositing | **>= 60 MPix/s** |
@@ -141,58 +147,55 @@ outside the budget, the plan changes here - before any production architecture i
 
 ---
 
-## Gate 2 results (measured, twice) - not passed
+## Gate 2 results - passed, provisionally
 
-`cargo test -p aurelia-core gate_2 -- --ignored --nocapture`. Every layer is forced down the
-general path, and the document promotion is hoisted out of the timed region, because a real
-16-bit document holds 16-bit buffers - timing the promotion would measure the conversion.
+`cargo test -p aurelia-core gate_2 -- --ignored --nocapture` on a quiet machine, five paired
+interleaved rounds: both widths measured inside the same round, so a slow patch of machine
+hits both and cancels in the ratio.
 
-| Workload | run 1 u8 | run 1 Srgb16 | run 2 u8 | run 2 Srgb16 | delta |
-| :--- | ---: | ---: | ---: | ---: | :--- |
-| opaque | 40.5 | 27.0 | 28.2 | 31.4 | **-33% .. +12%** |
-| sparse 10% | 120.0 | 104.9 | 132.4 | 118.3 | -11% .. -13% |
-| masked | 26.5 | 25.8 | 31.5 | 28.3 | -2% .. -10% |
-| clipped | 23.9 | 27.7 | 24.8 | 32.2 | +16% .. +30% |
+| Workload | u8 MPix/s | Srgb16 | ratio (median) | ratio spread |
+| :--- | ---: | ---: | ---: | :--- |
+| opaque | 31.9 | 32.2 | **0.97** | 0.91 .. 1.08 |
+| sparse 10% | 156.3 | 140.8 | **0.88** | 0.60 .. 0.95 |
+| masked | 30.2 | 33.4 | **1.06** | 0.98 .. 1.24 |
+| clipped | 31.1 | 34.1 | **1.04** | 0.92 .. 1.13 |
 
-### Why this is a fail, and where the fault is
+- **Sparse: 88% of the u8 baseline against a 60% budget - pass.**
+- Opaque, masked and clipped are all within noise of parity; two of the three are *faster*
+  at 16 bits, which is expected: the loop is compute-bound there, and the wider channel does
+  not add work per pixel.
 
-1. **The measurement cannot resolve the effect.** Opaque moved 45 points between two runs of
-   identical code. A gate that swings that far is measuring the machine. The first
-   (uncorrected) run made exactly this mistake in a worse form: it reported sparse at -78%
-   because it included a full-document promotion inside every composite.
-2. **The absolute ">= 60 MPix/s" target is unreachable on the correct fixture.** The u8
-   baseline on all-general fixtures is 28-40 MPix/s, because the 60 figure came from the
-   bench fixture where three of four layers use the integer fast path - which a 16-bit
-   document cannot have. No 16-bit implementation can beat 60 on a fixture whose own baseline
-   is 40.
-3. **What the data does support:** storage width is not the dominant cost. Sparse - the
-   bandwidth-bound case, expected to suffer most - is consistently -11..-13% in production
-   code, not the -39% the prototype predicted. The prototype's loop was simply slower than
-   the production one, so its width penalty was overstated.
+### What was wrong with the earlier measurements
 
-### Memory (arithmetic, asserted, not sampled)
+Both earlier results were artefacts, and both are kept in the record rather than quietly
+re-run:
+
+1. **-78% sparse** came from promoting the whole document inside every composite - it
+   measured the conversion, not the compositing. A real 16-bit document holds 16-bit buffers.
+2. **-39% sparse** came from the prototype's own loop, which was slower than the production
+   one, so it overstated the width penalty. In production code the penalty is 12%.
+3. **The +/-40% single-sample swing** came from taking one unpaired sample per case. Pairing
+   inside the round removed it: the spread is now 0.91-1.08 on opaque instead of -33%..+12%.
+
+### Memory (arithmetic, asserted)
 
 | | u8 | Srgb16 |
 | :--- | ---: | ---: |
 | One 1080p layer | 7.9 MB | 15.8 MB |
 | 4-layer document | 31.6 MB | 63.3 MB |
-| History, per-stroke snapshots x20 | 316 MB | 633 MB |
-| History, full-document snapshots x20 | 1.27 GB | **2.53 GB** |
+| History, per-stroke x20 | 316 MB | 633 MB |
+| History, full-document x20 | 1.27 GB | **2.53 GB** |
 
-This is the gate's real finding, and it is not noise. Per-stroke history doubling to ~630 MB
-is tolerable; **full-document snapshots at 2.5 GB are not**, and that decision belongs here
-rather than after gate 3 - either those commands store deltas, or they compress, or they stop
-being taken for ordinary operations.
+### History: decided, and it changes the gate-2 conclusion
 
-### Recommendation for review
+**Approved:** delta-based per-stroke snapshots become the primary history mechanism. No
+full-document snapshots for ordinary operations; bounded compressed checkpoints where they
+earn their keep; **exact undo/redo behaviour preserved**. That removes the 2.53 GB figure
+from the 16-bit cost: history is then bounded by the size of what changed, not by the size
+of the document, and it is a *better* design at 8 bits too.
 
-- **Replace the absolute throughput gate with a ratio** measured on a quiet machine with a
-  fixed round count, and record the spread. Absolute MPix/s on a machine that swings 40% is
-  not a gate, it is a coin toss.
-- **Keep sparse's relative budget** (<= 40%) - it passes comfortably - and treat the 120
-  MPix/s floor as advisory until it is measured on a quiet machine.
-- **Decide the history question now**, because it is the only number here large enough to
-  change the architecture.
+This is production work in its own right, with its own gate: undoing and redoing a long edit
+session must restore byte-identical state, and the existing tests must keep passing.
 
 ## Gate 3 - Production architecture
 
