@@ -339,6 +339,14 @@ computation model before the architecture is approved, with the kill criterion s
 advance: if it cannot hold T4 on opaque, the storage change does not ship in that form.
 
 **Prototype result (gate 6, measured).** `crates/aurelia-render/examples/proto_pixel_format.rs`
+
+**16-bit plan:** `docs/16bit-plan.md` turns that into three gates - fidelity and
+correctness, performance and memory, then production architecture - and settles the naming
+question: the variant is `Srgb16`, not `Linear16`. Linear light is a colour-space change
+that alters every blend result by definition and therefore cannot be validated by the
+byte-identical oracle; the fidelity problem that motivates 16-bit work is banding, which
+is storage precision. `Linear16` stays reserved for a future linear-light working space,
+which the f32 generic model from v2.7.0 makes reachable without another storage change.
 implements the model in isolation and asserts, before measuring, that its `u8` instantiation
 reproduces the production compositor byte for byte and that a `v * 257` 16-bit document
 downconverts to the same bytes - both hold. Throughput: **T4 fails at 43.5 MPix/s against 60,
