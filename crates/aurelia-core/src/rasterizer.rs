@@ -756,44 +756,25 @@ impl StrokeRasterizer {
         }
     }
 
-    pub fn rasterize_ellipse(
-        doc: &mut Document,
-        start: Vec2,
-        end: Vec2,
+    /// Ellipse fill and stroke, dispatching once per shape rather than per pixel.
+    #[allow(clippy::too_many_arguments)]
+    fn ellipse_impl<C: Channel + PartialEq>(
+        pixels: &mut [C],
+        doc_w: u32,
+        doc_h: u32,
+        min_x: u32,
+        max_x: u32,
+        min_y: u32,
+        max_y: u32,
+        sc: Vec2,
+        rx_sq: f32,
+        ry_sq: f32,
+        half_w: f32,
+        mode: ShapeFillMode,
         brush: &BrushSettings,
-        symmetry: &SymmetryConfig,
-        selection: Option<&SelectionMask>,
+        active_mask: Option<&SelectionMask>,
+        blend_mode: BlendMode,
     ) {
-        let center = (start + end) * 0.5;
-        let rx = (end.x - start.x).abs() * 0.5;
-        let ry = (end.y - start.y).abs() * 0.5;
-
-        if rx < 0.5 || ry < 0.5 {
-            return;
-        }
-
-        let (doc_w, doc_h, active_id) = (doc.width, doc.height, doc.active_layer_id);
-        let layer = match doc.get_layer_mut(active_id) {
-            Some(l) if !l.locked => l,
-            _ => return,
-        };
-
-        let active_mask = selection.filter(|s| s.has_selection());
-        let mode = brush.shape_fill_mode;
-        let stroke_w = brush.size.max(1.0);
-        let half_w = stroke_w * 0.5;
-        let sym_centers = symmetry.transform_points(center, doc_w as f32, doc_h as f32);
-
-        let rx_sq = rx * rx;
-        let ry_sq = ry * ry;
-
-        for sc in sym_centers {
-            let pad = stroke_w + 2.0;
-            let min_x = ((sc.x - rx - pad).floor().max(0.0) as u32).min(doc_w);
-            let max_x = ((sc.x + rx + pad).ceil().max(0.0) as u32).min(doc_w);
-            let min_y = ((sc.y - ry - pad).floor().max(0.0) as u32).min(doc_h);
-            let max_y = ((sc.y + ry + pad).ceil().max(0.0) as u32).min(doc_h);
-
             for y in min_y..max_y {
                 let py = (y as f32 + 0.5) - sc.y;
                 let py_term = (py * py) / ry_sq;
@@ -841,11 +822,62 @@ impl StrokeRasterizer {
                         }
 
                         let idx = ((y * doc_w + x) * 4) as usize;
-                        let dst = [layer.as_srgb8_exact()[idx], layer.as_srgb8_exact()[idx + 1], layer.as_srgb8_exact()[idx + 2], layer.as_srgb8_exact()[idx + 3]];
-                        let blended = layer.blend_mode.composite_pixel(dst, color.to_rgba8(), alpha);
-                        layer.as_srgb8_exact_mut()[idx..idx + 4].copy_from_slice(&blended);
+                        let dst = Self::read_px(pixels, idx);
+                        let blended = blend_mode.composite_working(dst, Self::u8_px(color.to_rgba8()), alpha);
+                        Self::store_px(pixels, idx, blended);
                     }
                 }
+            }
+    }
+
+    pub fn rasterize_ellipse(
+        doc: &mut Document,
+        start: Vec2,
+        end: Vec2,
+        brush: &BrushSettings,
+        symmetry: &SymmetryConfig,
+        selection: Option<&SelectionMask>,
+    ) {
+        let center = (start + end) * 0.5;
+        let rx = (end.x - start.x).abs() * 0.5;
+        let ry = (end.y - start.y).abs() * 0.5;
+
+        if rx < 0.5 || ry < 0.5 {
+            return;
+        }
+
+        let (doc_w, doc_h, active_id) = (doc.width, doc.height, doc.active_layer_id);
+        let layer = match doc.get_layer_mut(active_id) {
+            Some(l) if !l.locked => l,
+            _ => return,
+        };
+
+        let active_mask = selection.filter(|s| s.has_selection());
+        let mode = brush.shape_fill_mode;
+        let stroke_w = brush.size.max(1.0);
+        let half_w = stroke_w * 0.5;
+        let sym_centers = symmetry.transform_points(center, doc_w as f32, doc_h as f32);
+
+        let rx_sq = rx * rx;
+        let ry_sq = ry * ry;
+
+        for sc in sym_centers {
+            let pad = stroke_w + 2.0;
+            let min_x = ((sc.x - rx - pad).floor().max(0.0) as u32).min(doc_w);
+            let max_x = ((sc.x + rx + pad).ceil().max(0.0) as u32).min(doc_w);
+            let min_y = ((sc.y - ry - pad).floor().max(0.0) as u32).min(doc_h);
+            let max_y = ((sc.y + ry + pad).ceil().max(0.0) as u32).min(doc_h);
+
+            let blend_mode = layer.blend_mode;
+            match layer.buffer_mut() {
+                LayerBuffer::Srgb8(pixels) => Self::ellipse_impl(
+                    pixels, doc_w, doc_h, min_x, max_x, min_y, max_y, sc, rx_sq, ry_sq,
+                    half_w, mode, brush, active_mask, blend_mode,
+                ),
+                LayerBuffer::Srgb16(pixels) => Self::ellipse_impl(
+                    pixels, doc_w, doc_h, min_x, max_x, min_y, max_y, sc, rx_sq, ry_sq,
+                    half_w, mode, brush, active_mask, blend_mode,
+                ),
             }
         }
     }

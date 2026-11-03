@@ -2187,4 +2187,53 @@ mod tests {
             "the fill landed on the 8-bit lattice: sub-8-bit detail was lost"
         );
     }
+
+    /// Ellipse fill and stroke on a 16-bit layer: native writes, format preserved, detail below
+    /// the 8-bit lattice kept.
+    #[test]
+    fn ellipse_writes_native_sixteen_bit_values() {
+        use crate::brush::{BrushSettings, ShapeFillMode, ToolType};
+        use crate::layer::{LayerBuffer, PixelFormat};
+        use crate::symmetry::SymmetryConfig;
+
+        let mut doc = Document::new(9, 9);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        let mid = crate::pixel::srgb8_to_srgb16(60) + 128;
+        let mut channels = vec![0u16; 9 * 9 * 4];
+        for pixel in 0..(9 * 9) {
+            for channel in 0..3 {
+                channels[pixel * 4 + channel] = mid;
+            }
+            channels[pixel * 4 + 3] = 65535;
+        }
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        let mut brush = BrushSettings::default();
+        brush.tool = ToolType::Ellipse;
+        brush.shape_fill_mode = ShapeFillMode::Fill;
+        brush.secondary_color = Color::WHITE;
+        brush.opacity = 0.5;
+
+        crate::rasterizer::StrokeRasterizer::rasterize_ellipse(
+            &mut doc,
+            glam::Vec2::new(1.0, 1.0),
+            glam::Vec2::new(8.0, 8.0),
+            &brush,
+            &SymmetryConfig::default(),
+            None,
+        );
+
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16, "the ellipse must not change storage");
+        let painted = layer.as_srgb16().expect("16-bit");
+        let centre = painted[(4 * 9 + 4) * 4];
+        assert_ne!(centre, mid, "the ellipse centre was not filled");
+        assert!(
+            centre % 257 != 0,
+            "the ellipse fill landed on the 8-bit lattice: sub-8-bit detail was lost"
+        );
+    }
 }
