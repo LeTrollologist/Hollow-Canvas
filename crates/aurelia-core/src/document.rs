@@ -403,7 +403,7 @@ impl Document {
         let h = self.height;
 
         for layer in &mut self.layers {
-            let mut flipped = vec![0u8; layer.pixels.len()];
+            let mut flipped = vec![0u8; layer.as_srgb8().len()];
             for y in 0..h {
                 for x in 0..w {
                     let src_idx = ((y * w + x) * 4) as usize;
@@ -411,10 +411,10 @@ impl Document {
                     let dst_y = if !horizontal { h - 1 - y } else { y };
                     let dst_idx = ((dst_y * w + dst_x) * 4) as usize;
 
-                    flipped[dst_idx..dst_idx + 4].copy_from_slice(&layer.pixels[src_idx..src_idx + 4]);
+                    flipped[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8()[src_idx..src_idx + 4]);
                 }
             }
-            layer.pixels = flipped;
+            layer.set_pixels(flipped);
         }
     }
 
@@ -435,12 +435,12 @@ impl Document {
                         (y, old_w - 1 - x)
                     };
                     let dst_idx = ((dst_y * new_w + dst_x) * 4) as usize;
-                    rotated[dst_idx..dst_idx + 4].copy_from_slice(&layer.pixels[src_idx..src_idx + 4]);
+                    rotated[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8()[src_idx..src_idx + 4]);
                 }
             }
             layer.width = new_w;
             layer.height = new_h;
-            layer.pixels = rotated;
+            layer.set_pixels(rotated);
         }
 
         self.width = new_w;
@@ -474,14 +474,14 @@ impl Document {
                     }
                     let src_idx = ((oy * old_w + ox) * 4) as usize;
                     let dst_idx = ((ny * new_w as i32 + nx) * 4) as usize;
-                    if src_idx + 4 <= layer.pixels.len() && dst_idx + 4 <= new_pixels.len() {
-                        new_pixels[dst_idx..dst_idx + 4].copy_from_slice(&layer.pixels[src_idx..src_idx + 4]);
+                    if src_idx + 4 <= layer.as_srgb8().len() && dst_idx + 4 <= new_pixels.len() {
+                        new_pixels[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8()[src_idx..src_idx + 4]);
                     }
                 }
             }
             layer.width = new_w;
             layer.height = new_h;
-            layer.pixels = new_pixels;
+            layer.set_pixels(new_pixels);
         }
 
         self.width = new_w;
@@ -537,7 +537,7 @@ impl Document {
             }
             layer.width = new_w;
             layer.height = new_h;
-            layer.pixels = new_pixels;
+            layer.set_pixels(new_pixels);
         }
 
         self.width = new_w;
@@ -639,7 +639,7 @@ impl Document {
             }
 
             // ── Fast path for Normal blend mode with 0 offset and no clipping ──
-            if layer.blend_mode == BlendMode::Normal && layer.offset_x == 0 && layer.offset_y == 0 && prev_layer.is_none() && layer.pixels.len() >= total_bytes {
+            if layer.blend_mode == BlendMode::Normal && layer.offset_x == 0 && layer.offset_y == 0 && prev_layer.is_none() && layer.as_srgb8().len() >= total_bytes {
                 let alpha_mul = (eff_opacity.clamp(0.0, 1.0) * 255.0).round() as u32;
                 // A mask scales the layer's alpha per pixel; a mismatched mask is ignored
                 // rather than silently misaligned.
@@ -649,7 +649,7 @@ impl Document {
                     .filter(|m| m.enabled && m.pixels.len() >= (self.width as usize) * (self.height as usize));
                 for (i, (dst, src)) in out[..total_bytes]
                     .chunks_exact_mut(4)
-                    .zip(layer.pixels[..total_bytes].chunks_exact(4))
+                    .zip(layer.as_srgb8()[..total_bytes].chunks_exact(4))
                     .enumerate()
                 {
                     let mut sa = (src[3] as u32 * alpha_mul) / 255;
@@ -702,7 +702,7 @@ impl Document {
                 .filter(|m| m.enabled)
                 .map(|m| m.pixels.as_slice());
             let base = prev_layer.map(|b| ClipBase {
-                pixels: &b.pixels,
+                pixels: b.as_srgb8(),
                 offset_x: b.offset_x,
                 offset_y: b.offset_y,
                 width: b.width,
@@ -872,6 +872,9 @@ fn compose_rows<F>(
         return;
     }
 
+    // Bound once: the loop below touches this per pixel, and the accessor is the only
+    // way to reach the buffer now.
+    let src_pixels = layer.as_srgb8();
     let stride = canvas_w as usize;
     let src_stride = layer.width as usize;
     let x_start = layer.offset_x.max(0);
@@ -893,7 +896,7 @@ fn compose_rows<F>(
         // checking bounds for every pixel. A pixel outside it is transparent, which is a
         // no-op, so skipping it is exact.
         let row_start = (src_y as usize) * src_stride * 4;
-        let available = layer.pixels.len().saturating_sub(row_start) / 4;
+        let available = src_pixels.len().saturating_sub(row_start) / 4;
         let lim = src_lim_x.min(available as i32);
         let lo = x_start.max(layer.offset_x);
         let hi = x_end.min(layer.offset_x.saturating_add(lim));
@@ -927,7 +930,7 @@ fn compose_rows<F>(
             let si = row_start + ((x - layer.offset_x) as usize) * 4;
             // Compositing a fully transparent source is a no-op by definition; skipping
             // it before the float work is exact and is the biggest win on sparse art.
-            if layer.pixels[si + 3] == 0 {
+            if src_pixels[si + 3] == 0 {
                 continue;
             }
             let dst_idx = (dst_row + x as usize) * 4;
@@ -959,10 +962,10 @@ fn compose_rows<F>(
                 out[dst_idx + 3],
             ];
             let src_px = [
-                layer.pixels[si],
-                layer.pixels[si + 1],
-                layer.pixels[si + 2],
-                layer.pixels[si + 3],
+                src_pixels[si],
+                src_pixels[si + 1],
+                src_pixels[si + 2],
+                src_pixels[si + 3],
             ];
             let blended = compose(dst_px, src_px, opacity);
             out[dst_idx] = blended[0];

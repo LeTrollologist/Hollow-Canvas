@@ -212,8 +212,41 @@ None of it was the blend maths:
 
 ### Colour management / higher bit depth
 
-The 8-bit assumption is everywhere: `Layer { pixels: Vec<u8> }`, the rasterizer,
-filters, blend modes and the project format. The staged plan that avoids a rewrite:
+**Step 1 is done (v2.6.1, uncommitted at the time of writing).** `Layer::pixels` is
+private and every caller goes through `as_srgb8()` / `as_srgb8_mut()`, with
+`pixels_vec_mut()` for length changes and `set_pixels()` for replacement. 170 call sites
+across core, io, ui, app and render were migrated, the fast path hoists the slice once
+per layer, and all 78 tests - including the 702-combination byte-identical oracle - pass
+unchanged. Nothing about the representation is promised to callers any more, which is the
+whole point: the next step is a type change inside `layer.rs`, not a repo-wide rewrite.
+
+Measured inventory of what a 16-bit move still touches, so the decision is made with
+numbers rather than optimism:
+
+| Surface | Size |
+| :--- | :--- |
+| 8-bit pixel maths (`as u8`, `/255.0`, `*255`) | 211 lines |
+| Filters, all `&mut [u8]`, six round-trip through u8 HSL | 20 filters, 793 lines |
+| Rasterizer (brushes, gradients, magic wand) | 1285 lines |
+| Transform / resampling | 1012 lines |
+| Software renderer texture upload | 1154 lines |
+| Export (`ImageBuffer<Rgba<u8>>`) | PNG/TIFF can be 16-bit; JPEG/WebP/GIF/TGA/BMP cannot |
+| Project format | needs AUR v3 plus v2 migration |
+
+**The cost that decides it:** the compositor is memory-bandwidth bound - 8 threads on 12
+logical cores bought only 2.3x, not 8x. Doubling bytes per pixel therefore puts opaque
+general compositing at roughly 45-55 MPix/s, below the T4=60 gate shipped in v2.6.0, and
+the u8 integer fast path loses half its SIMD lanes. Precision would be bought with the
+throughput just earned.
+
+**The migration trick that keeps the oracle:** storing an 8-bit value as `v * 257` puts it
+exactly on the 16-bit lattice, and because `65535 = 255 x 257`, `(257v)/65535` and `v/255`
+are the same real value - so the f32 blend maths is bit-identical, and `(v16 + 128) / 257`
+recovers the original byte exactly. The existing oracle can therefore run in 16-bit mode
+and be compared byte-for-byte after downconversion. Only the integer fast path needs a
+tolerance of +-1 LSB or a rewrite. Nothing gets weakened to accommodate the change.
+
+The staged plan continues:
 
 1. Introduce `PixelFormat` on `Document` (`Srgb8`, `Linear16`) and a `LayerBuffer`
    abstraction that only the compositor dereferences, keeping `Vec<u8>` behind it.

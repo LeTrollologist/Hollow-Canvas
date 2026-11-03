@@ -1187,7 +1187,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
             } else if tool == ToolType::Fill {
                 if let Some(layer) = app.state.document.active_layer() {
-                    app.before_stroke_pixels = layer.pixels.clone();
+                    app.before_stroke_pixels = layer.as_srgb8().to_vec();
                     app.active_snapshot_taken = true;
                 }
                 let sel = app.state.selection.as_ref();
@@ -1204,7 +1204,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
             } else if tool == ToolType::Gradient {
                 if let Some(layer) = app.state.document.active_layer() {
-                    app.before_stroke_pixels = layer.pixels.clone();
+                    app.before_stroke_pixels = layer.as_srgb8().to_vec();
                     app.active_snapshot_taken = true;
                 }
                 app.state.drag_start_canvas_pos = Some(canvas_pos);
@@ -1283,7 +1283,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 if pts_len >= 2 && app.state.polygon_points[0].distance(canvas_pos) < 15.0 {
                     // Close polygon
                     if let Some(layer) = app.state.document.active_layer() {
-                        app.before_stroke_pixels = layer.pixels.clone();
+                        app.before_stroke_pixels = layer.as_srgb8().to_vec();
                         app.active_snapshot_taken = true;
                     }
                     let pts = app.state.polygon_points.clone();
@@ -1315,7 +1315,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             } else if tool.is_shape_tool() || tool == ToolType::Marquee || tool == ToolType::Crop {
                 if tool.is_shape_tool() {
                     if let Some(layer) = app.state.document.active_layer() {
-                        app.before_stroke_pixels = layer.pixels.clone();
+                        app.before_stroke_pixels = layer.as_srgb8().to_vec();
                         app.active_snapshot_taken = true;
                     }
                 }
@@ -1337,7 +1337,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     }
                 } else {
                     if let Some(layer) = app.state.document.active_layer() {
-                        app.before_stroke_pixels = layer.pixels.clone();
+                        app.before_stroke_pixels = layer.as_srgb8().to_vec();
                         app.active_snapshot_taken = true;
                     }
                     let point = BrushPoint::new(canvas_pos, 1.0);
@@ -1538,7 +1538,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 if app.stroke_dirty {
                     if let Some(layer) = app.state.document.active_layer() {
                         let before = std::mem::take(&mut app.before_stroke_pixels);
-                        let after = layer.pixels.clone();
+                        let after = layer.as_srgb8().to_vec();
                         let cmd = Box::new(LayerPixelsSnapshotCommand {
                             layer_id: layer.id,
                             description: app.state.brush.tool.label(),
@@ -1773,13 +1773,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     let h = app.state.document.height;
                     let sel = app.state.selection.clone();
                     if let Some(layer) = app.state.document.active_layer_mut() {
-                        let before = layer.pixels.clone();
-                        aurelia_core::filter::filter_invert(&mut layer.pixels, w, h, sel.as_ref());
+                        let before = layer.as_srgb8().to_vec();
+                        aurelia_core::filter::filter_invert(layer.as_srgb8_mut(), w, h, sel.as_ref());
                         let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                             layer_id: layer.id,
                             description: "Invert Colors",
                             before_pixels: before,
-                            after_pixels: layer.pixels.clone(),
+                            after_pixels: layer.as_srgb8().to_vec(),
                         });
                         app.state.history.push(cmd);
                         app.state.set_status("Inverted Colors");
@@ -2346,7 +2346,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     doc.is_transparent = true;
                     if let Some(layer) = doc.active_layer_mut() {
                         layer.name = path.file_name().and_then(|n| n.to_str()).unwrap_or("Layer 1").to_string();
-                        layer.pixels = rgba.into_raw();
+                        layer.set_pixels(rgba.into_raw());
                     }
                     app.state.document = doc;
                     app.state.history.clear();
@@ -2501,7 +2501,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     doc.is_transparent = true;
                     if let Some(layer) = doc.active_layer_mut() {
                         layer.name = initial_file.file_name().and_then(|n| n.to_str()).unwrap_or("Layer 1").to_string();
-                        layer.pixels = rgba.into_raw();
+                        layer.set_pixels(rgba.into_raw());
                     }
                     let mut s = AppState::from_document(doc);
                     s.set_status(format!("Opened image: {} ({} × {} px)", initial_file.display(), w, h));

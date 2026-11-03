@@ -195,8 +195,10 @@ pub struct Layer {
     pub blend_mode: BlendMode,
     pub offset_x: i32,
     pub offset_y: i32,
+    /// RGBA8, len = width * height * 4. Private: reach it through `as_srgb8()` or
+    /// `as_srgb8_mut()`, so the representation can change without touching callers.
     #[serde(skip)]
-    pub pixels: Vec<u8>, // RGBA8, len = width * height * 4
+    pixels: Vec<u8>,
     /// Optional layer mask applied when compositing.
     #[serde(default)]
     pub mask: Option<LayerMask>,
@@ -260,6 +262,37 @@ impl LayerMask {
 }
 
 impl Layer {
+    /// The layer's pixels: RGBA8, row-major, `width * height * 4` bytes.
+    ///
+    /// The buffer is an implementation detail. Everything outside this module reads and
+    /// writes pixels through here, so the storage can gain a 16-bit variant later without
+    /// every caller changing.
+    #[inline]
+    pub fn as_srgb8(&self) -> &[u8] {
+        &self.pixels
+    }
+
+    /// Mutable pixel access for writing channels in place.
+    #[inline]
+    pub fn as_srgb8_mut(&mut self) -> &mut [u8] {
+        &mut self.pixels
+    }
+
+    /// Mutable access to the backing store, for changes that alter its length.
+    ///
+    /// Only `resize`, `truncate`, `extend_from_slice`-style operations should use this;
+    /// anything that just writes pixels belongs in `as_srgb8_mut()`.
+    #[inline]
+    pub fn pixels_vec_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.pixels
+    }
+
+    /// Replaces the whole pixel buffer.
+    #[inline]
+    pub fn set_pixels(&mut self, pixels: Vec<u8>) {
+        self.pixels = pixels;
+    }
+
     pub fn new(id: LayerId, name: impl Into<String>, width: u32, height: u32) -> Self {
         let size = (width as usize) * (height as usize) * 4;
         Self {

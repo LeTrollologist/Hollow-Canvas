@@ -94,15 +94,15 @@ impl AnimationFrame {
                         continue;
                     }
                     let src_idx = src_row + (src_x as u32 * 4) as usize;
-                    if src_idx + 3 >= layer.pixels.len() || dst_idx + 3 >= out.len() {
+                    if src_idx + 3 >= layer.as_srgb8().len() || dst_idx + 3 >= out.len() {
                         continue;
                     }
 
                     let src = [
-                        layer.pixels[src_idx],
-                        layer.pixels[src_idx + 1],
-                        layer.pixels[src_idx + 2],
-                        layer.pixels[src_idx + 3],
+                        layer.as_srgb8()[src_idx],
+                        layer.as_srgb8()[src_idx + 1],
+                        layer.as_srgb8()[src_idx + 2],
+                        layer.as_srgb8()[src_idx + 3],
                     ];
                     let dst = [out[dst_idx], out[dst_idx + 1], out[dst_idx + 2], out[dst_idx + 3]];
                     let blended = layer.blend_mode.composite_pixel(dst, src, layer_alpha);

@@ -292,7 +292,7 @@ mod tests {
         let id2 = doc.add_layer(Some("Clipped Layer".to_string()));
         if let Some(l2) = doc.get_layer_mut(id2) {
             l2.clipping_mask = true;
-            l2.pixels.chunks_exact_mut(4).for_each(|px| px.copy_from_slice(&[0, 0, 255, 255]));
+            l2.as_srgb8_mut().chunks_exact_mut(4).for_each(|px| px.copy_from_slice(&[0, 0, 255, 255]));
         }
 
         let flat = doc.composite_layers(false);
@@ -520,7 +520,7 @@ mod tests {
             for y in 10..30 {
                 for x in 10..30 {
                     let idx = (y * 50 + x) * 4;
-                    layer.pixels[idx..idx + 4].copy_from_slice(&red);
+                    layer.as_srgb8_mut()[idx..idx + 4].copy_from_slice(&red);
                 }
             }
         }
@@ -544,7 +544,7 @@ mod tests {
         // Pixel at (33, 20) should now have smudged red paint
         if let Some(layer) = doc.active_layer() {
             let idx = (20 * 50 + 33) * 4;
-            assert!(layer.pixels[idx] > 0, "Smudge should push red pixels to (33, 20)");
+            assert!(layer.as_srgb8()[idx] > 0, "Smudge should push red pixels to (33, 20)");
         }
     }
 
@@ -599,10 +599,10 @@ mod tests {
         if let Some(layer) = doc.active_layer() {
             // Check that outer perimeter pixel has higher alpha density than center
             let center_idx = (25 * 50 + 25) * 4 + 3;
-            let center_alpha = layer.pixels[center_idx];
+            let center_alpha = layer.as_srgb8()[center_idx];
 
             let edge_idx = (25 * 50 + 33) * 4 + 3;
-            let edge_alpha = layer.pixels[edge_idx];
+            let edge_alpha = layer.as_srgb8()[edge_idx];
 
             assert!(edge_alpha > 0, "Edge pixel should have paint");
             assert!(center_alpha > 0, "Center pixel should have paint");
@@ -643,10 +643,10 @@ mod tests {
     fn test_animation_frame_compositing() {
         let mut frame = crate::animation::AnimationFrame::new(1, "Frame 1", 32, 32);
         // Paint red pixel on base layer
-        frame.layers[0].pixels[0] = 255;
-        frame.layers[0].pixels[1] = 0;
-        frame.layers[0].pixels[2] = 0;
-        frame.layers[0].pixels[3] = 255;
+        frame.layers[0].as_srgb8_mut()[0] = 255;
+        frame.layers[0].as_srgb8_mut()[1] = 0;
+        frame.layers[0].as_srgb8_mut()[2] = 0;
+        frame.layers[0].as_srgb8_mut()[3] = 255;
 
         let comp = frame.composite_layers(32, 32, false, 0);
         assert_eq!(comp[0], 255);
@@ -910,7 +910,7 @@ mod tests {
             assert!(updated);
 
             let layer_after = doc.get_layer(text_layer_id).unwrap();
-            let has_non_zero_pixels = layer_after.pixels.iter().any(|&p| p > 0);
+            let has_non_zero_pixels = layer_after.as_srgb8().iter().any(|&p| p > 0);
             assert!(has_non_zero_pixels);
 
             // 3. Duplicate Text Layer preserves Text configuration
@@ -926,7 +926,7 @@ mod tests {
             assert!(!rasterized_layer.is_text());
             assert!(rasterized_layer.text.is_none());
             // Pixels must remain preserved
-            assert!(rasterized_layer.pixels.iter().any(|&p| p > 0));
+            assert!(rasterized_layer.as_srgb8().iter().any(|&p| p > 0));
         }
     }
 
@@ -1115,7 +1115,7 @@ mod tests {
         let mut doc = Document::new(8, 8);
         let id = doc.active_layer_id;
         if let Some(layer) = doc.active_layer_mut() {
-            for px in layer.pixels.chunks_exact_mut(4) {
+            for px in layer.as_srgb8_mut().chunks_exact_mut(4) {
                 px.copy_from_slice(&[255, 255, 255, 255]);
             }
         }
@@ -1141,7 +1141,7 @@ mod tests {
         let mut doc = Document::new(4, 4);
         let id = doc.active_layer_id;
         if let Some(layer) = doc.active_layer_mut() {
-            for px in layer.pixels.chunks_exact_mut(4) {
+            for px in layer.as_srgb8_mut().chunks_exact_mut(4) {
                 px.copy_from_slice(&[255, 0, 0, 255]);
             }
         }
@@ -1225,7 +1225,7 @@ mod tests {
                 && layer.offset_x == 0
                 && layer.offset_y == 0
                 && prev_layer.is_none()
-                && layer.pixels.len() >= total_bytes
+                && layer.as_srgb8().len() >= total_bytes
             {
                 let alpha_mul = (eff_opacity.clamp(0.0, 1.0) * 255.0).round() as u32;
                 let mask = layer.mask.as_ref().filter(|m| {
@@ -1233,7 +1233,7 @@ mod tests {
                 });
                 for (i, (dst, src)) in out[..total_bytes]
                     .chunks_exact_mut(4)
-                    .zip(layer.pixels[..total_bytes].chunks_exact(4))
+                    .zip(layer.as_srgb8()[..total_bytes].chunks_exact(4))
                     .enumerate()
                 {
                     let mut sa = (src[3] as u32 * alpha_mul) / 255;
@@ -1326,7 +1326,7 @@ mod tests {
 
         // Base layer: opaque noise so every blend mode has something to work with.
         if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == base) {
-            for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+            for (i, px) in layer.as_srgb8_mut().chunks_exact_mut(4).enumerate() {
                 px[0] = (i * 7 % 251) as u8;
                 px[1] = (i * 13 % 241) as u8;
                 px[2] = (i * 29 % 233) as u8;
@@ -1340,7 +1340,7 @@ mod tests {
             layer.offset_x = offset.0;
             layer.offset_y = offset.1;
             layer.opacity = 0.8;
-            for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+            for (i, px) in layer.as_srgb8_mut().chunks_exact_mut(4).enumerate() {
                 let x = (i as u32) % W;
                 let y = (i as u32) / W;
                 let covered = coverage >= 1.0
@@ -1370,8 +1370,8 @@ mod tests {
             if let Some(layer) = doc.layers.get_mut(1) {
                 match base_case {
                     1 => {
-                        let keep = layer.pixels.len() / 2;
-                        layer.pixels.truncate(keep);
+                        let keep = layer.as_srgb8().len() / 2;
+                        layer.pixels_vec_mut().truncate(keep);
                     }
                     2 => {
                         layer.width = W + 5;
@@ -1387,7 +1387,7 @@ mod tests {
             if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == clip) {
                 layer.clipping_mask = true;
                 layer.opacity = 0.7;
-                for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+                for (i, px) in layer.as_srgb8_mut().chunks_exact_mut(4).enumerate() {
                     let x = (i as u32) % W;
                     px[0] = 30;
                     px[1] = (x * 20) as u8;
@@ -1466,7 +1466,7 @@ mod tests {
         let mut doc = Document::new(width, height);
         let base = doc.active_layer_id;
         if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == base) {
-            for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+            for (i, px) in layer.as_srgb8_mut().chunks_exact_mut(4).enumerate() {
                 px[0] = (i * 7 % 251) as u8;
                 px[1] = (i * 13 % 241) as u8;
                 px[2] = (i * 29 % 233) as u8;
@@ -1480,7 +1480,7 @@ mod tests {
             layer.offset_x = 7;
             layer.offset_y = -3;
             layer.opacity = 0.75;
-            for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+            for (i, px) in layer.as_srgb8_mut().chunks_exact_mut(4).enumerate() {
                 let x = (i as u32) % width;
                 let y = (i as u32) / width;
                 px[0] = (200u32.wrapping_sub(x * 5)) as u8;
@@ -1505,7 +1505,7 @@ mod tests {
             layer.offset_x = 0;
             layer.offset_y = 2;
             layer.opacity = 0.6;
-            for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+            for (i, px) in layer.as_srgb8_mut().chunks_exact_mut(4).enumerate() {
                 let x = (i as u32) % width;
                 px[0] = 30;
                 px[1] = (x * 20) as u8;

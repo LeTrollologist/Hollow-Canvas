@@ -960,7 +960,7 @@ impl AppState {
     /// Backs up the active layer's pixels before opening a filter dialog
     pub fn begin_filter_modal(&mut self, modal: ActiveFilterModal) {
         if let Some(layer) = self.document.active_layer() {
-            self.filter_original_pixels = Some(layer.pixels.clone());
+            self.filter_original_pixels = Some(layer.as_srgb8().to_vec());
             self.active_filter_modal = modal;
             self.filter_preview_active = true;
         }
@@ -970,7 +970,7 @@ impl AppState {
     pub fn cancel_filter_modal(&mut self) {
         if let Some(orig) = self.filter_original_pixels.take() {
             if let Some(layer) = self.document.active_layer_mut() {
-                layer.pixels = orig;
+                layer.set_pixels(orig);
             }
         }
         self.active_filter_modal = ActiveFilterModal::None;
@@ -980,12 +980,12 @@ impl AppState {
     pub fn apply_filter_modal(&mut self, filter_name: &'static str) {
         if let Some(before) = self.filter_original_pixels.take() {
             if let Some(layer) = self.document.active_layer() {
-                if before != layer.pixels {
+                if before != layer.as_srgb8() {
                     let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                         layer_id: layer.id,
                         description: filter_name,
                         before_pixels: before,
-                        after_pixels: layer.pixels.clone(),
+                        after_pixels: layer.as_srgb8().to_vec(),
                     });
                     self.history.push(cmd);
                     self.set_status(format!("Applied {}", filter_name));
@@ -1012,7 +1012,7 @@ impl AppState {
                     for x in 0..doc_w {
                         if sel.is_selected(x, y) {
                             let idx = (y * doc_w + x) as usize * 4;
-                            if layer.pixels[idx + 3] > 0 {
+                            if layer.as_srgb8()[idx + 3] > 0 {
                                 min_x = min_x.min(x);
                                 max_x = max_x.max(x);
                                 min_y = min_y.min(y);
@@ -1025,7 +1025,7 @@ impl AppState {
                 for y in 0..doc_h {
                     for x in 0..doc_w {
                         let idx = (y * doc_w + x) as usize * 4;
-                        if layer.pixels[idx + 3] > 0 {
+                        if layer.as_srgb8()[idx + 3] > 0 {
                             min_x = min_x.min(x);
                             max_x = max_x.max(x);
                             min_y = min_y.min(y);
@@ -1056,7 +1056,7 @@ impl AppState {
                     if should_extract {
                         let src_idx = (sy * doc_w + sx) as usize * 4;
                         let dst_idx = (py * patch_w + px) as usize * 4;
-                        patch[dst_idx..dst_idx + 4].copy_from_slice(&layer.pixels[src_idx..src_idx + 4]);
+                        patch[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8()[src_idx..src_idx + 4]);
                     }
                 }
             }
@@ -1092,7 +1092,7 @@ impl AppState {
             self.transform_session = TransformSession {
                 is_active: true,
                 mode: TransformMode::Affine,
-                original_layer_pixels: layer.pixels.clone(),
+                original_layer_pixels: layer.as_srgb8().to_vec(),
                 extracted_patch: patch,
                 patch_w,
                 patch_h,
@@ -1121,10 +1121,10 @@ impl AppState {
                         let should_clear = sel_opt.map_or(true, |s| s.is_selected(sx, sy));
                         if should_clear {
                             let idx = (sy * doc_w + sx) as usize * 4;
-                            layer_mut.pixels[idx] = 0;
-                            layer_mut.pixels[idx + 1] = 0;
-                            layer_mut.pixels[idx + 2] = 0;
-                            layer_mut.pixels[idx + 3] = 0;
+                            layer_mut.as_srgb8_mut()[idx] = 0;
+                            layer_mut.as_srgb8_mut()[idx + 1] = 0;
+                            layer_mut.as_srgb8_mut()[idx + 2] = 0;
+                            layer_mut.as_srgb8_mut()[idx + 3] = 0;
                         }
                     }
                 }
@@ -1158,7 +1158,7 @@ impl AppState {
 
         if let Some(layer) = self.document.active_layer_mut() {
             // Start from original pixels with source patch cleared
-            layer.pixels.copy_from_slice(orig);
+            layer.as_srgb8_mut().copy_from_slice(orig);
             for py in 0..ph {
                 let sy = origin.y as u32 + py;
                 for px in 0..pw {
@@ -1167,10 +1167,10 @@ impl AppState {
                         let should_clear = sel_opt.map_or(true, |s| s.is_selected(sx, sy));
                         if should_clear {
                             let idx = (sy * doc_w + sx) as usize * 4;
-                            layer.pixels[idx] = 0;
-                            layer.pixels[idx + 1] = 0;
-                            layer.pixels[idx + 2] = 0;
-                            layer.pixels[idx + 3] = 0;
+                            layer.as_srgb8_mut()[idx] = 0;
+                            layer.as_srgb8_mut()[idx + 1] = 0;
+                            layer.as_srgb8_mut()[idx + 2] = 0;
+                            layer.as_srgb8_mut()[idx + 3] = 0;
                         }
                     }
                 }
@@ -1185,7 +1185,7 @@ impl AppState {
                         origin,
                         &transform,
                         interp,
-                        &mut layer.pixels,
+                        layer.as_srgb8_mut(),
                         doc_w,
                         doc_h,
                     );
@@ -1197,7 +1197,7 @@ impl AppState {
                         ph,
                         &quad,
                         interp,
-                        &mut layer.pixels,
+                        layer.as_srgb8_mut(),
                         doc_w,
                         doc_h,
                     );
@@ -1209,7 +1209,7 @@ impl AppState {
                         ph,
                         mesh_grid,
                         interp,
-                        &mut layer.pixels,
+                        layer.as_srgb8_mut(),
                         doc_w,
                         doc_h,
                     );
@@ -1222,7 +1222,7 @@ impl AppState {
                         origin,
                         tps,
                         interp,
-                        &mut layer.pixels,
+                        layer.as_srgb8_mut(),
                         doc_w,
                         doc_h,
                     );
@@ -1321,7 +1321,7 @@ impl AppState {
         self.update_transform_preview();
         if let Some(layer) = self.document.active_layer() {
             let before = self.transform_session.original_layer_pixels.clone();
-            let after = layer.pixels.clone();
+            let after = layer.as_srgb8().to_vec();
             if before != after {
                 let mode_name = match self.transform_session.mode {
                     TransformMode::Affine => "Free Transform",
@@ -1350,7 +1350,7 @@ impl AppState {
             return;
         }
         if let Some(layer) = self.document.active_layer_mut() {
-            layer.pixels = std::mem::take(&mut self.transform_session.original_layer_pixels);
+            layer.set_pixels(std::mem::take(&mut self.transform_session.original_layer_pixels));
         }
         self.transform_session.is_active = false;
         self.transform_session.extracted_patch.clear();
@@ -1384,9 +1384,9 @@ impl AppState {
             let doc_h = self.document.height;
             let color = self.brush.primary_color.to_rgba8();
             if let Some(layer) = self.document.active_layer_mut() {
-                let before = layer.pixels.clone();
-                mask.fill_selection(&mut layer.pixels, doc_w, doc_h, color);
-                let after = layer.pixels.clone();
+                let before = layer.as_srgb8().to_vec();
+                mask.fill_selection(layer.as_srgb8_mut(), doc_w, doc_h, color);
+                let after = layer.as_srgb8().to_vec();
                 if before != after {
                     let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                         layer_id: layer.id,
@@ -1407,9 +1407,9 @@ impl AppState {
             let doc_h = self.document.height;
             let color = [0, 0, 0, 0];
             if let Some(layer) = self.document.active_layer_mut() {
-                let before = layer.pixels.clone();
-                mask.fill_selection(&mut layer.pixels, doc_w, doc_h, color);
-                let after = layer.pixels.clone();
+                let before = layer.as_srgb8().to_vec();
+                mask.fill_selection(layer.as_srgb8_mut(), doc_w, doc_h, color);
+                let after = layer.as_srgb8().to_vec();
                 if before != after {
                     let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                         layer_id: layer.id,
@@ -1436,9 +1436,9 @@ impl AppState {
                 _ => StrokePosition::Center,
             };
             if let Some(layer) = self.document.active_layer_mut() {
-                let before = layer.pixels.clone();
-                mask.stroke_selection(&mut layer.pixels, doc_w, doc_h, color, width, pos);
-                let after = layer.pixels.clone();
+                let before = layer.as_srgb8().to_vec();
+                mask.stroke_selection(layer.as_srgb8_mut(), doc_w, doc_h, color, width, pos);
+                let after = layer.as_srgb8().to_vec();
                 if before != after {
                     let cmd = Box::new(aurelia_core::history::LayerPixelsSnapshotCommand {
                         layer_id: layer.id,

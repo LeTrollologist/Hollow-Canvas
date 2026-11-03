@@ -30,16 +30,16 @@ impl Command for LayerPixelsSnapshotCommand {
 
     fn undo(&mut self, doc: &mut Document) {
         if let Some(layer) = doc.get_layer_mut(self.layer_id) {
-            if layer.pixels.len() == self.before_pixels.len() {
-                layer.pixels.copy_from_slice(&self.before_pixels);
+            if layer.as_srgb8().len() == self.before_pixels.len() {
+                layer.as_srgb8_mut().copy_from_slice(&self.before_pixels);
             }
         }
     }
 
     fn redo(&mut self, doc: &mut Document) {
         if let Some(layer) = doc.get_layer_mut(self.layer_id) {
-            if layer.pixels.len() == self.after_pixels.len() {
-                layer.pixels.copy_from_slice(&self.after_pixels);
+            if layer.as_srgb8().len() == self.after_pixels.len() {
+                layer.as_srgb8_mut().copy_from_slice(&self.after_pixels);
             }
         }
     }
@@ -129,7 +129,7 @@ impl Command for FullDocumentSnapshotCommand {
     }
 
     fn cost(&self) -> usize {
-        let sum = |layers: &[Layer]| -> usize { layers.iter().map(|l| l.pixels.len()).sum() };
+        let sum = |layers: &[Layer]| -> usize { layers.iter().map(|l| l.as_srgb8().len()).sum() };
         sum(&self.before_layers) + sum(&self.after_layers)
     }
 

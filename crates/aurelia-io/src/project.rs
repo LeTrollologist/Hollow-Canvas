@@ -174,7 +174,7 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
         } else {
             // Compress RGBA pixel stream using Deflate
             let mut encoder = DeflateEncoder::new(Vec::new(), Compression::fast());
-            encoder.write_all(&layer.pixels)?;
+            encoder.write_all(layer.as_srgb8())?;
             let compressed = encoder.finish()?;
 
             let comp_len = compressed.len() as u32;

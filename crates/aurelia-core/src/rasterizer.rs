@@ -354,18 +354,19 @@ impl StrokeRasterizer {
         let layer_offset = Vec2::new(layer.offset_x as f32, layer.offset_y as f32);
         let alpha_locked = layer.alpha_locked;
 
+        let blend_mode = layer.blend_mode;
         for (i, p) in points.into_iter().enumerate() {
             let local_p = p - layer_offset;
             Self::blend_stamp(
                 doc_w,
                 doc_h,
-                &mut layer.pixels,
+                layer.as_srgb8_mut(),
                 selection,
                 local_p,
                 None,
                 radius,
                 brush,
-                layer.blend_mode,
+                blend_mode,
                 alpha_locked,
                 if brush.eraser_to_background { bg_col } else { Color::TRANSPARENT },
                 i,
@@ -417,19 +418,20 @@ impl StrokeRasterizer {
             let sym_points = symmetry.transform_points(pos, doc_w as f32, doc_h as f32);
             let prev_sym_points = prev_pos.map(|pp| symmetry.transform_points(pp, doc_w as f32, doc_h as f32));
 
+            let blend_mode = layer.blend_mode;
             for (s_idx, sp) in sym_points.into_iter().enumerate() {
                 let prev_sp = prev_sym_points.as_ref().map(|psp| psp[s_idx] - layer_offset);
                 let local_sp = sp - layer_offset;
                 Self::blend_stamp(
                     doc_w,
                     doc_h,
-                    &mut layer.pixels,
+                    layer.as_srgb8_mut(),
                     selection,
                     local_sp,
                     prev_sp,
                     radius,
                     brush,
-                    layer.blend_mode,
+                    blend_mode,
                     alpha_locked,
                     if brush.eraser_to_background { bg_col } else { Color::TRANSPARENT },
                     i.wrapping_add(s_idx * 1000),
@@ -496,19 +498,20 @@ impl StrokeRasterizer {
             let sym_points = symmetry.transform_points(pos, doc_w as f32, doc_h as f32);
             let prev_sym_points = symmetry.transform_points(prev_pos, doc_w as f32, doc_h as f32);
 
+            let blend_mode = layer.blend_mode;
             for (s_idx, sp) in sym_points.into_iter().enumerate() {
                 let prev_sp = Some(prev_sym_points[s_idx] - layer_offset);
                 let local_sp = sp - layer_offset;
                 Self::blend_stamp(
                     doc_w,
                     doc_h,
-                    &mut layer.pixels,
+                    layer.as_srgb8_mut(),
                     selection,
                     local_sp,
                     prev_sp,
                     radius,
                     brush,
-                    layer.blend_mode,
+                    blend_mode,
                     alpha_locked,
                     if brush.eraser_to_background { bg_col } else { Color::TRANSPARENT },
                     i.wrapping_add(s_idx * 1000),
@@ -574,9 +577,9 @@ impl StrokeRasterizer {
                             }
                         }
                         let idx = ((y * doc_w + x) * 4) as usize;
-                        let dst = [layer.pixels[idx], layer.pixels[idx + 1], layer.pixels[idx + 2], layer.pixels[idx + 3]];
+                        let dst = [layer.as_srgb8()[idx], layer.as_srgb8()[idx + 1], layer.as_srgb8()[idx + 2], layer.as_srgb8()[idx + 3]];
                         let blended = layer.blend_mode.composite_pixel(dst, fill_col, brush.opacity);
-                        layer.pixels[idx..idx + 4].copy_from_slice(&blended);
+                        layer.as_srgb8_mut()[idx..idx + 4].copy_from_slice(&blended);
                     }
                 }
             }
@@ -682,9 +685,9 @@ impl StrokeRasterizer {
                         }
 
                         let idx = ((y * doc_w + x) * 4) as usize;
-                        let dst = [layer.pixels[idx], layer.pixels[idx + 1], layer.pixels[idx + 2], layer.pixels[idx + 3]];
+                        let dst = [layer.as_srgb8()[idx], layer.as_srgb8()[idx + 1], layer.as_srgb8()[idx + 2], layer.as_srgb8()[idx + 3]];
                         let blended = layer.blend_mode.composite_pixel(dst, color.to_rgba8(), alpha);
-                        layer.pixels[idx..idx + 4].copy_from_slice(&blended);
+                        layer.as_srgb8_mut()[idx..idx + 4].copy_from_slice(&blended);
                     }
                 }
             }
@@ -722,9 +725,9 @@ impl StrokeRasterizer {
                             }
                         }
                         let idx = ((y * doc_w + x) * 4) as usize;
-                        let dst = [layer.pixels[idx], layer.pixels[idx + 1], layer.pixels[idx + 2], layer.pixels[idx + 3]];
+                        let dst = [layer.as_srgb8()[idx], layer.as_srgb8()[idx + 1], layer.as_srgb8()[idx + 2], layer.as_srgb8()[idx + 3]];
                         let blended = layer.blend_mode.composite_pixel(dst, fill_col, brush.opacity);
-                        layer.pixels[idx..idx + 4].copy_from_slice(&blended);
+                        layer.as_srgb8_mut()[idx..idx + 4].copy_from_slice(&blended);
                     }
                 }
             }
@@ -787,9 +790,9 @@ impl StrokeRasterizer {
 
                 let color = col0.lerp(col1, t);
                 let idx = ((y * doc_w + x) * 4) as usize;
-                let dst = [layer.pixels[idx], layer.pixels[idx + 1], layer.pixels[idx + 2], layer.pixels[idx + 3]];
+                let dst = [layer.as_srgb8()[idx], layer.as_srgb8()[idx + 1], layer.as_srgb8()[idx + 2], layer.as_srgb8()[idx + 3]];
                 let blended = layer.blend_mode.composite_pixel(dst, color.to_rgba8(), brush.opacity);
-                layer.pixels[idx..idx + 4].copy_from_slice(&blended);
+                layer.as_srgb8_mut()[idx..idx + 4].copy_from_slice(&blended);
             }
         }
     }
@@ -811,9 +814,9 @@ impl StrokeRasterizer {
         let source_buffer = if sample_all_layers {
             doc.composite_layers(false)
         } else if let Some(ref_layer) = doc.reference_layer() {
-            ref_layer.pixels.clone()
+            ref_layer.as_srgb8().to_vec()
         } else if let Some(layer) = doc.active_layer() {
-            layer.pixels.clone()
+            layer.as_srgb8().to_vec()
         } else {
             return mask;
         };
@@ -908,7 +911,7 @@ impl StrokeRasterizer {
             return;
         }
 
-        let ref_pixels = doc.reference_layer().map(|l| l.pixels.clone());
+        let ref_pixels = doc.reference_layer().map(|l| l.as_srgb8().to_vec());
 
         let layer = match doc.get_layer_mut(active_id) {
             Some(l) if !l.locked => l,
@@ -916,7 +919,7 @@ impl StrokeRasterizer {
         };
 
         let has_ref = ref_pixels.is_some();
-        let source_buffer = ref_pixels.unwrap_or_else(|| layer.pixels.clone());
+        let source_buffer = ref_pixels.unwrap_or_else(|| layer.as_srgb8().to_vec());
 
         let target_idx = ((start_y * doc_w + start_x) * 4) as usize;
         let target_px = [
@@ -966,7 +969,7 @@ impl StrokeRasterizer {
             ];
 
             if matches_target(current) {
-                layer.pixels[idx..idx + 4].copy_from_slice(&fill_px);
+                layer.as_srgb8_mut()[idx..idx + 4].copy_from_slice(&fill_px);
 
                 if x > 0 {
                     queue.push((x - 1, y));
@@ -1198,7 +1201,7 @@ impl StrokeRasterizer {
         font_ref: &FontArc,
     ) {
         // Clear destination layer buffer to transparent
-        layer.pixels.fill(0);
+        layer.as_srgb8_mut().fill(0);
 
         if config.content.is_empty() || layer.width == 0 || layer.height == 0 {
             return;
@@ -1271,10 +1274,10 @@ impl StrokeRasterizer {
                             }
 
                             // Source over blend on top of existing pixels in this text layer
-                            let dst_r = layer.pixels[idx] as f32 / 255.0;
-                            let dst_g = layer.pixels[idx + 1] as f32 / 255.0;
-                            let dst_b = layer.pixels[idx + 2] as f32 / 255.0;
-                            let dst_a = layer.pixels[idx + 3] as f32 / 255.0;
+                            let dst_r = layer.as_srgb8()[idx] as f32 / 255.0;
+                            let dst_g = layer.as_srgb8()[idx + 1] as f32 / 255.0;
+                            let dst_b = layer.as_srgb8()[idx + 2] as f32 / 255.0;
+                            let dst_a = layer.as_srgb8()[idx + 3] as f32 / 255.0;
 
                             let src_r = cr as f32 / 255.0;
                             let src_g = cg as f32 / 255.0;
@@ -1287,10 +1290,10 @@ impl StrokeRasterizer {
                                 let out_g = (src_g * src_a + dst_g * dst_a * (1.0 - src_a)) / out_a;
                                 let out_b = (src_b * src_a + dst_b * dst_a * (1.0 - src_a)) / out_a;
 
-                                layer.pixels[idx] = (out_r * 255.0).clamp(0.0, 255.0).round() as u8;
-                                layer.pixels[idx + 1] = (out_g * 255.0).clamp(0.0, 255.0).round() as u8;
-                                layer.pixels[idx + 2] = (out_b * 255.0).clamp(0.0, 255.0).round() as u8;
-                                layer.pixels[idx + 3] = (out_a * 255.0).clamp(0.0, 255.0).round() as u8;
+                                layer.as_srgb8_mut()[idx] = (out_r * 255.0).clamp(0.0, 255.0).round() as u8;
+                                layer.as_srgb8_mut()[idx + 1] = (out_g * 255.0).clamp(0.0, 255.0).round() as u8;
+                                layer.as_srgb8_mut()[idx + 2] = (out_b * 255.0).clamp(0.0, 255.0).round() as u8;
+                                layer.as_srgb8_mut()[idx + 3] = (out_a * 255.0).clamp(0.0, 255.0).round() as u8;
                             }
                         }
                     });
@@ -1401,10 +1404,10 @@ impl StrokeRasterizer {
 
                             let idx = ((uy * doc_w + ux) * 4) as usize;
                             let dst = [
-                                layer.pixels[idx],
-                                layer.pixels[idx + 1],
-                                layer.pixels[idx + 2],
-                                layer.pixels[idx + 3],
+                                layer.as_srgb8()[idx],
+                                layer.as_srgb8()[idx + 1],
+                                layer.as_srgb8()[idx + 2],
+                                layer.as_srgb8()[idx + 3],
                             ];
 
                             if alpha_locked && dst[3] == 0 {
@@ -1420,7 +1423,7 @@ impl StrokeRasterizer {
                             if alpha_locked {
                                 blended[3] = dst[3];
                             }
-                            layer.pixels[idx..idx + 4].copy_from_slice(&blended);
+                            layer.as_srgb8_mut()[idx..idx + 4].copy_from_slice(&blended);
 
                             drawn_any = true;
                             if (cx as f32) < overall_min_x { overall_min_x = cx as f32; }
