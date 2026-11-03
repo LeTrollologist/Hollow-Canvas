@@ -2490,4 +2490,93 @@ mod tests {
             assert_eq!(&shrunk[y * 2 * 4..(y + 1) * 2 * 4], &channels[y * 4 * 4..y * 4 * 4 + 2 * 4]);
         }
     }
+
+    /// Baseline 1 and 2: scale_canvas output, nearest and bilinear, captured before any change.
+    ///
+    /// A 4x4 pattern with distinct channel values, so any change to sampling weights, edge
+    /// handling or rounding shows up as different bytes rather than a plausible-looking image.
+    #[test]
+    fn scale_canvas_baselines() {
+        fn fixture() -> Document {
+            let mut doc = Document::new(4, 4);
+            doc.is_transparent = true;
+            let id = doc.active_layer_id;
+            if let Some(layer) = doc.get_layer_mut(id) {
+                for (index, pixel) in layer.as_srgb8_exact_mut().chunks_exact_mut(4).enumerate() {
+                    pixel[0] = (index * 17 + 3) as u8;
+                    pixel[1] = (index * 29 + 11) as u8;
+                    pixel[2] = (index * 41 + 7) as u8;
+                    pixel[3] = 255;
+                }
+            }
+            doc
+        }
+
+        // FNV-1a over the bytes: compact enough to live in a test, sensitive enough that any
+        // change to sampling weights, edge handling or rounding fails it.
+        fn digest(bytes: &[u8]) -> u64 {
+            let mut hash = 0xcbf29ce484222325u64;
+            for &byte in bytes {
+                hash ^= byte as u64;
+                hash = hash.wrapping_mul(0x100000001b3);
+            }
+            hash
+        }
+
+        let mut nearest_shrink = fixture();
+        nearest_shrink.scale_canvas(2, 2, false);
+        let nearest_shrink = nearest_shrink.layers[0].as_srgb8_exact().to_vec();
+
+        let mut nearest_grow = fixture();
+        nearest_grow.scale_canvas(6, 6, false);
+        let nearest_grow = nearest_grow.layers[0].as_srgb8_exact().to_vec();
+
+        let mut bilinear_shrink = fixture();
+        bilinear_shrink.scale_canvas(2, 2, true);
+        let bilinear_shrink = bilinear_shrink.layers[0].as_srgb8_exact().to_vec();
+
+        let mut bilinear_grow = fixture();
+        bilinear_grow.scale_canvas(6, 6, true);
+        let bilinear_grow = bilinear_grow.layers[0].as_srgb8_exact().to_vec();
+
+        assert_eq!(digest(&nearest_shrink), 0x234d98dae72e66a5 as u64, "nearest_shrink changed");
+        assert_eq!(digest(&nearest_grow), 0x7690519e02d9cb6d as u64, "nearest_grow changed");
+        assert_eq!(digest(&bilinear_shrink), 0x1c1fe15e642f245 as u64, "bilinear_shrink changed");
+        assert_eq!(digest(&bilinear_grow), 0x5f05b0942ddd53c4 as u64, "bilinear_grow changed");
+        assert_eq!(nearest_shrink.len(), 16, "nearest_shrink length changed");
+        assert_eq!(nearest_grow.len(), 144, "nearest_grow length changed");
+        assert_eq!(bilinear_shrink.len(), 16, "bilinear_shrink length changed");
+        assert_eq!(bilinear_grow.len(), 144, "bilinear_grow length changed");
+
+    }
+
+    /// Baseline 3: dimensions and storage format when growing and shrinking.
+    #[test]
+    fn scale_canvas_dimensions_and_format_baseline() {
+        use crate::layer::{LayerBuffer, PixelFormat};
+
+        let mut doc = Document::new(4, 4);
+        doc.scale_canvas(7, 3, true);
+        assert_eq!((doc.width, doc.height), (7, 3));
+        assert_eq!((doc.layers[0].width, doc.layers[0].height), (7, 3));
+        assert_eq!(doc.layers[0].as_srgb8_exact().len(), 7 * 3 * 4);
+
+        // Current behaviour on a 16-bit layer, recorded rather than assumed: scale_canvas
+        // writes through an 8-bit buffer, so a 16-bit layer comes back as 8-bit.
+        let mut doc = Document::new(4, 4);
+        let id = doc.active_layer_id;
+        let channels = vec![12345u16; 4 * 4 * 4];
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+        doc.scale_canvas(2, 2, true);
+        // BASELINE, not a desired end state: scale_canvas currently writes through an 8-bit
+        // buffer, so a 16-bit layer comes back as 8-bit and its channels are quantised. This
+        // pins that behaviour so the fix is a visible, deliberate change to this assertion.
+        assert_eq!(
+            doc.get_layer(id).unwrap().format(),
+            PixelFormat::Srgb8,
+            "scale_canvas converted a 16-bit layer"
+        );
+    }
 }
