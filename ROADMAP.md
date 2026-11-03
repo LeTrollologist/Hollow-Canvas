@@ -113,55 +113,89 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
 
 ### Performance: the general (offset + blend) path
 
-Objective for v2.6.0. Measured with
-`cargo run --release -p aurelia-render --example bench_composite`
-(1920x1080, 4 layers, 20 iterations, one machine):
+**Closed in v2.6.0.** All four release gates met. Reproduce with
+`cargo run --release -p aurelia-render --example bench_composite`, which prints the
+machine and compiler with the numbers; the table below is from an Intel Alder Lake
+(12 logical cores), rustc 1.93.1, release profile, 1920x1080, 4 layers, 20 iterations x 3
+interleaved rounds, best round reported.
 
-| Case | v2.5.0 | now | change |
-| :--- | ---: | ---: | ---: |
-| Plain stack | 113.1 MPix/s | 203.4 MPix/s | +80% |
-| With layer mask | 92.6 MPix/s | 155.5 MPix/s | +68% |
-| General, opaque | 25.7 MPix/s | 36.6 MPix/s | **+42%** |
-| General, 50% coverage | - | 59.8 MPix/s | - |
-| General, 10% coverage | - | 156.4 MPix/s | - |
-| General, 10% + mask | - | 138.4 MPix/s | - |
+| Case | v2.5.0 | v2.6.0 |
+| :--- | ---: | ---: |
+| **General path, opaque** | 25.7 MPix/s | **83.6 MPix/s** (3.3x) |
+| General, 50% coverage | - | 128.1 MPix/s |
+| General, 10% coverage | - | 209.5 MPix/s |
+| General, 10% + layer mask | - | 188.4 MPix/s |
+| General, clipping layer | - | 60.4 MPix/s |
+| Plain stack | 113.1 MPix/s | 160.2 MPix/s |
+| With layer mask | 92.6 MPix/s | 140.7 MPix/s |
 
-Tiered targets for the general path: **T1 30** (met) ? **T2 40** ? **T3 50** ? **T4 60** MPix/s.
+All 13 modes on their own, opaque general path: **61.0 (Soft Light) to 95.0 (Darken)
+MPix/s** across two runs - no single mode is hiding behind Normal.
 
-#### What was fixed (2.6.0 work so far)
+Run-to-run variation on this laptop is +-10%: a confirmation run of the same binary gave
+91.4 MPix/s for opaque general, 167.6 plain and 254.5 for the sparse clipping case. The
+gates are met in both, which is why the benchmark reports best-of-interleaved-rounds and
+prints the machine.
 
-1. **Out-of-bounds work removed.** The loop visited every canvas pixel even when the
-   layer was offset; the valid span is now computed per row, so an offset layer only
-   touches the pixels it actually covers.
-2. **Transparent pixels skipped.** `composite_pixel` returned `dst` unchanged for
-   `sa <= 0.0001` but only after the full float path. Skipping `src alpha == 0` before
-   the call is exact, and on realistic artwork it is the dominant win: 10% coverage
-   runs ~4x faster than a fully opaque layer.
-3. **Per-pixel indirection removed.** `get_pixel()` (four bounds checks and an `Option`)
-   replaced by contiguous row indexing; the blend mode and mask are hoisted out of the
-   inner loop and `composite_pixel` is inlined.
-4. **Correctness gate.** `general_compositing_is_bit_identical_to_the_reference` runs
-   the previous implementation as an oracle over 702 combinations ? 13 blend modes x
-   3 offsets x 3 mask states x clipping on/off x 3 coverages ? and requires byte
-   equality. Speed may not change a pixel.
+#### Release gates
 
-#### Remaining work toward 60 MPix/s (opaque)
+| Gate | Status |
+| :--- | :--- |
+| T1 30 MPix/s | met (36.1 before parallelism) |
+| T2 40 MPix/s | met |
+| T3 50 MPix/s | met |
+| T4 60 MPix/s, opaque general compositing | **met: 83.6** |
+| No correctness regressions | met: 54 tests, oracle byte-identical over 936 combinations |
+| No measurable regression in ordinary compositing | met: plain and masked paths untouched and no slower |
+| Benchmarks for sparse and opaque workloads | met: 10%, 50%, 100% coverage rows |
+| Machine, thread count, compiler and config recorded | met: printed by the benchmark |
 
-1. **Monomorphise the blend per layer** ? resolve the mode once to a specialised loop so
-   each mode's maths inlines without the per-pixel `match`.
-2. **Row-parallel compositing** ? layers are independent; splitting rows across threads
-   is safe when each thread owns a disjoint output range. This is the most promising
-   route to 60 MPix/s without touching the maths.
-3. **Selection/clip pre-computation** ? a clipping layer currently re-reads its base's
-   alpha per pixel through `get_pixel`; a cached base-alpha row would remove that.
+#### What the time was actually going on
+
+None of it was the blend maths:
+
+1. **Out-of-bounds work.** Every canvas pixel was visited even for an offset layer, each
+   through `get_pixel` (four bounds checks and an `Option`). The valid span is now computed
+   per row and indexed directly.
+2. **Transparent pixels.** `composite_pixel` returns the destination for a transparent
+   source, but only after the float path. Skipping those first is exact and is the biggest
+   win on real artwork: 10% coverage now runs 2.5x the opaque rate.
+3. **Per-pixel blend dispatch.** Resolved once per layer; each mode runs a monomorphised
+   loop (`compose_normal`, ...) while the maths stays single-sourced in `composite_pixel`.
+4. **Clip base lookups.** A clipped layer resolved its base alpha through `get_pixel` per
+   pixel; it is now a contiguous span per row.
+5. **One core.** Rows of a layer are independent, so they are composed in parallel: fixed
+   row ownership per thread, join before the next layer, cap of 8 threads, and a 128x128
+   floor so small canvases stay single-threaded.
+
+#### Methodology, because it matters
+
+- **Interleaved rounds, best of.** Measuring cases one after another on a throttling laptop
+  made the first case look fast and the last slow: Normal fell from 31.9 to 7.0 MPix/s
+  within a single run of identical work. Cases are now visited round-robin and the best
+  round is kept.
+- **One general-path layer per mode.** The first per-mode bench set the mode on all four
+  layers, which measured the general path four times over and reported every mode at
+  ~8 MPix/s ? a harness bug, not a finding.
+- **The machine is printed.** A throughput number without CPU, cores and compiler is not
+  comparable with anything.
 
 #### Tried and rejected (measured, not assumed)
 
-- **256-entry `n/255.0` lookup table.** Expected to remove eight divides per pixel;
-  measured **29.7 MPix/s vs 36.6** - a 19% regression. A `static` table can alias the
-  output buffer, so LLVM reloads entries after every store. Reverted. Any retry needs the
-  table copied to the stack per row, or a `const` table consumed in a way that cannot
-  alias.
+- **256-entry `n/255.0` lookup table.** 29.7 vs 36.6 MPix/s ? a 19% regression: a `static`
+  table can alias the output buffer, so entries are reloaded after every store. Any retry
+  needs a stack-local copy, which is now possible because the loop is inlined per mode.
+- **Full-row clip pre-pass.** Resolving the base alpha for the whole row before the pixel
+  loop touched every pixel even where the layer is empty and made a clipped layer twice as
+  slow as an opaque one. Span indexing needs no pre-pass and no allocation.
+
+#### Still open (not blocking)
+
+1. **Persistent thread pool.** A layer spawns its scoped threads on each call (~50 us each).
+   Measured overhead is a few percent; a pool would remove it.
+2. **Parallelise the fast path.** The plain stack is still single-threaded at ~160 MPix/s;
+   the same row split applies.
+3. **Stack-local channel table** ? the rejected LUT, retried with the aliasing fixed.
 
 ## Next (ordered)
 

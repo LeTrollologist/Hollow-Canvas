@@ -717,7 +717,7 @@ impl Document {
             // hot path while the maths stays single-sourced in `composite_pixel`.
             macro_rules! run {
                 ($compose:path) => {
-                    compose_general(out, layer, w, h, eff_opacity, mask, base, $compose)
+                    compose_layer(out, layer, w, h, eff_opacity, mask, base, $compose)
                 };
             }
             match layer.blend_mode {
@@ -759,9 +759,34 @@ struct ClipBase<'a> {
 /// The loop body performs exactly the operations the reference implementation does, in
 /// the same order - only the dead work is removed. See
 /// `tests::general_compositing_is_bit_identical_to_the_reference`.
+/// Rows below this many pixels are composed on the calling thread: a scoped thread costs
+/// tens of microseconds, which is more than a small layer takes to composite.
+const PARALLEL_MIN_PIXELS: u32 = 128 * 128;
+
+/// Upper bound on the threads a single layer is split across. More threads than this stop
+/// helping (the work is memory-bound) and only add scheduling noise.
+const PARALLEL_MAX_THREADS: usize = 8;
+
+/// How many threads a layer of `pixels` pixels should be split across.
+pub(crate) fn parallel_degree(pixels: u32) -> usize {
+    if pixels < PARALLEL_MIN_PIXELS {
+        return 1;
+    }
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(PARALLEL_MAX_THREADS)
+        .max(1)
+}
+
+/// Composites one layer, splitting its rows across threads when it is worth doing.
+///
+/// Compositing order across layers is untouched: this is called once per layer, in order,
+/// and joins before returning. Within the layer each thread owns a fixed, contiguous band
+/// of rows and writes only to its own slice of `out`, so the result cannot depend on
+/// scheduling - see `tests::parallel_compositing_matches_the_serial_reference`.
 #[allow(clippy::too_many_arguments)]
-#[inline]
-fn compose_general<F>(
+fn compose_layer<F>(
     out: &mut [u8],
     layer: &Layer,
     canvas_w: u32,
@@ -770,6 +795,73 @@ fn compose_general<F>(
     mask: Option<&[u8]>,
     base: Option<ClipBase<'_>>,
     compose: F,
+) where
+    F: Fn([u8; 4], [u8; 4], f32) -> [u8; 4] + Sync,
+{
+    let threads = parallel_degree(canvas_w.saturating_mul(canvas_h));
+    if threads <= 1 {
+        compose_rows(
+            out,
+            0,
+            canvas_h,
+            layer,
+            canvas_w,
+            canvas_h,
+            layer_opacity,
+            mask,
+            base,
+            &compose,
+        );
+        return;
+    }
+
+    let bytes_per_row = canvas_w as usize * 4;
+    let rows_per_thread = canvas_h.div_ceil(threads as u32);
+    let compose = &compose;
+    std::thread::scope(|scope| {
+        for (index, slice) in out
+            .chunks_mut(rows_per_thread as usize * bytes_per_row)
+            .enumerate()
+        {
+            let y_start = index as u32 * rows_per_thread;
+            let y_end = y_start + (slice.len() / bytes_per_row) as u32;
+            scope.spawn(move || {
+                compose_rows(
+                    slice,
+                    y_start,
+                    y_end,
+                    layer,
+                    canvas_w,
+                    canvas_h,
+                    layer_opacity,
+                    mask,
+                    base,
+                    compose,
+                );
+            });
+        }
+    });
+}
+
+/// Composites rows `y_start..y_end` of one layer into `out`.
+///
+/// `out` holds only those rows (`(y_end - y_start) * canvas_w * 4` bytes); every other
+/// argument is shared and read-only. The loop body performs exactly the operations the
+/// reference implementation does, in the same order - only dead work is removed. See
+/// `tests::general_compositing_is_bit_identical_to_the_reference`.
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn compose_rows<F>(
+    out: &mut [u8],
+    y_start: u32,
+    y_end: u32,
+    layer: &Layer,
+    canvas_w: u32,
+    canvas_h: u32,
+    layer_opacity: f32,
+    mask: Option<&[u8]>,
+    base: Option<ClipBase<'_>>,
+    compose: &F,
 ) where
     F: Fn([u8; 4], [u8; 4], f32) -> [u8; 4],
 {
@@ -791,13 +883,13 @@ fn compose_general<F>(
     let src_lim_x = (canvas_w as i32).min(layer.width as i32);
     let src_lim_y = (canvas_h as i32).min(layer.height as i32);
 
-    for y in 0..canvas_h {
+    for y in y_start..y_end {
         let src_y = y as i32 - layer.offset_y;
         if src_y < 0 || src_y >= src_lim_y {
             continue;
         }
         // Resolve the part of this row the layer can actually contribute: contiguous, so
-        // the inner loop reads the buffer directly instead of calling `get_pixel` and
+        // the inner loop indexes the buffer directly instead of calling `get_pixel` and
         // checking bounds for every pixel. A pixel outside it is transparent, which is a
         // no-op, so skipping it is exact.
         let row_start = (src_y as usize) * src_stride * 4;
@@ -808,7 +900,7 @@ fn compose_general<F>(
         if lo >= hi {
             continue;
         }
-        let dst_row = (y as usize) * stride;
+        let dst_row = (y - y_start) as usize * stride;
 
         // The clip base contributes inside a contiguous span of this row too; outside it
         // its alpha is 0, which zeroes this layer's opacity there.

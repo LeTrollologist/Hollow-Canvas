@@ -1,11 +1,11 @@
 [package]
 name = "aurelia-render"
-version = "2.5.0"
+version = "2.6.0"
 edition = "2021"
 description = "Fast software rasterizer and egui primitive compositing engine for Aurelia"
 
 [dependencies]
-aurelia-core = { path = "../aurelia-core", version = "2.5.0" }
+aurelia-core = { path = "../aurelia-core", version = "2.6.0" }
 egui = { workspace = true }
 glam = { workspace = true }
 log = { workspace = true }

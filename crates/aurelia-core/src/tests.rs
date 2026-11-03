@@ -1458,4 +1458,88 @@ mod tests {
             }
         }
     }
+
+    /// A fixture large enough that the compositor actually splits the layer across
+    /// threads, carrying every feature the general path handles: an offset, a mask, a
+    /// clipped layer and a non-trivial blend mode.
+    fn big_fixture(width: u32, height: u32, mode: BlendMode) -> Document {
+        let mut doc = Document::new(width, height);
+        let base = doc.active_layer_id;
+        if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == base) {
+            for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+                px[0] = (i * 7 % 251) as u8;
+                px[1] = (i * 13 % 241) as u8;
+                px[2] = (i * 29 % 233) as u8;
+                px[3] = 255;
+            }
+        }
+
+        let subject = doc.add_layer(Some("subject".into()));
+        if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == subject) {
+            layer.blend_mode = mode;
+            layer.offset_x = 7;
+            layer.offset_y = -3;
+            layer.opacity = 0.75;
+            for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+                let x = (i as u32) % width;
+                let y = (i as u32) / width;
+                px[0] = (200u32.wrapping_sub(x * 5)) as u8;
+                px[1] = (120u32.wrapping_add(y * 11)) as u8;
+                px[2] = (60u32.wrapping_add((x + y) * 9)) as u8;
+                // Ragged coverage, so rows are dense in some places and empty in others.
+                px[3] = if (x * 3 + y * 5) % 11 < 7 { 255 } else { 0 };
+            }
+        }
+        assert!(doc.add_layer_mask(subject, None));
+        if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == subject) {
+            if let Some(mask) = layer.mask.as_mut() {
+                for (i, m) in mask.pixels.iter_mut().enumerate() {
+                    *m = if i % 5 == 0 { 40 } else { 255 };
+                }
+            }
+        }
+
+        let clip = doc.add_layer(Some("clip".into()));
+        if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == clip) {
+            layer.clipping_mask = true;
+            layer.offset_x = 0;
+            layer.offset_y = 2;
+            layer.opacity = 0.6;
+            for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+                let x = (i as u32) % width;
+                px[0] = 30;
+                px[1] = (x * 20) as u8;
+                px[2] = 200;
+                px[3] = if x % 3 == 0 { 255 } else { 90 };
+            }
+        }
+        doc
+    }
+
+    /// Rows are composed on several threads, but the result must be exactly what a single
+    /// thread produces - and the same on every run, because each thread owns a fixed band
+    /// of rows rather than claiming work as it goes.
+    #[test]
+    fn parallel_compositing_matches_the_serial_reference() {
+        const W: u32 = 220;
+        const H: u32 = 170;
+        assert!(
+            crate::document::parallel_degree(W * H) > 1,
+            "fixture must be large enough to take the parallel path"
+        );
+        for &mode in &[
+            BlendMode::Normal,
+            BlendMode::Multiply,
+            BlendMode::SoftLight,
+            BlendMode::Luminosity,
+        ] {
+            let doc = big_fixture(W, H, mode);
+            let got = doc.composite_layers(false);
+            let want = reference_composite(&doc, false);
+            assert_eq!(got, want, "parallel output differs for {mode:?}");
+            for run in 1..4 {
+                assert_eq!(got, doc.composite_layers(false), "{mode:?} differed on run {run}");
+            }
+        }
+    }
 }

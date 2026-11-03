@@ -8,10 +8,10 @@
 #define MyAppExeName "aurelia.exe"
 
 #ifndef MyAppVersion
-  #define MyAppVersion "2.5.0"
+  #define MyAppVersion "2.6.0"
 #endif
 #ifndef MyAppVersionNumeric
-  #define MyAppVersionNumeric "2.5.0.0"
+  #define MyAppVersionNumeric "2.6.0.0"
 #endif
 ; Staging folder produced by the pipeline (contains aurelia.exe + docs).
 #ifndef MySourceDir
