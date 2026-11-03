@@ -3,6 +3,7 @@ use crate::brush::{BrushPoint, BrushSettings, EraserMode, GradientType, ShapeFil
 use crate::color::Color;
 use crate::document::Document;
 use crate::layer::Layer;
+use crate::pixel::Channel;
 use crate::selection::SelectionMask;
 use crate::symmetry::SymmetryConfig;
 use ab_glyph::{point, Font, FontArc, PxScale, ScaleFont};
@@ -58,6 +59,27 @@ pub fn sample_bilinear_rgba(pixels: &[u8], width: u32, height: u32, x: f32, y: f
 pub struct StrokeRasterizer;
 
 impl StrokeRasterizer {
+    /// The destination alpha, kept verbatim when alpha-locked painting is in force.
+    ///
+    /// This is **not** a float round trip. Alpha-lock means the byte does not move, so it is
+    /// copied rather than normalised and converted back - a round trip through `f32` would be
+    /// the very drift the mode exists to prevent.
+    #[inline]
+    fn locked_alpha<C: Channel>(destination_alpha: C) -> C {
+        destination_alpha
+    }
+
+    /// One step of alpha erosion: normalise, scale by `1 - amount`, clamp, convert back.
+    ///
+    /// The multiplication order and the rounding are the eraser's existing behaviour, kept
+    /// exactly as the call sites wrote them. Rearranging this into a mathematically equivalent
+    /// form is not safe: `(a * (1 - x)) * 255` and `a * 255 * (1 - x)` can round differently.
+    #[inline]
+    fn scaled_alpha<C: Channel>(current_alpha: C, amount: f32) -> C {
+        let normalised = current_alpha.to_f32();
+        let next = (normalised * (1.0 - amount)).clamp(0.0, 1.0);
+        C::from_f32(next)
+    }
     fn blend_stamp(
         doc_w: u32,
         doc_h: u32,
@@ -292,20 +314,18 @@ impl StrokeRasterizer {
                                     && (dst[1] as i32 - target[1] as i32).abs() <= tol
                                     && (dst[2] as i32 - target[2] as i32).abs() <= tol;
                                 if matches {
-                                    let current_a = pixels[idx + 3] as f32 / 255.0;
-                                    let new_a = (current_a * (1.0 - alpha)).clamp(0.0, 1.0);
-                                    pixels[idx + 3] = (new_a * 255.0).round() as u8;
+                                    let current = pixels[idx + 3];
+                                    pixels[idx + 3] = Self::scaled_alpha(current, alpha);
                                 }
                             }
                             EraserMode::Soft => {
                                 if bg_color.a <= 0.0 {
-                                    let current_a = pixels[idx + 3] as f32 / 255.0;
-                                    let new_a = (current_a * (1.0 - alpha)).clamp(0.0, 1.0);
-                                    pixels[idx + 3] = (new_a * 255.0).round() as u8;
+                                    let current = pixels[idx + 3];
+                                    pixels[idx + 3] = Self::scaled_alpha(current, alpha);
                                 } else {
                                     let mut blended = blend_mode.composite_pixel(dst, src, alpha);
                                     if alpha_locked {
-                                        blended[3] = dst[3];
+                                        blended[3] = Self::locked_alpha(dst[3]);
                                     }
                                     pixels[idx..idx + 4].copy_from_slice(&blended);
                                 }
@@ -315,13 +335,13 @@ impl StrokeRasterizer {
                         let strength = brush.smudge_strength.clamp(0.1, 1.0);
                         let mut blended = blend_mode.composite_pixel(dst, src, alpha * strength);
                         if alpha_locked {
-                            blended[3] = dst[3];
+                            blended[3] = Self::locked_alpha(dst[3]);
                         }
                         pixels[idx..idx + 4].copy_from_slice(&blended);
                     } else {
                         let mut blended = blend_mode.composite_pixel(dst, src, alpha);
                         if alpha_locked {
-                            blended[3] = dst[3];
+                            blended[3] = Self::locked_alpha(dst[3]);
                         }
                         pixels[idx..idx + 4].copy_from_slice(&blended);
                     }
