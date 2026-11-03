@@ -254,8 +254,45 @@ The staged plan continues:
    the fast path stays 8-bit when the document is `Srgb8`.
 3. Add an ICC profile reference to the project header (v3) and a working-space
    conversion at export; keep sRGB as the only output until colour proofing exists.
-4. 16-bit only after the above is green in tests ? the risk is silent banding in blend
+4. 16-bit only after the above is green in tests - the risk is silent banding in blend
    modes, not the storage.
+
+#### Decision order for the abstraction (GitHub issue #11)
+
+Each row is a gate. Answering a later one while an earlier one is open produces a shape
+chosen by accident rather than by design:
+
+| # | Decision | Required outcome |
+| :--- | :--- | :--- |
+| 1 | Buffer responsibilities | Explicit interface and ownership rules |
+| 2 | Format access | Defined immutable and mutable access patterns |
+| 3 | Computation | Monomorphised format-specific paths |
+| 4 | Conversion | Documented boundaries and scratch ownership |
+| 5 | Persistence | AUR v3 format and migration rules |
+| 6 | Performance | Prototype meets agreed throughput requirements |
+| 7 | Correctness | Existing oracle remains byte-identical after downconversion |
+
+Ordering rationale: conversion boundaries (4) cannot be judged without ownership rules (1);
+persistence (5) follows from the access patterns (2); the performance gate (6) needs a
+prototype that only exists once computation (3) is settled. Correctness (7) is last only
+because it is the final proof - it constrains every earlier row.
+
+#### Draft recommendation: one working format per document
+
+The first 16-bit implementation should use a **document-wide working format**, not
+per-layer formats. Per-layer depths cost a format tag in the UI for every row, a
+definition for every pair of depths inside one file, a conversion at every operation
+boundary instead of at two edges, and filters that silently behave differently depending
+on the layer they run on.
+
+The realistic pressure for mixed formats is **import**: opening a 16-bit PNG into an 8-bit
+document. That is better answered explicitly than by supporting the matrix - either
+**promote the document** to the higher depth on import, or **convert on import** and tell
+the person the source depth was reduced. If a concrete use case later demands per-layer
+depth, the Phase 1 accessors make it an additive change rather than a rewrite.
+
+No implementation starts until the proposal in #11 is written and reviewed. Phase 1 was
+valuable precisely because it removed the obstacle without guessing at the answer.
 
 ### Multi-document
 
