@@ -1378,6 +1378,14 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             Color32::from_rgb(v, v, v)
                         };
                         painter.rect_filled(rect, 0.0, bg_c);
+                        if let Some(tex) = &state.canvas_texture {
+                            painter.image(
+                                tex.id(),
+                                rect,
+                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                Color32::WHITE,
+                            );
+                        }
                         painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0_f32, Color32::from_rgb(95, 82, 45)));
 
                         // Draw live active viewport framing box inside the thumbnail

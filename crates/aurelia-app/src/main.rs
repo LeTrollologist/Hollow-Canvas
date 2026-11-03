@@ -2058,6 +2058,20 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.state.selection.as_ref().map(|s| s.mask.as_slice()),
                 );
 
+                // 2.5 Refresh the Navigator thumbnail from this frame's composite
+                if app.state.show_ui_panels && app.state.show_navigator {
+                    if let Some(img) = app.renderer.navigator_thumbnail(&app.state.document, 320) {
+                        match &mut app.state.canvas_texture {
+                            Some(tex) if tex.size() == img.size => {
+                                tex.set(img, egui::TextureOptions::LINEAR);
+                            }
+                            slot => {
+                                *slot = Some(app.egui_ctx.load_texture("navigator_thumb", img, egui::TextureOptions::LINEAR));
+                            }
+                        }
+                    }
+                }
+
                 // 3. Render toggleable grid with up-to-date state
                 if app.state.show_grid {
                     app.renderer.render_grid(
