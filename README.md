@@ -77,6 +77,9 @@
   <a href="ROADMAP.md">
     <img src="https://img.shields.io/badge/%F0%9F%97%BA%EF%B8%8F_Roadmap-Whats_Next-E4705F?style=for-the-badge&labelColor=1A120B" alt="Roadmap" />
   </a>
+    <a href="https://github.com/LeTrollologist/Aurelia/wiki">
+    <img src="https://img.shields.io/badge/Wiki-Docs,_guides,_%26_specs!-3FA796?style=for-the-badge&labelColor=1A120B" alt="Wiki" />
+  </a>
 </p>
 
 </div>
