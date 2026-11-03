@@ -212,7 +212,7 @@ notice. The reserved per-layer byte in §5.1 means this can be revisited additiv
 
 ---
 
-## 6. Performance prototype (gate 6) — specified, not built
+## 6. Performance prototype (gate 6) - measured
 
 An **isolated** prototype, not an integration:
 
@@ -224,6 +224,13 @@ An **isolated** prototype, not an integration:
   **masked** (extra read per pixel), **clipped** (an extra base-alpha read per row).
 - Method: interleaved rounds, median reported, best shown for spread, machine and compiler
   printed — the v2.6.1 harness, unchanged.
+
+**Target definition (decided):** the 16-bit target is measured against the **generic u8 path**,
+not the mixed production fixture - both formats then use equivalent computation paths, while
+the mixed fixture is dominated by an 8-bit fast path a 16-bit document cannot have.
+
+**Deferred, not rejected:** a 16-bit fast path stays a documented future option; building one
+now would add a second arithmetic model before the general 16-bit path is proven.
 
 Acceptance, against the numbers shipped in v2.6.0/v2.6.1:
 
@@ -263,6 +270,8 @@ The oracle gate is a release requirement, not a nice-to-have:
    `Layer` delegating. **Gate:** all 80 tests and the 702 oracle unchanged.
 2. `Channel` generic compositor; the `u8` instantiation must be benchmark-parity with today.
    **Gate:** prototype numbers from §6 reproduced in the real compositor.
+   **Done for `u8`** - it did not merely reach parity: it beat the old general path by
+   14-57% with the integer fast path untouched. See section 10.
 3. `Linear16` variant + conversion + per-band scratch; compositor dispatches once per layer.
    **Gate:** oracle via downconversion; T4 held.
 4. AUR v3 write/read with the document tag and the reserved per-layer byte. **Gate:** v1/v2
@@ -329,6 +338,40 @@ fixture). That is the `v * 257` lattice gate demonstrated empirically rather tha
    there is no document-wide f32 image, only per-band conversion buffers.
 3. **Step 2 of the migration is worth doing on its own.** The generic model beats the
    current general path on every workload measured, independent of any 16-bit decision.
+
+## 10. Step 2 landed: the generic model is in production for u8
+
+The model from section 3 is now the compositor's general path, `u8` only:
+
+- `BlendMode::composite_working` is the **single** implementation of the blend maths, in
+  working precision. `composite_pixel` is a thin 8-bit storage wrapper over it, and the
+  per-mode `compose_*` functions call it with a literal mode, so dispatch stays out of the
+  pixel loop. One arithmetic implementation, not one per storage width.
+- `Channel` (in `aurelia-core::pixel`) has exactly one implementation, `u8`, with a test
+  asserting the storage <-> working conversions round-trip exactly for all 256 values.
+- `compose_rows` is generic over the channel; `compose_layer` stays 8-bit because the source
+  slice comes from `as_srgb8()`.
+- **The 8-bit integer fast path is untouched** - the diff does not go near it.
+
+Correctness: 55 core tests pass, including the **702-combination byte-identical oracle**
+across 13 blend modes, the 234 clipping corners, parallel-vs-serial and determinism.
+
+Measured on the same harness as the v2.6.1 baseline (medians of 5 interleaved rounds,
+1920x1080, 4 layers):
+
+| Workload | v2.6.1 | now | change |
+| :--- | ---: | ---: | ---: |
+| General, opaque | 79.8 | **91.3** | +14% |
+| General, 50% coverage | 95.9 | **122.1** | +27% |
+| General, 10% coverage | 157.3 | **191.9** | +22% |
+| General, 10% + mask | 154.9 | **177.7** | +15% |
+| General, clipping | 56.6 | **68.3** | +21% |
+| General, clipping 10% | 137.1 | **215.1** | +57% |
+| All 13 modes | 64.3 - 79.9 | **80.9 - 94.1** | every mode up |
+| Plain stack (fast path) | 141.6 | 133.4 | unchanged code, within noise |
+| With layer mask | 127.2 | 129.0 | unchanged code |
+
+T4 (>= 60 MPix/s) holds at 91.3, and the slowest mode (Luminosity) rose from 64.3 to 80.9.
 
 ## Open questions for review
 

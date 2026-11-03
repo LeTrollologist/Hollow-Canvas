@@ -7,6 +7,7 @@ pub mod filter;
 pub mod history;
 pub mod layer;
 pub mod perspective;
+pub mod pixel;
 pub mod rasterizer;
 pub mod selection;
 pub mod symmetry;

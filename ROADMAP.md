@@ -137,6 +137,25 @@ Run-to-run variation on this laptop is +-10%: a confirmation run of the same bin
 gates are met in both, which is why the benchmark reports best-of-interleaved-rounds and
 prints the machine.
 
+#### Improved again: the generic computation model (step 2 of the pixel-format plan)
+
+The general path now runs one generic loop instantiated for `u8`, with the blend maths
+factored into a single working-precision implementation (`BlendMode::composite_working`)
+that `composite_pixel` and the per-mode `compose_*` functions both call. The 8-bit integer
+fast path is untouched, and the 702-combination oracle stayed byte-identical throughout.
+
+| Workload | v2.6.1 | now | change |
+| :--- | ---: | ---: | ---: |
+| General, opaque | 79.8 | **91.3** | +14% |
+| General, 50% coverage | 95.9 | **122.1** | +27% |
+| General, 10% coverage | 157.3 | **191.9** | +22% |
+| General, 10% + mask | 154.9 | **177.7** | +15% |
+| General, clipping | 56.6 | **68.3** | +21% |
+| General, clipping 10% | 137.1 | **215.1** | +57% |
+| All 13 modes | 64.3 - 79.9 | **80.9 - 94.1** | every mode up |
+
+Plain and masked paths are unchanged in code and within noise in measurement.
+
 #### Release gates
 
 | Gate | Status |

@@ -1,6 +1,7 @@
 use crate::blend::BlendMode;
 use crate::color::{Color, ThemeMode};
 use crate::layer::{Layer, LayerId, LayerMask};
+use crate::pixel::Channel;
 use crate::selection::SelectionMask;
 use serde::{Deserialize, Serialize};
 
@@ -796,7 +797,7 @@ fn compose_layer<F>(
     base: Option<ClipBase<'_>>,
     compose: F,
 ) where
-    F: Fn([u8; 4], [u8; 4], f32) -> [u8; 4] + Sync,
+    F: Fn([f32; 4], [f32; 4], f32) -> [f32; 4] + Sync,
 {
     let threads = parallel_degree(canvas_w.saturating_mul(canvas_h));
     if threads <= 1 {
@@ -810,6 +811,7 @@ fn compose_layer<F>(
             layer_opacity,
             mask,
             base,
+            layer.as_srgb8(),
             &compose,
         );
         return;
@@ -818,6 +820,7 @@ fn compose_layer<F>(
     let bytes_per_row = canvas_w as usize * 4;
     let rows_per_thread = canvas_h.div_ceil(threads as u32);
     let compose = &compose;
+    let src_pixels = layer.as_srgb8();
     std::thread::scope(|scope| {
         for (index, slice) in out
             .chunks_mut(rows_per_thread as usize * bytes_per_row)
@@ -836,6 +839,7 @@ fn compose_layer<F>(
                     layer_opacity,
                     mask,
                     base,
+                    src_pixels,
                     compose,
                 );
             });
@@ -851,8 +855,8 @@ fn compose_layer<F>(
 /// `tests::general_compositing_is_bit_identical_to_the_reference`.
 #[allow(clippy::too_many_arguments)]
 #[inline]
-fn compose_rows<F>(
-    out: &mut [u8],
+fn compose_rows<C: Channel, F>(
+    out: &mut [C],
     y_start: u32,
     y_end: u32,
     layer: &Layer,
@@ -861,9 +865,10 @@ fn compose_rows<F>(
     layer_opacity: f32,
     mask: Option<&[u8]>,
     base: Option<ClipBase<'_>>,
+    src_pixels: &[C],
     compose: &F,
 ) where
-    F: Fn([u8; 4], [u8; 4], f32) -> [u8; 4],
+    F: Fn([f32; 4], [f32; 4], f32) -> [f32; 4],
 {
     // The reference reads its source through `Layer::get_pixel`, which answers only for
     // raster and text layers; for anything else every source is transparent and the layer
@@ -872,9 +877,6 @@ fn compose_rows<F>(
         return;
     }
 
-    // Bound once: the loop below touches this per pixel, and the accessor is the only
-    // way to reach the buffer now.
-    let src_pixels = layer.as_srgb8();
     let stride = canvas_w as usize;
     let src_stride = layer.width as usize;
     let x_start = layer.offset_x.max(0);
@@ -930,7 +932,7 @@ fn compose_rows<F>(
             let si = row_start + ((x - layer.offset_x) as usize) * 4;
             // Compositing a fully transparent source is a no-op by definition; skipping
             // it before the float work is exact and is the biggest win on sparse art.
-            if src_pixels[si + 3] == 0 {
+            if src_pixels[si + 3] == C::ZERO {
                 continue;
             }
             let dst_idx = (dst_row + x as usize) * 4;
@@ -955,23 +957,25 @@ fn compose_rows<F>(
                 continue;
             }
 
+            // The two conversion boundaries: storage to working on the way in, working to
+            // storage on the way out. Everything between is the shared maths.
             let dst_px = [
-                out[dst_idx],
-                out[dst_idx + 1],
-                out[dst_idx + 2],
-                out[dst_idx + 3],
+                out[dst_idx].to_f32(),
+                out[dst_idx + 1].to_f32(),
+                out[dst_idx + 2].to_f32(),
+                out[dst_idx + 3].to_f32(),
             ];
             let src_px = [
-                src_pixels[si],
-                src_pixels[si + 1],
-                src_pixels[si + 2],
-                src_pixels[si + 3],
+                src_pixels[si].to_f32(),
+                src_pixels[si + 1].to_f32(),
+                src_pixels[si + 2].to_f32(),
+                src_pixels[si + 3].to_f32(),
             ];
             let blended = compose(dst_px, src_px, opacity);
-            out[dst_idx] = blended[0];
-            out[dst_idx + 1] = blended[1];
-            out[dst_idx + 2] = blended[2];
-            out[dst_idx + 3] = blended[3];
+            out[dst_idx] = C::from_f32(blended[0]);
+            out[dst_idx + 1] = C::from_f32(blended[1]);
+            out[dst_idx + 2] = C::from_f32(blended[2]);
+            out[dst_idx + 3] = C::from_f32(blended[3]);
         }
     }
 }

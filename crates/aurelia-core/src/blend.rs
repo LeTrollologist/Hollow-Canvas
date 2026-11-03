@@ -10,8 +10,8 @@ macro_rules! define_compositors {
     ($($name:ident => $mode:ident),+ $(,)?) => {
         $(
             #[inline]
-            pub fn $name(dst: [u8; 4], src: [u8; 4], layer_opacity: f32) -> [u8; 4] {
-                BlendMode::$mode.composite_pixel(dst, src, layer_opacity)
+            pub fn $name(dst: [f32; 4], src: [f32; 4], layer_opacity: f32) -> [f32; 4] {
+                BlendMode::$mode.composite_working(dst, src, layer_opacity)
             }
         )+
     };
@@ -179,25 +179,31 @@ impl BlendMode {
 
     /// Full pixel compositing: dst is background, src is foreground with layer opacity
     #[inline]
-    pub fn composite_pixel(&self, dst: [u8; 4], src: [u8; 4], layer_opacity: f32) -> [u8; 4] {
-        let sa = (src[3] as f32 / 255.0) * layer_opacity.clamp(0.0, 1.0);
+    /// The blend maths, in working precision.
+    ///
+    /// This is the single source of truth for how pixels combine. `composite_pixel` is a
+    /// thin 8-bit wrapper over it, and the compositor calls it through the monomorphised
+    /// `compose_*` functions below, so there is one implementation rather than one per
+    /// storage width.
+    pub fn composite_working(&self, dst: [f32; 4], src: [f32; 4], layer_opacity: f32) -> [f32; 4] {
+        let sa = src[3] * layer_opacity.clamp(0.0, 1.0);
         if sa <= 0.0001 {
             return dst;
         }
 
-        let da = dst[3] as f32 / 255.0;
+        let da = dst[3];
         let out_a = sa + da * (1.0 - sa);
         if out_a <= 0.0001 {
-            return [0, 0, 0, 0];
+            return [0.0, 0.0, 0.0, 0.0];
         }
 
-        let sr = src[0] as f32 / 255.0;
-        let sg = src[1] as f32 / 255.0;
-        let sb = src[2] as f32 / 255.0;
+        let sr = src[0];
+        let sg = src[1];
+        let sb = src[2];
 
-        let dr = dst[0] as f32 / 255.0;
-        let dg = dst[1] as f32 / 255.0;
-        let db = dst[2] as f32 / 255.0;
+        let dr = dst[0];
+        let dg = dst[1];
+        let db = dst[2];
 
         let (br, bg, bb) = match self {
             Self::Luminosity => {
@@ -238,11 +244,41 @@ impl BlendMode {
         let cg = ((1.0 - sa) * da * dg + (1.0 - da) * sa * sg + sa * da * bg) / out_a;
         let cb = ((1.0 - sa) * da * db + (1.0 - da) * sa * sb + sa * da * bb) / out_a;
 
+        [cr, cg, cb, out_a]
+    }
+
+    /// Composites one 8-bit pixel.
+    ///
+    /// Storage wrapper over `composite_working`: the maths lives there, and this exists so
+    /// callers holding 8-bit storage (the adjustment pass, the rasterizer) keep working.
+    #[inline]
+    pub fn composite_pixel(&self, dst: [u8; 4], src: [u8; 4], layer_opacity: f32) -> [u8; 4] {
+        // Guard kept here too, so a transparent source hands the destination straight back
+        // without a round trip through working precision.
+        let sa = (src[3] as f32 / 255.0) * layer_opacity.clamp(0.0, 1.0);
+        if sa <= 0.0001 {
+            return dst;
+        }
+        let out = self.composite_working(
+            [
+                dst[0] as f32 / 255.0,
+                dst[1] as f32 / 255.0,
+                dst[2] as f32 / 255.0,
+                dst[3] as f32 / 255.0,
+            ],
+            [
+                src[0] as f32 / 255.0,
+                src[1] as f32 / 255.0,
+                src[2] as f32 / 255.0,
+                src[3] as f32 / 255.0,
+            ],
+            layer_opacity,
+        );
         [
-            (cr.clamp(0.0, 1.0) * 255.0).round() as u8,
-            (cg.clamp(0.0, 1.0) * 255.0).round() as u8,
-            (cb.clamp(0.0, 1.0) * 255.0).round() as u8,
-            (out_a.clamp(0.0, 1.0) * 255.0).round() as u8,
+            crate::pixel::Channel::from_f32(out[0]),
+            crate::pixel::Channel::from_f32(out[1]),
+            crate::pixel::Channel::from_f32(out[2]),
+            crate::pixel::Channel::from_f32(out[3]),
         ]
     }
 }
