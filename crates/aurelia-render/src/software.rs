@@ -112,8 +112,10 @@ impl SoftwareRenderer {
         // Studio backdrop: a soft vertical gradient (lamplight above, deep ink below)
         // so the artboard reads as paper resting on a lit surface rather than floating
         // in a void. Panels and the canvas paint over this.
-        let top = (20.0_f32, 16.0, 12.0);
-        let bottom = (7.0_f32, 5.0, 4.0);
+        // Kept clearly lighter than the darkest paper (value 13) so the artboard
+        // always reads as a recessed well instead of vanishing into the backdrop.
+        let top = (38.0_f32, 31.0, 24.0);
+        let bottom = (26.0_f32, 21.0, 16.0);
         for y in 0..win_h {
             let t = y as f32 / (win_h.max(1) - 1) as f32;
             let r = (top.0 + (bottom.0 - top.0) * t).round() as u32;
@@ -361,7 +363,7 @@ impl SoftwareRenderer {
         }
 
         // 7. Crisp Canvas Border Frame Outline
-        let border_color = 0xFF3E2F25;
+        let border_color = 0xFF8A7458;
         let top = min_y;
         let btm = if max_y > 0 { max_y - 1 } else { 0 };
         let left = min_x;

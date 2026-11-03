@@ -861,8 +861,12 @@ impl AppState {
         if self.show_ui_panels {
             let bottom = if self.timeline.is_enabled { 88.0 } else { self.footer_h.max(24.0) };
             let ruler = if self.show_rulers { crate::design::RULER_PX } else { 0.0 };
-            let vx0 = ((self.left_panel_w + ruler).max(0.0) as usize).min(win_w);
-            let vy0 = ((self.header_h + ruler).max(0.0) as usize).min(win_h);
+            // The ruler strips are drawn *inside* this rect, along its top and left
+            // edges, so the rect itself starts at the panel edge. Adding the ruler
+            // here as well left a dead ruler-wide gap beside the left panel and header.
+            let _ = ruler;
+            let vx0 = (self.left_panel_w.max(0.0) as usize).min(win_w);
+            let vy0 = (self.header_h.max(0.0) as usize).min(win_h);
             let vx1 = win_w.saturating_sub(self.right_panel_w.max(0.0) as usize).max(vx0);
             let vy1 = win_h.saturating_sub(bottom as usize).max(vy0);
             [vx0, vy0, vx1, vy1]
