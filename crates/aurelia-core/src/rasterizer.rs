@@ -158,6 +158,22 @@ impl StrokeRasterizer {
         }
     }
 
+    /// An 8-bit view of a layer, for operations whose *comparison* is defined in 8-bit terms.
+    ///
+    /// Flood fill and the magic wand match colours against a fixed seed with a tolerance -
+    /// keeping that match in 8-bit space is deliberate: it keeps region boundaries and
+    /// tolerance semantics identical to what they have always been. Only the *writes* go to
+    /// native storage, so filled values are not quantised.
+    fn srgb8_snapshot(layer: &Layer) -> Vec<u8> {
+        match layer.buffer() {
+            LayerBuffer::Srgb8(bytes) => bytes.clone(),
+            LayerBuffer::Srgb16(channels) => channels
+                .iter()
+                .map(|&channel| crate::pixel::srgb16_to_srgb8(channel))
+                .collect(),
+        }
+    }
+
     /// Bilinear sample in working precision, for the smudge brush to drag colour from.
     ///
     /// Interpolation happens on normalised channels and the caller stores the result through
@@ -1146,42 +1162,25 @@ impl StrokeRasterizer {
         mask
     }
 
-    pub fn flood_fill(
-        doc: &mut Document,
+    /// The flood-fill walk, dispatching once per operation.
+    ///
+    /// `source` is the 8-bit snapshot the tolerance test is defined against, so region
+    /// boundaries stay exactly as they are; `pixels` is native storage, so the fill is not
+    /// quantised on the way in. Matching is against `target_px`, sampled once from the seed
+    /// and never against a neighbour, so the region cannot creep.
+    #[allow(clippy::too_many_arguments)]
+    fn flood_fill_impl<C: Channel + PartialEq>(
+        pixels: &mut [C],
+        source: &[u8],
+        doc_w: u32,
+        doc_h: u32,
         start_x: u32,
         start_y: u32,
-        fill_color: Color,
-        selection: Option<&SelectionMask>,
         tolerance: u8,
+        target_px: [u8; 4],
+        active_mask: Option<&SelectionMask>,
+        fill_px: [u8; 4],
     ) {
-        let (doc_w, doc_h, active_id) = (doc.width, doc.height, doc.active_layer_id);
-        if start_x >= doc_w || start_y >= doc_h {
-            return;
-        }
-
-        let ref_pixels = doc.reference_layer().map(|l| l.as_srgb8_exact().to_vec());
-
-        let layer = match doc.get_layer_mut(active_id) {
-            Some(l) if !l.locked => l,
-            _ => return,
-        };
-
-        let has_ref = ref_pixels.is_some();
-        let source_buffer = ref_pixels.unwrap_or_else(|| layer.as_srgb8_exact().to_vec());
-
-        let target_idx = ((start_y * doc_w + start_x) * 4) as usize;
-        let target_px = [
-            source_buffer[target_idx],
-            source_buffer[target_idx + 1],
-            source_buffer[target_idx + 2],
-            source_buffer[target_idx + 3],
-        ];
-        let fill_px = fill_color.to_rgba8();
-
-        if target_px == fill_px && !has_ref {
-            return;
-        }
-
         let mut queue = Vec::with_capacity(2048);
         queue.push((start_x, start_y));
         let mut visited = vec![false; (doc_w * doc_h) as usize];
@@ -1193,7 +1192,6 @@ impl StrokeRasterizer {
                 && (px[3] as i32 - target_px[3] as i32).abs() <= tolerance as i32
         };
 
-        let active_mask = selection.filter(|s| s.has_selection());
 
         while let Some((x, y)) = queue.pop() {
             let pos = (y * doc_w + x) as usize;
@@ -1210,14 +1208,14 @@ impl StrokeRasterizer {
 
             let idx = pos * 4;
             let current = [
-                source_buffer[idx],
-                source_buffer[idx + 1],
-                source_buffer[idx + 2],
-                source_buffer[idx + 3],
+                source[idx],
+                source[idx + 1],
+                source[idx + 2],
+                source[idx + 3],
             ];
 
             if matches_target(current) {
-                layer.as_srgb8_exact_mut()[idx..idx + 4].copy_from_slice(&fill_px);
+                Self::store_px_u8(pixels, idx, fill_px);
 
                 if x > 0 {
                     queue.push((x - 1, y));
@@ -1232,6 +1230,55 @@ impl StrokeRasterizer {
                     queue.push((x, y + 1));
                 }
             }
+        }
+    }
+
+    pub fn flood_fill(
+        doc: &mut Document,
+        start_x: u32,
+        start_y: u32,
+        fill_color: Color,
+        selection: Option<&SelectionMask>,
+        tolerance: u8,
+    ) {
+        let (doc_w, doc_h, active_id) = (doc.width, doc.height, doc.active_layer_id);
+        if start_x >= doc_w || start_y >= doc_h {
+            return;
+        }
+
+        let ref_pixels = doc.reference_layer().map(Self::srgb8_snapshot);
+
+        let layer = match doc.get_layer_mut(active_id) {
+            Some(l) if !l.locked => l,
+            _ => return,
+        };
+
+        let has_ref = ref_pixels.is_some();
+        let source_buffer = ref_pixels.unwrap_or_else(|| Self::srgb8_snapshot(layer));
+
+        let target_idx = ((start_y * doc_w + start_x) * 4) as usize;
+        let target_px = [
+            source_buffer[target_idx],
+            source_buffer[target_idx + 1],
+            source_buffer[target_idx + 2],
+            source_buffer[target_idx + 3],
+        ];
+        let fill_px = fill_color.to_rgba8();
+
+        if target_px == fill_px && !has_ref {
+            return;
+        }
+
+        let active_mask = selection.filter(|s| s.has_selection());
+        match layer.buffer_mut() {
+            LayerBuffer::Srgb8(pixels) => Self::flood_fill_impl(
+                pixels, &source_buffer, doc_w, doc_h, start_x, start_y, tolerance, target_px,
+                active_mask, fill_px,
+            ),
+            LayerBuffer::Srgb16(pixels) => Self::flood_fill_impl(
+                pixels, &source_buffer, doc_w, doc_h, start_x, start_y, tolerance, target_px,
+                active_mask, fill_px,
+            ),
         }
     }
 

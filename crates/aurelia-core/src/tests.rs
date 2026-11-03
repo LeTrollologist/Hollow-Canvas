@@ -2368,4 +2368,54 @@ mod tests {
             "every gradient value landed on the 8-bit lattice: interpolation was quantised"
         );
     }
+
+    /// Flood fill on 16-bit storage. The tolerance comparison stays in 8-bit terms by design,
+    /// so the region boundary must be exactly what it was; the fill itself must be written at
+    /// native width, and a barrier must stop the walk.
+    #[test]
+    fn flood_fill_writes_native_values_and_respects_barriers() {
+        use crate::layer::{LayerBuffer, PixelFormat};
+
+        let mut doc = Document::new(8, 6);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        let mid = crate::pixel::srgb8_to_srgb16(60) + 128;
+        let mut channels = vec![0u16; 8 * 6 * 4];
+        for pixel in 0..(8 * 6) {
+            for channel in 0..3 {
+                channels[pixel * 4 + channel] = mid;
+            }
+            channels[pixel * 4 + 3] = 65535;
+        }
+        // A barrier column at x = 4, clearly outside the tolerance.
+        for y in 0..6 {
+            let pixel = (y * 8 + 4) as usize;
+            channels[pixel * 4] = 65535;
+            channels[pixel * 4 + 1] = 65535;
+            channels[pixel * 4 + 2] = 65535;
+        }
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        crate::rasterizer::StrokeRasterizer::flood_fill(
+            &mut doc,
+            0,
+            0,
+            Color::from_rgba8(255, 0, 0, 255),
+            None,
+            8,
+        );
+
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16, "flood fill changed storage format");
+        let painted = layer.as_srgb16().expect("16-bit");
+        let at = |x: usize, y: usize| painted[(y * 8 + x) * 4];
+
+        let red = crate::pixel::srgb8_to_srgb16(255);
+        assert_eq!(at(0, 0), red, "the seed was not filled");
+        assert_eq!(at(3, 5), red, "the region left of the barrier was not filled");
+        assert_eq!(at(4, 2), 65535, "the barrier itself must not be overwritten");
+        assert_eq!(at(7, 2), mid, "the region right of the barrier must be untouched");
+    }
 }
