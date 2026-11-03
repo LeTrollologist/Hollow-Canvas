@@ -479,3 +479,26 @@ borrow, which is the borrow lesson from the earlier `blend_mode` hoist.
 
 Until all five pass, the work stays uncommitted - an unverified rasterizer is worth less than
 none.
+
+### Step 2 progress and the comparison contract
+
+Done and generic: erasing (via the stamp), rectangle fill, ellipse, polygon fill, gradient.
+Rect and polygon outlines needed no work - they route through `paint_segment` - but both are
+tested on `Srgb16` rather than assumed covered.
+
+**Answer to the seed-versus-quantised question, from the code:** `rasterize_magic_wand`
+compares every candidate against `target_px`, sampled **once** from the seed position, and
+never against a neighbour or an already-accepted pixel. The tolerance test is the fixed
+`|candidate - seed| <= tolerance` on all four channels. That is the contract to preserve:
+comparison against the seed gives a stable region; comparing against each candidate's
+quantised neighbourhood makes boundaries creep and depends on traversal order.
+
+Consequence for 16-bit: the *comparison* stays in 8-bit terms - the source buffer is sampled
+as 8-bit for matching, which keeps tolerance semantics identical to today - while the *fill*
+writes native channels. That is a deliberate asymmetry, documented rather than incidental:
+matching in 8-bit is what keeps region boundaries unchanged, and writing natively is what
+keeps the filled values from being quantised.
+
+Still 8-bit only: `flood_fill` and its write path, `rasterize_magic_wand`'s buffer sampling,
+and text. `flood_fill` gets the same treatment next, with the seed-comparison contract above
+pinned by a test before and after the change.
