@@ -294,6 +294,31 @@ depth, the Phase 1 accessors make it an additive change rather than a rewrite.
 No implementation starts until the proposal in #11 is written and reviewed. Phase 1 was
 valuable precisely because it removed the obstacle without guessing at the answer.
 
+**Proposal:** `docs/pixel-format-proposal.md` answers gates 1-5 and *specifies* 6-7 as
+acceptance gates (measured, not asserted). Three concepts are kept separate there and must
+never be merged into one setting:
+
+| Concept | Responsibility |
+| :--- | :--- |
+| Storage format | How layer pixels are represented |
+| Working precision | Precision used during filters and compositing |
+| Working colour space | How colour values are interpreted and combined |
+
+16-bit sRGB storage does not provide linear-light compositing; f32 filter intermediates do
+not require f32 storage; and a colour-space change alters output *by definition*, so it
+cannot ride along with a storage change - that would invalidate the oracle that makes the
+storage change safe.
+
+Two findings from the proposal that constrain the rest of the work: scratch buffers must be
+**per row band, not per document** (rows compose in parallel; one shared buffer would
+serialise or lock the hot loop), and import policy is a **product decision**, not an
+implementation detail - a 16-bit image into an 8-bit document either promotes the document
+or converts with a visible notice.
+
+A prototype measuring four workloads - opaque, sparse, masked, clipped - validates the
+computation model before the architecture is approved, with the kill criterion stated in
+advance: if it cannot hold T4 on opaque, the storage change does not ship in that form.
+
 ### Multi-document
 
 `AppState` owns exactly one `Document`, and ~40 places reach into `state.document`
