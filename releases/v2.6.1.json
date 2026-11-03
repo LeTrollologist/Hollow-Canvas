@@ -1,0 +1,75 @@
+{
+  "tag": "v2.6.1",
+  "version": "2.6.1",
+  "product": "Aurelia",
+  "remote": "https://github.com/LeTrollologist/Aurelia.git",
+  "tests": "80 tests passed across the workspace (0 failed)",
+  "notes": "release-notes/v2.6.1.md",
+  "assets": [
+    {
+      "name": "Aurelia-Setup-2.6.1.exe",
+      "bytes": 4162999,
+      "sha256": "9365A91541350D03411A5AF2C9A6A663ABAA6098EE39AADE292E93C7A466C463"
+    },
+    {
+      "name": "Aurelia-v2.6.1-win64.zip",
+      "bytes": 2669288,
+      "sha256": "4AD37E3E802150C8287DA6741BAF44E1B8F6AD116024E0C581AF31C9E8157E7D"
+    },
+    {
+      "name": "RELEASE_NOTES.md",
+      "bytes": 5742,
+      "sha256": "6B67BAED595E5CFCD91BCACB809DC0A767A0B1255E1E497627A8CEA80AFBA85C"
+    },
+    {
+      "name": "virustotal-summary.txt",
+      "bytes": 820,
+      "sha256": "7FAFF8C427279DD35D46993C91931BA66433C3398099491EF0A86E0E5079DA7C"
+    }
+  ],
+  "installer": "Aurelia-Setup-2.6.1.exe",
+  "virustotal": [
+    {
+      "file": "Aurelia-v2.6.1-win64.zip",
+      "sha256": "4ad37e3e802150c8287da6741baf44e1b8f6ad116024e0c581af31c9e8157e7d",
+      "via": "upload",
+      "analysis_id": "MDRhYjM5YmZhNTgzYjI1YTc5OWE5MGMxYTNmNzJmMjI6MTc5MzY4MzA3Ng==",
+      "analysis_date": 1793683076,
+      "stats": {
+        "malicious": 0,
+        "suspicious": 0,
+        "undetected": 68,
+        "harmless": 0,
+        "timeout": 0,
+        "confirmed-timeout": 0,
+        "failure": 0,
+        "type-unsupported": 7
+      },
+      "engines": 75,
+      "permalink": "https://www.virustotal.com/gui/file/4ad37e3e802150c8287da6741baf44e1b8f6ad116024e0c581af31c9e8157e7d"
+    },
+    {
+      "file": "Aurelia-Setup-2.6.1.exe",
+      "sha256": "9365a91541350d03411a5af2c9a6a663abaa6098ee39aade292e93c7a466c463",
+      "via": "upload",
+      "analysis_id": "OWE5YzAwYzEyZTliNzk2NWUxNjgzYTNkMDU2OTA2YWY6MTc5MzY4MzEzNw==",
+      "analysis_date": 1793683137,
+      "stats": {
+        "malicious": 4,
+        "suspicious": 0,
+        "undetected": 67,
+        "harmless": 0,
+        "timeout": 0,
+        "confirmed-timeout": 0,
+        "failure": 0,
+        "type-unsupported": 4
+      },
+      "engines": 75,
+      "permalink": "https://www.virustotal.com/gui/file/9365a91541350d03411a5af2c9a6a663abaa6098ee39aade292e93c7a466c463"
+    }
+  ],
+  "published_at": "2026-11-03T05:19:40Z",
+  "republish_count": 0,
+  "recorded_near_commit": "2c13045f9448b76c31eedadd3a609fd024ce5ffd",
+  "previous_publication": null
+}
