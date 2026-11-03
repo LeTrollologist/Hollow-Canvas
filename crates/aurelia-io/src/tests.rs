@@ -289,64 +289,89 @@ mod tests {
         assert!(loaded.layers.iter().all(|l| l.mask.is_none()));
     }
 
-    /// The byte stream v2.4.x wrote: the current body with the sRGB8 magic and without the
-    /// per-layer mask section that AUR v2 introduced.
-    ///
-    /// It is derived from the current writer rather than transcribed by hand, so the test
-    /// cannot pass against a layout that never existed: the thumbnail is a PNG written
-    /// straight after the layer loop behind its u32 length, and the single byte between
-    /// the last layer and that length is its mask flag.
-    fn downgrade_to_v1(v2: &[u8]) -> Vec<u8> {
-        let png = v2
-            .windows(4)
-            .rposition(|w| w == b"\x89PNG")
-            .expect("thumbnail is a PNG");
-        let mask_flag_at = png - 5;
-        assert_eq!(v2[mask_flag_at], 0, "the v1 fixture must not carry a mask");
-        let mut v1 = Vec::with_capacity(v2.len() - 1);
-        v1.extend_from_slice(b"AUR\x01");
-        v1.extend_from_slice(&v2[4..mask_flag_at]);
-        v1.extend_from_slice(&v2[png - 4..]);
-        v1
+    use crate::project::write_project_version;
+    use aurelia_core::layer::{LayerBuffer, PixelFormat};
+
+    /// Old formats are produced by the real writer in their real layout - v2 added the mask
+    /// section, v3 added the format tags - rather than by transforming today's bytes into
+    /// something that merely looks old.
+    #[test]
+    fn v1_and_v2_files_load_as_eight_bit() {
+        for version in [1u8, 2u8] {
+            let mut doc = Document::new(4, 3);
+            doc.is_transparent = true;
+            if let Some(layer) = doc.active_layer_mut() {
+                layer.set_pixel(1, 1, [9, 8, 7, 255]);
+            }
+            let mut bytes = Vec::new();
+            write_project_version(&doc, &mut bytes, version).expect("write");
+
+            let loaded = load_project_from_reader(&bytes[..]).expect("an old file must still load");
+            for layer in &loaded.layers {
+                assert_eq!(
+                    layer.format(),
+                    PixelFormat::Srgb8,
+                    "v{version} layers must load as 8-bit storage"
+                );
+            }
+            assert_eq!(loaded.layers[0].get_pixel(1, 1), Some([9, 8, 7, 255]));
+        }
     }
 
+    /// Every channel, not just the ones an 8-bit conversion would keep.
     #[test]
-    fn v1_project_files_still_load() {
-        let mut doc = Document::new(6, 5);
+    fn sixteen_bit_layers_round_trip_every_channel() {
+        let mut doc = Document::new(5, 4);
         doc.is_transparent = true;
         let id = doc.active_layer_id;
-        if let Some(layer) = doc.active_layer_mut() {
-            layer.name = "Legacy".to_string();
-            layer.opacity = 0.5;
-            layer.offset_x = 2;
-            layer.offset_y = -1;
-        }
-        for (x, y, px) in [
-            (0u32, 0u32, [10u8, 20, 30, 255]),
-            (3, 4, [200, 100, 50, 128]),
-        ] {
-            if let Some(layer) = doc.active_layer_mut() {
-                layer.set_pixel(x, y, px);
-            }
+        let channels: Vec<u16> = (0..(5 * 4 * 4))
+            .map(|index| ((index * 1237 + 91) % 65536) as u16)
+            .collect();
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels.clone());
         }
 
-        let mut v2 = Vec::new();
-        save_project_to_writer(&doc, &mut v2).expect("save");
-        let v1 = downgrade_to_v1(&v2);
-        let loaded = load_project_from_reader(&v1[..]).expect("a v1 file must still load");
+        let mut bytes = Vec::new();
+        save_project_to_writer(&doc, &mut bytes).expect("save");
+        let loaded = load_project_from_reader(&bytes[..]).expect("load");
 
-        assert_eq!((loaded.width, loaded.height), (6, 5));
-        assert_eq!(loaded.active_layer_id, id);
-        assert_eq!(loaded.layers.len(), 1);
         let layer = loaded.get_layer(id).expect("layer");
-        assert_eq!(layer.name, "Legacy");
-        assert_eq!(layer.opacity, 0.5);
-        assert_eq!((layer.offset_x, layer.offset_y), (2, -1));
-        assert_eq!(layer.get_pixel(0, 0), Some([10, 20, 30, 255]));
-        assert_eq!(layer.get_pixel(3, 4), Some([200, 100, 50, 128]));
-        assert!(layer.mask.is_none(), "v1 files never carry a mask");
+        assert_eq!(layer.format(), PixelFormat::Srgb16);
+        assert_eq!(
+            layer.as_srgb16().expect("16-bit storage"),
+            channels.as_slice(),
+            "every channel must survive exactly"
+        );
     }
 
+    /// The editor does not create mixed documents yet, but the format must preserve them: the
+    /// alternative is discovering later that a saved file flattened someone's depth.
+    #[test]
+    fn mixed_format_documents_round_trip_each_layer_format() {
+        let mut doc = Document::new(4, 4);
+        doc.is_transparent = true;
+        let base = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(base) {
+            layer.set_pixel(0, 0, [1, 2, 3, 255]);
+        }
+        let top = doc.add_layer(Some("wide".to_string()));
+        let channels: Vec<u16> = (0..(4 * 4 * 4)).map(|i| (i as u16).wrapping_mul(1013)).collect();
+        if let Some(layer) = doc.get_layer_mut(top) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels.clone());
+        }
+
+        let mut bytes = Vec::new();
+        save_project_to_writer(&doc, &mut bytes).expect("save");
+        let loaded = load_project_from_reader(&bytes[..]).expect("load");
+
+        let base_loaded = loaded.get_layer(base).expect("base");
+        assert_eq!(base_loaded.format(), PixelFormat::Srgb8, "8-bit layer must stay 8-bit");
+        assert_eq!(base_loaded.get_pixel(0, 0), Some([1, 2, 3, 255]));
+
+        let top_loaded = loaded.get_layer(top).expect("top");
+        assert_eq!(top_loaded.format(), PixelFormat::Srgb16, "16-bit layer must stay 16-bit");
+        assert_eq!(top_loaded.as_srgb16().expect("16-bit"), channels.as_slice());
+    }
     /// A damaged file must be reported, not panic - a crash here would look like data loss
     /// to the person opening it.
     #[test]
@@ -381,5 +406,77 @@ mod tests {
         let mut bad = v2.clone();
         bad[0..4].copy_from_slice(b"NOPE");
         assert!(load_project_from_reader(&bad[..]).is_err());
+    }
+
+    /// Malformed files must be rejected, never reinterpreted. Every case here would be a
+    /// silent 8-bit fallback if the reader guessed instead of validating.
+    #[test]
+    fn malformed_format_tags_and_payloads_are_rejected() {
+        fn sixteen_bit_doc() -> Document {
+            let mut doc = Document::new(3, 2);
+            doc.is_transparent = true;
+            let id = doc.active_layer_id;
+            let channels: Vec<u16> = (0..(3 * 2 * 4)).map(|i| (i as u16) * 257).collect();
+            if let Some(layer) = doc.get_layer_mut(id) {
+                *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+            }
+            doc
+        }
+
+        // Offsets are derived from the file rather than hard-coded, so the test cannot aim at
+        // the wrong byte and quietly pass.
+        fn layer_tag_offset(bytes: &[u8]) -> usize {
+            let name_len = u16::from_le_bytes([bytes[36], bytes[37]]) as usize;
+            let kind_at = 38 + name_len;
+            kind_at + 1 + 8 + 1 + 4 + 1 + 8
+        }
+
+        let mut bytes = Vec::new();
+        save_project_to_writer(&sixteen_bit_doc(), &mut bytes).expect("save");
+
+        // 1. Unknown document format tag.
+        let mut bad = bytes.clone();
+        bad[23] = 0xFF;
+        assert!(
+            load_project_from_reader(&bad[..]).is_err(),
+            "an unknown document format tag must be rejected"
+        );
+
+        // 2. Unsupported per-layer format tag.
+        let mut bad = bytes.clone();
+        let tag_at = layer_tag_offset(&bad);
+        assert_eq!(bad[tag_at], 0, "expected the inherit tag at the derived offset");
+        bad[tag_at] = 0xFF;
+        assert!(
+            load_project_from_reader(&bad[..]).is_err(),
+            "an unsupported layer format tag must be rejected"
+        );
+
+        // 3. Truncated 16-bit payload: the lengths cannot match, so it is corrupt rather than
+        //    something to reinterpret as 8-bit.
+        let payload_at = tag_at + 1 + 4;
+        let truncated = &bytes[..payload_at + 8];
+        assert!(
+            load_project_from_reader(truncated).is_err(),
+            "a truncated 16-bit payload must be rejected"
+        );
+
+        // 4. Invalid dimensions.
+        let mut bad = bytes.clone();
+        bad[4..8].copy_from_slice(&0u32.to_le_bytes());
+        assert!(
+            load_project_from_reader(&bad[..]).is_err(),
+            "a zero width must be rejected"
+        );
+        let mut bad = bytes.clone();
+        bad[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+        bad[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(
+            load_project_from_reader(&bad[..]).is_err(),
+            "an impossible size must be rejected before allocating"
+        );
+
+        // The unmodified file still loads, so the rejections above are not just a broken fixture.
+        assert!(load_project_from_reader(&bytes[..]).is_ok());
     }
 }

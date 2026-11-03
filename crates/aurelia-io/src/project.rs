@@ -14,6 +14,19 @@ use thiserror::Error;
 const AUR_MAGIC_V1: &[u8; 4] = b"AUR\x01";
 /// v2 appends a per-layer mask section (flag byte, enabled byte, width*height bytes).
 const AUR_MAGIC_V2: &[u8; 4] = b"AUR\x02";
+const AUR_MAGIC_V3: &[u8; 4] = b"AUR\x03";
+
+/// Document and per-layer format tags in AUR v3.
+///
+/// `INHERIT` is what an ordinary document writes for every layer: the layer uses the
+/// document's format. The explicit values exist so a document *can* express a layer of a
+/// different representation - the editor does not create such documents yet, but the format
+/// round-trips them, which is what keeps mixed formats an additive change rather than another
+/// format version.
+const FORMAT_SRGB8: u8 = 0;
+const FORMAT_INHERIT: u8 = 0;
+const LAYER_FORMAT_SRGB8: u8 = 1;
+const LAYER_FORMAT_SRGB16: u8 = 2;
 const HCV_MAGIC_V2: &[u8; 4] = b"HCV\x02";
 const HCV_MAGIC_V3: &[u8; 4] = b"HCV\x03";
 const HCV_MAGIC_V4: &[u8; 4] = b"HCV\x04";
@@ -29,10 +42,29 @@ pub enum ProjectError {
     InvalidMagic,
     #[error("Corrupt or unsupported .aur project data")]
     CorruptData,
+    #[error("This project version cannot represent the document's storage format")]
+    UnsupportedFormat,
 }
 
-pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result<(), ProjectError> {
-    writer.write_all(AUR_MAGIC_V2)?;
+pub fn save_project_to_writer<W: Write>(doc: &Document, writer: W) -> Result<(), ProjectError> {
+    write_project_version(doc, writer, 3)
+}
+
+/// Writes a project in a specific format version.
+///
+/// Versions 1 and 2 exist so tests can produce *authentic* old files with the real writer
+/// instead of transforming today's bytes into something that only looks old. The differences
+/// are all here: v2 added the mask section, v3 added the format tags.
+pub(crate) fn write_project_version<W: Write>(
+    doc: &Document,
+    mut writer: W,
+    version: u8,
+) -> Result<(), ProjectError> {
+    match version {
+        1 => writer.write_all(AUR_MAGIC_V1)?,
+        2 => writer.write_all(AUR_MAGIC_V2)?,
+        _ => writer.write_all(AUR_MAGIC_V3)?,
+    }
     writer.write_all(&doc.width.to_le_bytes())?;
     writer.write_all(&doc.height.to_le_bytes())?;
     writer.write_all(&doc.active_layer_id.to_le_bytes())?;
@@ -45,6 +77,20 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
         ThemeMode::Ember => 2u8,
     };
     writer.write_all(&[theme_byte])?;
+
+    // AUR v3: the document's storage format, then one byte per layer that either inherits it
+    // or names its own. A pure 8-bit document writes zeros throughout, which is exactly what
+    // older readers of the reserved byte would expect.
+    let document_is_16bit = doc
+        .layers
+        .iter()
+        .any(|layer| layer.format() == aurelia_core::layer::PixelFormat::Srgb16);
+    if version >= 3 {
+        writer.write_all(&[if document_is_16bit { 1u8 } else { FORMAT_SRGB8 }])?;
+    } else if document_is_16bit {
+        // Refuse rather than silently flatten: an old format cannot express 16-bit channels.
+        return Err(ProjectError::UnsupportedFormat);
+    }
 
     let layer_count = doc.layers.len() as u32;
     writer.write_all(&layer_count.to_le_bytes())?;
@@ -167,14 +213,41 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
         writer.write_all(&layer.offset_x.to_le_bytes())?;
         writer.write_all(&layer.offset_y.to_le_bytes())?;
 
+        // Per-layer format: inherit the document's, or name this layer's own.
+        let layer_is_16bit = layer.format() == aurelia_core::layer::PixelFormat::Srgb16;
+        let layer_tag = if version < 3 {
+            FORMAT_INHERIT
+        } else if layer.is_group() || layer.is_adjustment() {
+            FORMAT_INHERIT
+        } else if layer_is_16bit == document_is_16bit {
+            FORMAT_INHERIT
+        } else if layer_is_16bit {
+            LAYER_FORMAT_SRGB16
+        } else {
+            LAYER_FORMAT_SRGB8
+        };
+        if version >= 3 {
+            writer.write_all(&[layer_tag])?;
+        } else if layer_tag != FORMAT_INHERIT {
+            return Err(ProjectError::UnsupportedFormat);
+        }
+
         if layer.is_group() || layer.is_adjustment() {
             // Groups and Adjustments have no pixel buffer
             let comp_len = 0u32;
             writer.write_all(&comp_len.to_le_bytes())?;
         } else {
-            // Compress RGBA pixel stream using Deflate
             let mut encoder = DeflateEncoder::new(Vec::new(), Compression::fast());
-            encoder.write_all(layer.as_srgb8_exact())?;
+            match layer.buffer() {
+                aurelia_core::layer::LayerBuffer::Srgb8(bytes) => encoder.write_all(bytes)?,
+                aurelia_core::layer::LayerBuffer::Srgb16(channels) => {
+                    // Little-endian per channel, which is the same byte order the loader and
+                    // the history bridge use.
+                    for channel in channels {
+                        encoder.write_all(&channel.to_le_bytes())?;
+                    }
+                }
+            }
             let compressed = encoder.finish()?;
 
             let comp_len = compressed.len() as u32;
@@ -183,6 +256,7 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
         }
 
         // Layer mask (AUR v2+): 0 = none, 1 = enabled flag + raw mask bytes.
+        if version >= 2 {
         match &layer.mask {
             Some(mask)
                 if mask.pixels.len() == (doc.width as usize) * (doc.height as usize)
@@ -194,6 +268,7 @@ pub fn save_project_to_writer<W: Write>(doc: &Document, mut writer: W) -> Result
                 writer.write_all(&mask.pixels)?;
             }
             _ => writer.write_all(&[0u8])?,
+        }
         }
     }
 
@@ -236,8 +311,9 @@ pub fn save_project_file(doc: &Document, path: impl AsRef<Path>) -> Result<(), P
 pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, ProjectError> {
     let mut magic = [0u8; 4];
     reader.read_exact(&mut magic)?;
+    let is_aur_v3 = &magic == AUR_MAGIC_V3;
     let is_aur_v2 = &magic == AUR_MAGIC_V2;
-    let is_aur = &magic == AUR_MAGIC_V1 || is_aur_v2;
+    let is_aur = &magic == AUR_MAGIC_V1 || is_aur_v2 || is_aur_v3;
     // AUR v1 reuses the legacy HCV v5 body layout, so legacy files stay readable.
     let is_v5 = &magic == HCV_MAGIC_V5 || is_aur;
     let is_v4 = &magic == HCV_MAGIC_V4;
@@ -257,6 +333,16 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
     reader.read_exact(&mut buf4)?;
     let height = u32::from_le_bytes(buf4);
 
+    // A corrupt header must not be allowed to drive an allocation. The cap is per layer and
+    // generous (8 bytes per pixel covers 16-bit RGBA) but finite.
+    let layer_bytes = (width as u64)
+        .checked_mul(height as u64)
+        .and_then(|pixels| pixels.checked_mul(8));
+    match layer_bytes {
+        Some(bytes) if width > 0 && height > 0 && bytes <= (1u64 << 31) => {}
+        _ => return Err(ProjectError::CorruptData),
+    }
+
     reader.read_exact(&mut buf8)?;
     let active_layer_id = u64::from_le_bytes(buf8);
 
@@ -271,6 +357,18 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         1 => ThemeMode::Dusk,
         2 => ThemeMode::Ember,
         _ => ThemeMode::Dawn,
+    };
+
+    // AUR v3 stores the document's storage format; older versions were implicitly 8-bit.
+    let document_format = if is_aur_v3 {
+        reader.read_exact(&mut buf1)?;
+        match buf1[0] {
+            0 => aurelia_core::layer::PixelFormat::Srgb8,
+            1 => aurelia_core::layer::PixelFormat::Srgb16,
+            _ => return Err(ProjectError::CorruptData),
+        }
+    } else {
+        aurelia_core::layer::PixelFormat::Srgb8
     };
 
     reader.read_exact(&mut buf4)?;
@@ -558,6 +656,19 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         reader.read_exact(&mut buf4)?;
         let offset_y = i32::from_le_bytes(buf4);
 
+        // v3: inherit the document format, or name this layer's own.
+        let layer_format = if is_aur_v3 {
+            reader.read_exact(&mut buf1)?;
+            match buf1[0] {
+                FORMAT_INHERIT => document_format,
+                LAYER_FORMAT_SRGB8 => aurelia_core::layer::PixelFormat::Srgb8,
+                LAYER_FORMAT_SRGB16 => aurelia_core::layer::PixelFormat::Srgb16,
+                _ => return Err(ProjectError::CorruptData),
+            }
+        } else {
+            aurelia_core::layer::PixelFormat::Srgb8
+        };
+
         reader.read_exact(&mut buf4)?;
         let comp_len = u32::from_le_bytes(buf4) as usize;
 
@@ -578,17 +689,33 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
             let mut comp_bytes = vec![0u8; comp_len];
             reader.read_exact(&mut comp_bytes)?;
 
-            // Decompress pixels
             let mut decoder = DeflateDecoder::new(&comp_bytes[..]);
-            let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-            decoder.read_to_end(&mut pixels)?;
+            let mut raw = Vec::new();
+            decoder.read_to_end(&mut raw)?;
 
-            let expected_len = (width * height * 4) as usize;
-            if pixels.len() != expected_len {
-                return Err(ProjectError::CorruptData);
+            let expected_8 = (width as usize) * (height as usize) * 4;
+            match layer_format {
+                aurelia_core::layer::PixelFormat::Srgb8 => {
+                    if raw.len() != expected_8 {
+                        return Err(ProjectError::CorruptData);
+                    }
+                    Layer::from_pixels(id, name, width, height, raw)
+                }
+                aurelia_core::layer::PixelFormat::Srgb16 => {
+                    // A 16-bit payload that is short or long is corrupt, not a reason to
+                    // reinterpret it as 8-bit.
+                    if raw.len() != expected_8 * 2 {
+                        return Err(ProjectError::CorruptData);
+                    }
+                    let channels: Vec<u16> = raw
+                        .chunks_exact(2)
+                        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                        .collect();
+                    let mut layer = Layer::from_pixels(id, name, width, height, Vec::new());
+                    *layer.buffer_mut() = aurelia_core::layer::LayerBuffer::Srgb16(channels);
+                    layer
+                }
             }
-
-            Layer::from_pixels(id, name, width, height, pixels)
         };
 
         layer.kind = kind;
@@ -605,7 +732,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         layer.offset_x = offset_x;
         layer.offset_y = offset_y;
 
-        if is_aur_v2 {
+        if is_aur_v2 || is_aur_v3 {
             reader.read_exact(&mut buf1)?;
             if buf1[0] == 1 {
                 reader.read_exact(&mut buf1)?;

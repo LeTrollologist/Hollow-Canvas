@@ -147,6 +147,37 @@ outside the budget, the plan changes here - before any production architecture i
 
 ---
 
+### Sub-step 3: AUR v3 - done
+
+AUR v3 adds a **document format tag** and a **per-layer format byte**: `0` inherits the
+`document's format, `1` is `Srgb8`, `2` is `Srgb16`. An ordinary document writes zeros
+throughout, which is exactly what the reserved byte was designed to do. Mixed-format
+documents are expressible in the file but still not created by the editor - the format
+preserves them so that decision stays additive rather than becoming another version.
+
+One writer now takes a `version` parameter, so old formats are produced by the real writer
+in their real layout (v2 added masks, v3 added tags) instead of by transforming today's
+bytes into something that only looks old.
+
+**Requirements, each with a test:**
+
+| Requirement | Test |
+| :--- | :--- |
+| 16-bit round-trip, every channel exact | `sixteen_bit_layers_round_trip_every_channel` |
+| Mixed-format fidelity, per layer | `mixed_format_documents_round_trip_each_layer_format` |
+| v1/v2 fixtures unchanged, layers load as `Srgb8` | `v1_and_v2_files_load_as_eight_bit` |
+| Unknown document tag rejected | `malformed_format_tags_and_payloads_are_rejected` |
+| Unsupported layer tag rejected | same |
+| Truncated 16-bit payload rejected | same |
+| Invalid dimensions rejected before allocating | same |
+
+The rejection cases matter more than they look: each one is a place a lenient reader would
+have fallen back to 8-bit and silently corrupted someone's document. Malformed input is an
+error, never an interpretation.
+
+Writing a 16-bit layer into a v1/v2 file returns `UnsupportedFormat` rather than flattening
+it, so a downgrade can never lose precision quietly.
+
 ## Gate 2 results - passed, provisionally
 
 `cargo test -p aurelia-core gate_2 -- --ignored --nocapture` on a quiet machine, five paired
