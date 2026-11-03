@@ -8,7 +8,7 @@
 #define MyAppExeName "aurelia.exe"
 
 #ifndef MyAppVersion
-  #define MyAppVersion "3.0.0-beta.1"
+  #define MyAppVersion "3.0.0"
 #endif
 #ifndef MyAppVersionNumeric
   #define MyAppVersionNumeric "3.0.0.0"
