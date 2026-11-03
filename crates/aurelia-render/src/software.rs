@@ -112,8 +112,10 @@ impl SoftwareRenderer {
         // Studio backdrop: a soft vertical gradient (lamplight above, deep ink below)
         // so the artboard reads as paper resting on a lit surface rather than floating
         // in a void. Panels and the canvas paint over this.
-        let top = (20.0_f32, 16.0, 12.0);
-        let bottom = (7.0_f32, 5.0, 4.0);
+        // Kept clearly lighter than the darkest paper (value 13) so the artboard
+        // always reads as a recessed well instead of vanishing into the backdrop.
+        let top = (38.0_f32, 31.0, 24.0);
+        let bottom = (26.0_f32, 21.0, 16.0);
         for y in 0..win_h {
             let t = y as f32 / (win_h.max(1) - 1) as f32;
             let r = (top.0 + (bottom.0 - top.0) * t).round() as u32;
@@ -361,7 +363,7 @@ impl SoftwareRenderer {
         }
 
         // 7. Crisp Canvas Border Frame Outline
-        let border_color = 0xFF3E2F25;
+        let border_color = 0xFF8A7458;
         let top = min_y;
         let btm = if max_y > 0 { max_y - 1 } else { 0 };
         let left = min_x;
@@ -383,6 +385,53 @@ impl SoftwareRenderer {
                 buffer[y * win_w + right] = border_color;
             }
         }
+    }
+
+    /// Downscaled copy of the last composite for the Navigator thumbnail.
+    ///
+    /// Reuses the composite `render_canvas` already produced this frame, so it costs one
+    /// small sampling pass rather than a second full-document composite. Call it after
+    /// `render_canvas`. Returns `None` until a composite for the current document size exists.
+    pub fn navigator_thumbnail(&self, doc: &Document, max_w: usize) -> Option<egui::ColorImage> {
+        let (dw, dh) = (doc.width as usize, doc.height as usize);
+        if dw == 0 || dh == 0 || self.composite_buffer.len() != dw * dh * 4 {
+            return None;
+        }
+        let tw = max_w.clamp(8, dw.max(8)).min(dw);
+        let th = ((tw * dh) / dw).clamp(1, dh);
+        let mut rgba = vec![0u8; tw * th * 4];
+        const N: usize = 3; // N x N samples per thumbnail pixel
+        for ty in 0..th {
+            for tx in 0..tw {
+                let (mut sr, mut sg, mut sb) = (0u32, 0u32, 0u32);
+                for iy in 0..N {
+                    let sy = ((ty * N + iy) * dh / (th * N)).min(dh - 1);
+                    for ix in 0..N {
+                        let sx = ((tx * N + ix) * dw / (tw * N)).min(dw - 1);
+                        let (br, bg, bb) = if doc.is_transparent {
+                            let v = if (sx / 16) % 2 == (sy / 16) % 2 { 18u32 } else { 28u32 };
+                            (v, v, v)
+                        } else {
+                            let v = doc.background_value as u32;
+                            (v, v, v)
+                        };
+                        let i = (sy * dw + sx) * 4;
+                        let a = self.composite_buffer[i + 3] as u32;
+                        let inv = 255 - a;
+                        sr += (br * inv + self.composite_buffer[i] as u32 * a) / 255;
+                        sg += (bg * inv + self.composite_buffer[i + 1] as u32 * a) / 255;
+                        sb += (bb * inv + self.composite_buffer[i + 2] as u32 * a) / 255;
+                    }
+                }
+                let n = (N * N) as u32;
+                let o = (ty * tw + tx) * 4;
+                rgba[o] = (sr / n) as u8;
+                rgba[o + 1] = (sg / n) as u8;
+                rgba[o + 2] = (sb / n) as u8;
+                rgba[o + 3] = 255;
+            }
+        }
+        Some(egui::ColorImage::from_rgba_unmultiplied([tw, th], &rgba))
     }
 
     pub fn render_grid(

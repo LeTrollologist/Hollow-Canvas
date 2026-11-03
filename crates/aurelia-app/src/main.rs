@@ -302,6 +302,7 @@ struct AureliaDesktopApp {
     stroke_dirty: bool,
     stroke_perspective_axis: Option<Vec2>,
     has_initialized_view: bool,
+    has_fit_after_layout: bool,
     /// Live stylus pressure (0..=1) sampled from `WM_POINTER*`; `None` for mouse input.
     pen_pressure: Option<f32>,
     /// Tilt in degrees from the pen, reserved for tilt-aware brush dynamics.
@@ -541,6 +542,12 @@ fn hit_test_text_layer_at(
 }
 
 impl AureliaDesktopApp {
+    /// Cursor position in egui points (`mouse_pos` is in physical pixels).
+    fn ui_pos(&self) -> egui::Pos2 {
+        let ppp = self.egui_ctx.pixels_per_point().max(0.01);
+        egui::pos2(self.mouse_pos.x / ppp, self.mouse_pos.y / ppp)
+    }
+
     pub fn is_over_ui(&self, pos: Vec2) -> bool {
         let w = self.win_w as f32;
         let h = self.win_h as f32;
@@ -720,7 +727,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             let y = raw_y;
 
             app.mouse_pos = egui::pos2(x, y);
-            app.events.push(egui::Event::PointerMoved(app.mouse_pos));
+            app.events.push(egui::Event::PointerMoved(app.ui_pos()));
 
             let screen_pos = Vec2::new(x, y);
             if (app.is_space_down && app.is_pointer_down) || app.is_middle_panning {
@@ -1091,7 +1098,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.mouse_pos = egui::pos2(raw_x, raw_y);
 
             app.events.push(egui::Event::PointerButton {
-                pos: app.mouse_pos,
+                pos: app.ui_pos(),
                 button: egui::PointerButton::Primary,
                 pressed: true,
                 modifiers: Default::default(),
@@ -1362,7 +1369,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.mouse_pos = egui::pos2(raw_x, raw_y);
 
             app.events.push(egui::Event::PointerButton {
-                pos: app.mouse_pos,
+                pos: app.ui_pos(),
                 button: egui::PointerButton::Primary,
                 pressed: false,
                 modifiers: Default::default(),
@@ -1559,7 +1566,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.mouse_pos = egui::pos2(raw_x, raw_y);
 
             app.events.push(egui::Event::PointerButton {
-                pos: app.mouse_pos,
+                pos: app.ui_pos(),
                 button: egui::PointerButton::Secondary,
                 pressed: true,
                 modifiers: Default::default(),
@@ -1573,7 +1580,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.mouse_pos = egui::pos2(raw_x, raw_y);
 
             app.events.push(egui::Event::PointerButton {
-                pos: app.mouse_pos,
+                pos: app.ui_pos(),
                 button: egui::PointerButton::Secondary,
                 pressed: false,
                 modifiers: Default::default(),
@@ -1935,10 +1942,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
             if app.win_w > 0 && app.win_h > 0 && app.buffer.len() >= app.win_w * app.win_h {
                 // 1. Process and Run egui UI layout FIRST so state mutations (grid, rulers, layers, tools) apply immediately
+                let ppp = app.egui_ctx.pixels_per_point().max(0.01);
                 let mut raw_input = egui::RawInput::default();
                 raw_input.screen_rect = Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
-                    egui::vec2(app.win_w as f32, app.win_h as f32),
+                    egui::vec2(app.win_w as f32 / ppp, app.win_h as f32 / ppp),
                 ));
                 raw_input.time = Some(app.start_time.elapsed().as_secs_f64());
                 raw_input.events = std::mem::take(&mut app.events);
@@ -1956,6 +1964,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 let mut needs_repaint = full_output.viewport_output.get(&egui::ViewportId::ROOT)
                     .map(|v| v.repaint_delay.is_zero())
                     .unwrap_or(false);
+
+                // First frame: panel sizes are now measured, so fit the canvas to the real viewport.
+                if !app.has_fit_after_layout && app.state.show_ui_panels {
+                    app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
+                    app.has_fit_after_layout = true;
+                }
 
                 // 1.5 Animation playback tick
                 if app.state.timeline.is_playing {
@@ -2043,6 +2057,20 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     &onion_skins,
                     app.state.selection.as_ref().map(|s| s.mask.as_slice()),
                 );
+
+                // 2.5 Refresh the Navigator thumbnail from this frame's composite
+                if app.state.show_ui_panels && app.state.show_navigator {
+                    if let Some(img) = app.renderer.navigator_thumbnail(&app.state.document, 320) {
+                        match &mut app.state.canvas_texture {
+                            Some(tex) if tex.size() == img.size => {
+                                tex.set(img, egui::TextureOptions::LINEAR);
+                            }
+                            slot => {
+                                *slot = Some(app.egui_ctx.load_texture("navigator_thumb", img, egui::TextureOptions::LINEAR));
+                            }
+                        }
+                    }
+                }
 
                 // 3. Render toggleable grid with up-to-date state
                 if app.state.show_grid {
@@ -2554,6 +2582,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    app_state.left_panel_w *= dpi_scale;
+    app_state.right_panel_w *= dpi_scale;
+    app_state.header_h *= dpi_scale;
+    app_state.footer_h *= dpi_scale;
     let egui_ctx = egui::Context::default();
     egui_ctx.set_pixels_per_point(dpi_scale);
     configure_aurelia_style(&egui_ctx, app_state.theme_accent_color());
@@ -2585,6 +2617,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stroke_dirty: false,
         stroke_perspective_axis: None,
         has_initialized_view: false,
+        has_fit_after_layout: false,
         pen_pressure: None,
         pen_tilt: (0.0, 0.0), stroke_size_scale: 1.0,
         last_window_title: String::new(),

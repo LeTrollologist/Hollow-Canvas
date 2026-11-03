@@ -106,7 +106,8 @@
   - **Per-Monitor V2 DPI Awareness**: `SetProcessDpiAwarenessContext` plus `egui` pixels-per-point, so the interface is crisp at 125–200 % scaling instead of bitmap-stretched.
   - **Portability-Ready Crate Split**: Windowing lives only in `aurelia-app`; `aurelia-core`, `aurelia-render`, `aurelia-io` and `aurelia-ui` are platform-agnostic, so the `eframe`/`winit` port in `ROADMAP.md` is a front-end swap rather than a rewrite.
 - 🎨 **Live Interactive Viewport with Real-Time Direct Drawing**:
-  - **Direct Viewport Interaction**: Drawing, brushing, and erasing occur directly inside the `egui::CentralPanel` viewport with low-latency GPU texture streaming (`recomposite_canvas`).
+  - **Direct Viewport Interaction**: Drawing, brushing, and erasing happen directly on the canvas, which is composited and drawn by the CPU software renderer (`aurelia-render`) into the window framebuffer every frame, with the `egui` panels rasterised on top. All view geometry (`pan`, `zoom`, viewport clip) is in physical pixels; `egui` layout and pointer input are converted to and from points at the `pixels_per_point` boundary.
+  - **Live Navigator Thumbnail**: The Navigator shows a downscaled copy of the same composite (`SoftwareRenderer::navigator_thumbnail`) as an `egui` texture, so it follows your strokes without a second full-document composite.
   - **Dynamic Viewport Rulers & Overlays**: Real-time pixel rulers with tracking cursor ticks, configurable canvas grid, and symmetry guide axes.
   - **Perspective Snapping Engine (<kbd>Ctrl+Shift+P</kbd>)**: 1, 2, and 3-point vanishing point rays and constraint projection.
 - ⛶ **Free Transform & Mesh Warp (<kbd>Ctrl+T</kbd>)**: Studio-grade non-destructive pixel deformation supporting 4 operational modes:
