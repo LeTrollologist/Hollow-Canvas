@@ -593,4 +593,34 @@ mod tests {
             "expected delta history to be at least 40x smaller, got {delta_bytes} vs {snapshot_bytes}"
         );
     }
+
+    /// Constraint for gate 3: history must stay storage-format agnostic.
+    ///
+    /// The delta stores byte spans and never parses them, so a 16-bit buffer - or anything
+    /// else - needs no change here. This restores a buffer of values that are not eight-bit
+    /// pixels at all and checks them exactly, which fails if the diff ever starts assuming
+    /// 4-byte pixels, a stride, or a channel layout.
+    #[test]
+    fn deltas_do_not_assume_eight_bit_pixels() {
+        let mut doc = Document::new(4, 4);
+        let layer_id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(layer_id) {
+            for (index, byte) in layer.as_srgb8_mut().iter_mut().enumerate() {
+                *byte = (index * 37 % 251) as u8;
+            }
+        }
+        let before = pixels_of(&doc, layer_id);
+        if let Some(layer) = doc.get_layer_mut(layer_id) {
+            for (index, byte) in layer.as_srgb8_mut().iter_mut().enumerate() {
+                *byte = (index * 91 + 13 % 241) as u8;
+            }
+        }
+        let after = pixels_of(&doc, layer_id);
+
+        let mut command = LayerPixelsDeltaCommand::new(layer_id, "Opaque bytes", before.clone(), after.clone());
+        command.undo(&mut doc);
+        assert_eq!(pixels_of(&doc, layer_id), before, "undo must be byte-exact");
+        command.redo(&mut doc);
+        assert_eq!(pixels_of(&doc, layer_id), after, "redo must be byte-exact");
+    }
 }

@@ -222,7 +222,30 @@ kilobyte, so the budget stops bounding undo depth at all.
 
 ## Gate 3 - Production architecture
 
-Only after gates 1 and 2 pass:
+Only after gates 1 and 2 pass. **Three constraints were set before implementation began:**
+
+1. **History stays storage-format agnostic.** It was moved to byte deltas first, as a
+   standalone milestone, so it stores spans without parsing them - no pixel size, stride or
+   channel assumption. `deltas_do_not_assume_eight_bit_pixels` pins that.
+2. **Existing u8 behaviour and the 702-case oracle stay protected.** None of this work may
+   relax the oracle; the tests that compare against the pre-rewrite reference are the gate,
+   not a convenience.
+3. **AUR v1/v2 loading keeps working after AUR v3 exists.** A v3 writer must not make an old
+   file unreadable, and the existing v1 test pins the oldest path.
+
+### Sub-step 1: `LayerBuffer` - done
+
+`Layer { buffer: LayerBuffer }` with a single variant, `Srgb8(Vec<u8>)`, replacing the bare
+`Vec<u8>`. Every caller already went through `as_srgb8()`/`as_srgb8_mut()`, so this is a
+change inside one file plus the enum: **90 tests pass unchanged, including the 702-case
+oracle**, and no output moved.
+
+What the type deliberately does not carry: no width or height (those belong to the layer and
+describe the image, not the allocation), and no colour space (that belongs to the compositor).
+Keeping those out is what lets the representation change without silently changing meaning.
+
+The next sub-step adds `Srgb16` alongside it, which is the point where accessors become
+fallible and conversion becomes explicit.
 
 1. `LayerBuffer` with `Srgb8` + `Srgb16`, accessors as specified in proposal section 2.
 2. Conversion boundaries and **per-layer quantisation** (proposal section 4, corrected:

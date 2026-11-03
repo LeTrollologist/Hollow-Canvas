@@ -165,6 +165,29 @@ pub struct AdjustmentConfig {
     pub adjustment_type: AdjustmentType,
 }
 
+/// The pixel storage of one layer.
+///
+/// One variant today. `Srgb16` - gamma-encoded sRGB at 16 bits, *not* linear light - is the
+/// planned second, and this enum is where that lands. The point of introducing it now, with
+/// a single variant, is that every caller already goes through `Layer::as_srgb8()`; adding a
+/// representation then becomes a change inside this file plus an explicit conversion at the
+/// edges, instead of a repo-wide migration.
+///
+/// Note what it deliberately does **not** carry: no width, no height, no colour space. Those
+/// belong to the layer (logical size) and to the compositor (interpretation), so storage can
+/// change without silently changing meaning.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LayerBuffer {
+    /// RGBA8, row-major, `len == width * height * 4` for the layer's size.
+    Srgb8(Vec<u8>),
+}
+
+impl Default for LayerBuffer {
+    fn default() -> Self {
+        LayerBuffer::Srgb8(Vec::new())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Layer {
     pub id: LayerId,
@@ -195,10 +218,10 @@ pub struct Layer {
     pub blend_mode: BlendMode,
     pub offset_x: i32,
     pub offset_y: i32,
-    /// RGBA8, len = width * height * 4. Private: reach it through `as_srgb8()` or
-    /// `as_srgb8_mut()`, so the representation can change without touching callers.
+    /// Private: reach it through `as_srgb8()` or `as_srgb8_mut()`, so the representation can
+    /// change without touching callers.
     #[serde(skip)]
-    pixels: Vec<u8>,
+    buffer: LayerBuffer,
     /// Optional layer mask applied when compositing.
     #[serde(default)]
     pub mask: Option<LayerMask>,
@@ -267,15 +290,31 @@ impl Layer {
     /// The buffer is an implementation detail. Everything outside this module reads and
     /// writes pixels through here, so the storage can gain a 16-bit variant later without
     /// every caller changing.
+    /// The backing bytes, whatever the representation is. Private: the only callers that may
+    /// assume a layout are inside this file.
+    #[inline]
+    fn bytes(&self) -> &Vec<u8> {
+        match &self.buffer {
+            LayerBuffer::Srgb8(bytes) => bytes,
+        }
+    }
+
+    #[inline]
+    fn bytes_mut(&mut self) -> &mut Vec<u8> {
+        match &mut self.buffer {
+            LayerBuffer::Srgb8(bytes) => bytes,
+        }
+    }
+
     #[inline]
     pub fn as_srgb8(&self) -> &[u8] {
-        &self.pixels
+        self.bytes()
     }
 
     /// Mutable pixel access for writing channels in place.
     #[inline]
     pub fn as_srgb8_mut(&mut self) -> &mut [u8] {
-        &mut self.pixels
+        self.bytes_mut()
     }
 
     /// Mutable access to the backing store, for changes that alter its length.
@@ -284,13 +323,13 @@ impl Layer {
     /// anything that just writes pixels belongs in `as_srgb8_mut()`.
     #[inline]
     pub fn pixels_vec_mut(&mut self) -> &mut Vec<u8> {
-        &mut self.pixels
+        self.bytes_mut()
     }
 
     /// Replaces the whole pixel buffer.
     #[inline]
     pub fn set_pixels(&mut self, pixels: Vec<u8>) {
-        self.pixels = pixels;
+        self.buffer = LayerBuffer::Srgb8(pixels);
     }
 
     pub fn new(id: LayerId, name: impl Into<String>, width: u32, height: u32) -> Self {
@@ -315,7 +354,7 @@ impl Layer {
             blend_mode: BlendMode::Normal,
             offset_x: 0,
             offset_y: 0,
-            pixels: vec![0; size],
+            buffer: LayerBuffer::Srgb8(vec![0; size]),
             mask: None,
         }
     }
@@ -341,7 +380,7 @@ impl Layer {
             blend_mode: BlendMode::Normal,
             offset_x: 0,
             offset_y: 0,
-            pixels: Vec::new(),
+            buffer: LayerBuffer::Srgb8(Vec::new()),
             mask: None,
         }
     }
@@ -367,7 +406,7 @@ impl Layer {
             blend_mode: BlendMode::Normal,
             offset_x: 0,
             offset_y: 0,
-            pixels: Vec::new(),
+            buffer: LayerBuffer::Srgb8(Vec::new()),
             mask: None,
         }
     }
@@ -394,7 +433,7 @@ impl Layer {
             blend_mode: BlendMode::Normal,
             offset_x: 0,
             offset_y: 0,
-            pixels: vec![0; size],
+            buffer: LayerBuffer::Srgb8(vec![0; size]),
             mask: None,
         }
     }
@@ -454,7 +493,7 @@ impl Layer {
             blend_mode: BlendMode::Normal,
             offset_x: 0,
             offset_y: 0,
-            pixels,
+            buffer: LayerBuffer::Srgb8(pixels),
             mask: None,
         }
     }
@@ -463,7 +502,7 @@ impl Layer {
     pub fn pixel_index(&self, x: u32, y: u32) -> Option<usize> {
         if (self.is_raster() || self.is_text()) && x < self.width && y < self.height {
             let idx = ((y as usize) * (self.width as usize) + (x as usize)) * 4;
-            if idx + 3 < self.pixels.len() {
+            if idx + 3 < self.bytes().len() {
                 Some(idx)
             } else {
                 None
@@ -477,25 +516,25 @@ impl Layer {
     pub fn get_pixel(&self, x: u32, y: u32) -> Option<[u8; 4]> {
         let idx = self.pixel_index(x, y)?;
         Some([
-            self.pixels[idx],
-            self.pixels[idx + 1],
-            self.pixels[idx + 2],
-            self.pixels[idx + 3],
+            self.bytes()[idx],
+            self.bytes()[idx + 1],
+            self.bytes()[idx + 2],
+            self.bytes()[idx + 3],
         ])
     }
 
     #[inline]
     pub fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         if let Some(idx) = self.pixel_index(x, y) {
-            self.pixels[idx] = color[0];
-            self.pixels[idx + 1] = color[1];
-            self.pixels[idx + 2] = color[2];
-            self.pixels[idx + 3] = color[3];
+            self.bytes_mut()[idx] = color[0];
+            self.bytes_mut()[idx + 1] = color[1];
+            self.bytes_mut()[idx + 2] = color[2];
+            self.bytes_mut()[idx + 3] = color[3];
         }
     }
 
     pub fn clear(&mut self) {
-        self.pixels.fill(0);
+        self.bytes_mut().fill(0);
     }
 
     pub fn resize(&mut self, new_w: u32, new_h: u32) {
@@ -511,12 +550,12 @@ impl Layer {
             let src_end = src_start + (copy_w as usize) * 4;
             let dst_start = ((y as usize) * (new_w as usize)) * 4;
             let dst_end = dst_start + (copy_w as usize) * 4;
-            new_pixels[dst_start..dst_end].copy_from_slice(&self.pixels[src_start..src_end]);
+            new_pixels[dst_start..dst_end].copy_from_slice(&self.bytes()[src_start..src_end]);
         }
 
         self.width = new_w;
         self.height = new_h;
-        self.pixels = new_pixels;
+        self.buffer = LayerBuffer::Srgb8(new_pixels);
     }
 
     pub fn duplicate(&self, new_id: LayerId) -> Self {
@@ -540,7 +579,7 @@ impl Layer {
             blend_mode: self.blend_mode,
             offset_x: self.offset_x,
             offset_y: self.offset_y,
-            pixels: self.pixels.clone(),
+            buffer: self.buffer.clone(),
             mask: self.mask.clone(),
         }
     }
