@@ -1,0 +1,358 @@
+diff --git a/crates/aurelia-app/src/main.rs b/crates/aurelia-app/src/main.rs
+index 6c9a945..f4da9e1 100644
+--- a/crates/aurelia-app/src/main.rs
++++ b/crates/aurelia-app/src/main.rs
+@@ -302,6 +302,7 @@ struct AureliaDesktopApp {
+     stroke_dirty: bool,
+     stroke_perspective_axis: Option<Vec2>,
+     has_initialized_view: bool,
++    has_fit_after_layout: bool,
+     /// Live stylus pressure (0..=1) sampled from `WM_POINTER*`; `None` for mouse input.
+     pen_pressure: Option<f32>,
+     /// Tilt in degrees from the pen, reserved for tilt-aware brush dynamics.
+@@ -541,6 +542,12 @@ fn hit_test_text_layer_at(
+ }
+ 
+ impl AureliaDesktopApp {
++    /// Cursor position in egui points (`mouse_pos` is in physical pixels).
++    fn ui_pos(&self) -> egui::Pos2 {
++        let ppp = self.egui_ctx.pixels_per_point().max(0.01);
++        egui::pos2(self.mouse_pos.x / ppp, self.mouse_pos.y / ppp)
++    }
++
+     pub fn is_over_ui(&self, pos: Vec2) -> bool {
+         let w = self.win_w as f32;
+         let h = self.win_h as f32;
+@@ -720,7 +727,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
+             let y = raw_y;
+ 
+             app.mouse_pos = egui::pos2(x, y);
+-            app.events.push(egui::Event::PointerMoved(app.mouse_pos));
++            app.events.push(egui::Event::PointerMoved(app.ui_pos()));
+ 
+             let screen_pos = Vec2::new(x, y);
+             if (app.is_space_down && app.is_pointer_down) || app.is_middle_panning {
+@@ -1091,7 +1098,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
+             app.mouse_pos = egui::pos2(raw_x, raw_y);
+ 
+             app.events.push(egui::Event::PointerButton {
+-                pos: app.mouse_pos,
++                pos: app.ui_pos(),
+                 button: egui::PointerButton::Primary,
+                 pressed: true,
+                 modifiers: Default::default(),
+@@ -1362,7 +1369,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
+             app.mouse_pos = egui::pos2(raw_x, raw_y);
+ 
+             app.events.push(egui::Event::PointerButton {
+-                pos: app.mouse_pos,
++                pos: app.ui_pos(),
+                 button: egui::PointerButton::Primary,
+                 pressed: false,
+                 modifiers: Default::default(),
+@@ -1559,7 +1566,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
+             app.mouse_pos = egui::pos2(raw_x, raw_y);
+ 
+             app.events.push(egui::Event::PointerButton {
+-                pos: app.mouse_pos,
++                pos: app.ui_pos(),
+                 button: egui::PointerButton::Secondary,
+                 pressed: true,
+                 modifiers: Default::default(),
+@@ -1573,7 +1580,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
+             app.mouse_pos = egui::pos2(raw_x, raw_y);
+ 
+             app.events.push(egui::Event::PointerButton {
+-                pos: app.mouse_pos,
++                pos: app.ui_pos(),
+                 button: egui::PointerButton::Secondary,
+                 pressed: false,
+                 modifiers: Default::default(),
+@@ -1935,10 +1942,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
+ 
+             if app.win_w > 0 && app.win_h > 0 && app.buffer.len() >= app.win_w * app.win_h {
+                 // 1. Process and Run egui UI layout FIRST so state mutations (grid, rulers, layers, tools) apply immediately
++                let ppp = app.egui_ctx.pixels_per_point().max(0.01);
+                 let mut raw_input = egui::RawInput::default();
+                 raw_input.screen_rect = Some(egui::Rect::from_min_size(
+                     egui::Pos2::ZERO,
+-                    egui::vec2(app.win_w as f32, app.win_h as f32),
++                    egui::vec2(app.win_w as f32 / ppp, app.win_h as f32 / ppp),
+                 ));
+                 raw_input.time = Some(app.start_time.elapsed().as_secs_f64());
+                 raw_input.events = std::mem::take(&mut app.events);
+@@ -1957,6 +1965,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
+                     .map(|v| v.repaint_delay.is_zero())
+                     .unwrap_or(false);
+ 
++                // First frame: panel sizes are now measured, so fit the canvas to the real viewport.
++                if !app.has_fit_after_layout && app.state.show_ui_panels {
++                    app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
++                    app.has_fit_after_layout = true;
++                }
++
+                 // 1.5 Animation playback tick
+                 if app.state.timeline.is_playing {
+                     let now = Instant::now();
+@@ -2554,6 +2568,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+         }
+     }
+ 
++    app_state.left_panel_w *= dpi_scale;
++    app_state.right_panel_w *= dpi_scale;
++    app_state.header_h *= dpi_scale;
++    app_state.footer_h *= dpi_scale;
+     let egui_ctx = egui::Context::default();
+     egui_ctx.set_pixels_per_point(dpi_scale);
+     configure_aurelia_style(&egui_ctx, app_state.theme_accent_color());
+@@ -2585,6 +2603,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+         stroke_dirty: false,
+         stroke_perspective_axis: None,
+         has_initialized_view: false,
++        has_fit_after_layout: false,
+         pen_pressure: None,
+         pen_tilt: (0.0, 0.0), stroke_size_scale: 1.0,
+         last_window_title: String::new(),
+diff --git a/crates/aurelia-ui/src/state.rs b/crates/aurelia-ui/src/state.rs
+index 4ac75c1..4d7947f 100644
+--- a/crates/aurelia-ui/src/state.rs
++++ b/crates/aurelia-ui/src/state.rs
+@@ -188,6 +188,10 @@ pub struct AppState {
+     pub right_panel_w: f32,
+     pub header_h: f32,
+     pub footer_h: f32,
++    /// egui pixels-per-point for the current frame. Panel sizes above and all
++    /// view geometry (`pan`, `zoom`, `viewport_*`) are in physical pixels; egui
++    /// layout and painting are in points. Convert with this at the boundary.
++    pub ui_ppp: f32,
+     pub perspective: aurelia_core::perspective::PerspectiveConfig,
+     pub show_perspective_dock: bool,
+     pub active_adjustment_modal: Option<u64>,
+@@ -402,6 +406,7 @@ impl AppState {
+             right_panel_w: 324.0,
+             header_h: 38.0,
+             footer_h: 30.0,
++            ui_ppp: 1.0,
+             perspective: {
+                 let mut p = aurelia_core::perspective::PerspectiveConfig::default();
+                 p.init_for_canvas(width, height);
+@@ -930,6 +935,13 @@ impl AppState {
+         center + offset
+     }
+ 
++    /// Canvas position -> egui point-space position, for painting overlays with egui.
++    /// `win_w`/`win_h` are the egui screen size in points.
++    pub fn canvas_to_ui(&self, canvas_pos: Vec2, win_w: f32, win_h: f32) -> Vec2 {
++        let ppp = self.ui_ppp.max(0.01);
++        self.canvas_to_screen(canvas_pos, win_w * ppp, win_h * ppp) / ppp
++    }
++
+     pub fn fit_tracing_to_canvas(&mut self) {
+         if let Some((rw, rh, _)) = self.reference_image {
+             let scale_x = self.document.width as f32 / rw as f32;
+diff --git a/crates/aurelia-ui/src/ui.rs b/crates/aurelia-ui/src/ui.rs
+index df82905..5af6496 100644
+--- a/crates/aurelia-ui/src/ui.rs
++++ b/crates/aurelia-ui/src/ui.rs
+@@ -152,7 +152,15 @@ fn restore_and_preview(state: &mut AppState, apply: impl Fn(&mut [u8], u32, u32)
+     }
+ }
+ 
++/// Screen size in physical pixels (egui reports points).
++fn screen_px(ctx: &egui::Context) -> (f32, f32) {
++    let ppp = ctx.pixels_per_point().max(0.01);
++    let sr = ctx.screen_rect();
++    (sr.width() * ppp, sr.height() * ppp)
++}
++
+ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
++    state.ui_ppp = ctx.pixels_per_point().max(0.01);
+     let accent = state.document.theme.accent_color();
+     let [ar, ag, ab, _] = accent.to_rgba8();
+     let accent_c32 = Color32::from_rgb(ar, ag, ab);
+@@ -171,7 +179,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+         egui::TopBottomPanel::top("header_panel")
+             .frame(design::bar_frame(design::INK_PANEL))
+             .show(ctx, |ui| {
+-                state.header_h = ui.max_rect().height() + 10.0; // bar_frame pads 5 px top/bottom
++                state.header_h = (ui.max_rect().height() + 10.0) * state.ui_ppp; // bar_frame pads 5 px top/bottom
+                 // A shallow gradient under the bar reads as a lit edge rather than a border.
+                 let bar_rect = ui.max_rect();
+                 design::vgradient(
+@@ -559,8 +567,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+                                 ui.close_menu();
+                             }
+                             if ui.button("⛶ Fit to Screen (Ctrl+0)").clicked() {
+-                                let sr = ctx.screen_rect();
+-                                state.reset_view_centered(sr.width(), sr.height());
++                                let (sw, sh) = screen_px(ctx);
++                                state.reset_view_centered(sw, sh);
+                                 ui.close_menu();
+                             }
+                             if ui.button("1:1 Actual Size (100% / Ctrl+1)").clicked() {
+@@ -774,7 +782,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+         egui::TopBottomPanel::bottom("status_bar")
+             .frame(design::bar_frame(design::INK_SUNKEN))
+             .show(ctx, |ui| {
+-                state.footer_h = ui.max_rect().height() + 10.0;
++                state.footer_h = (ui.max_rect().height() + 10.0) * state.ui_ppp;
+                 let bar_rect = ui.max_rect();
+                 design::vgradient(
+                     ui.painter(),
+@@ -829,7 +837,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+             .resizable(true)
+             .frame(crate::design::panel_frame(crate::design::INK_PANEL))
+             .show(ctx, |ui| {
+-                state.left_panel_w = ui.max_rect().width() + 2.0 * design::PANEL_PAD;
++                state.left_panel_w = (ui.max_rect().width() + 2.0 * design::PANEL_PAD) * state.ui_ppp;
+                 let panel_rect = ui.max_rect();
+                 design::vgradient(ui.painter(), panel_rect, design::INK_PANEL_TOP, design::INK_PANEL_BOTTOM);
+                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+@@ -1321,7 +1329,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+             .resizable(true)
+             .frame(crate::design::panel_frame(crate::design::INK_PANEL))
+             .show(ctx, |ui| {
+-                state.right_panel_w = ui.max_rect().width() + 2.0 * design::PANEL_PAD;
++                state.right_panel_w = (ui.max_rect().width() + 2.0 * design::PANEL_PAD) * state.ui_ppp;
+                 let panel_rect = ui.max_rect();
+                 design::vgradient(ui.painter(), panel_rect, design::INK_PANEL_TOP, design::INK_PANEL_BOTTOM);
+                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+@@ -1376,8 +1384,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+                         let canvas_center_x = doc_w * 0.5 - state.pan.x / state.zoom;
+                         let canvas_center_y = doc_h * 0.5 - state.pan.y / state.zoom;
+ 
+-                        let win_w_f = ctx.screen_rect().width();
+-                        let win_h_f = ctx.screen_rect().height();
++                        let (win_w_f, win_h_f) = screen_px(ctx);
+                         let open_vp_w = (win_w_f - state.left_panel_w - state.right_panel_w - 20.0).max(100.0);
+                         let open_vp_h = (win_h_f - state.header_h - state.footer_h - 10.0).max(100.0);
+ 
+@@ -2079,8 +2086,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+                             state.resize_canvas_h = state.document.height;
+                         }
+                         if op(ui, "⛶ Fit") {
+-                            let sr = ctx.screen_rect();
+-                            state.reset_view_centered(sr.width(), sr.height());
++                            let (sw, sh) = screen_px(ctx);
++                            state.reset_view_centered(sw, sh);
+                         }
+                         if op(ui, "100%") {
+                             state.reset_view();
+@@ -3244,7 +3251,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+         let win_h = win_size.y;
+ 
+         let to_screen_pos = |cv_pt: glam::Vec2| -> egui::Pos2 {
+-            let s_pt = state.canvas_to_screen(cv_pt, win_w, win_h);
++            let s_pt = state.canvas_to_ui(cv_pt, win_w, win_h);
+             egui::pos2(s_pt.x, s_pt.y)
+         };
+ 
+@@ -3401,8 +3408,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+             let c_sec = Color32::from_rgb(255, 255, 255);
+ 
+             for (i, &(p0, p1)) in mask.cached_boundary.iter().enumerate() {
+-                let s0 = state.canvas_to_screen(p0, win_w, win_h);
+-                let s1 = state.canvas_to_screen(p1, win_w, win_h);
++                let s0 = state.canvas_to_ui(p0, win_w, win_h);
++                let s1 = state.canvas_to_ui(p1, win_w, win_h);
+                 let is_pri = (((i as f32) * 0.5 + phase * 4.0) as usize) % 2 == 0;
+                 let stroke_c = if is_pri { c_pri } else { c_sec };
+                 painter.line_segment([egui::pos2(s0.x, s0.y), egui::pos2(s1.x, s1.y)], egui::Stroke::new(1.3_f32, stroke_c));
+@@ -3455,13 +3462,13 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+         let stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(236, 167, 19));
+ 
+         for i in 0..state.lasso_points.len() - 1 {
+-            let p0 = state.canvas_to_screen(state.lasso_points[i], win_w, win_h);
+-            let p1 = state.canvas_to_screen(state.lasso_points[i + 1], win_w, win_h);
++            let p0 = state.canvas_to_ui(state.lasso_points[i], win_w, win_h);
++            let p1 = state.canvas_to_ui(state.lasso_points[i + 1], win_w, win_h);
+             painter.line_segment([egui::pos2(p0.x, p0.y), egui::pos2(p1.x, p1.y)], stroke);
+         }
+         if state.lasso_points.len() >= 3 {
+-            let p_last = state.canvas_to_screen(*state.lasso_points.last().unwrap(), win_w, win_h);
+-            let p_first = state.canvas_to_screen(state.lasso_points[0], win_w, win_h);
++            let p_last = state.canvas_to_ui(*state.lasso_points.last().unwrap(), win_w, win_h);
++            let p_first = state.canvas_to_ui(state.lasso_points[0], win_w, win_h);
+             painter.line_segment(
+                 [egui::pos2(p_last.x, p_last.y), egui::pos2(p_first.x, p_first.y)],
+                 egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(0, 240, 255, 120)),
+@@ -3516,8 +3523,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
+             let top_left = glam::Vec2::new(config.pos_x, config.pos_y);
+             let bottom_right = top_left + glam::Vec2::new(text_box_w, text_box_h);
+ 
+-            let s_min = state.canvas_to_screen(top_left, win_w, win_h);
+-            let s_max = state.canvas_to_screen(bottom_right, win_w, win_h);
++            let s_min = state.canvas_to_ui(top_left, win_w, win_h);
++            let s_max = state.canvas_to_ui(bottom_right, win_w, win_h);
+             let screen_rect = egui::Rect::from_min_max(egui::pos2(s_min.x, s_min.y), egui::pos2(s_max.x, s_max.y));
+ 
+             // Draw crisp bounding outline with handles
+@@ -4361,7 +4368,7 @@ fn render_transform_gizmos(
+                 .iter()
+                 .map(|&c| {
+                     let tc = session.transform.forward(c);
+-                    let sp = state.canvas_to_screen(tc, win_w, win_h);
++                    let sp = state.canvas_to_ui(tc, win_w, win_h);
+                     egui::pos2(sp.x, sp.y)
+                 })
+                 .collect();
+@@ -4400,7 +4407,7 @@ fn render_transform_gizmos(
+             }
+ 
+             // Draw pivot point
+-            let pivot_sp = state.canvas_to_screen(session.transform.pivot + session.transform.translation, win_w, win_h);
++            let pivot_sp = state.canvas_to_ui(session.transform.pivot + session.transform.translation, win_w, win_h);
+             painter.circle_stroke(egui::pos2(pivot_sp.x, pivot_sp.y), 6.0, Stroke::new(1.5_f32, white));
+             painter.circle_filled(egui::pos2(pivot_sp.x, pivot_sp.y), 2.0, accent_c32);
+         }
+@@ -4410,7 +4417,7 @@ fn render_transform_gizmos(
+                 .dst_corners
+                 .iter()
+                 .map(|&c| {
+-                    let sp = state.canvas_to_screen(c, win_w, win_h);
++                    let sp = state.canvas_to_ui(c, win_w, win_h);
+                     egui::pos2(sp.x, sp.y)
+                 })
+                 .collect();
+@@ -4445,8 +4452,8 @@ fn render_transform_gizmos(
+             // Draw horizontal mesh lines
+             for r in 0..rows {
+                 for c in 0..(cols - 1) {
+-                    let p0 = state.canvas_to_screen(mesh.get_vertex(r, c), win_w, win_h);
+-                    let p1 = state.canvas_to_screen(mesh.get_vertex(r, c + 1), win_w, win_h);
++                    let p0 = state.canvas_to_ui(mesh.get_vertex(r, c), win_w, win_h);
++                    let p1 = state.canvas_to_ui(mesh.get_vertex(r, c + 1), win_w, win_h);
+                     painter.line_segment([egui::pos2(p0.x, p0.y), egui::pos2(p1.x, p1.y)], Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(100, 180, 255, 160)));
+                 }
+             }
+@@ -4454,8 +4461,8 @@ fn render_transform_gizmos(
+             // Draw vertical mesh lines
+             for c in 0..cols {
+                 for r in 0..(rows - 1) {
+-                    let p0 = state.canvas_to_screen(mesh.get_vertex(r, c), win_w, win_h);
+-                    let p1 = state.canvas_to_screen(mesh.get_vertex(r + 1, c), win_w, win_h);
++                    let p0 = state.canvas_to_ui(mesh.get_vertex(r, c), win_w, win_h);
++                    let p1 = state.canvas_to_ui(mesh.get_vertex(r + 1, c), win_w, win_h);
+                     painter.line_segment([egui::pos2(p0.x, p0.y), egui::pos2(p1.x, p1.y)], Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(100, 180, 255, 160)));
+                 }
+             }
+@@ -4464,7 +4471,7 @@ fn render_transform_gizmos(
+             for r in 0..rows {
+                 for c in 0..cols {
+                     let v_can = mesh.get_vertex(r, c);
+-                    let v_sp = state.canvas_to_screen(v_can, win_w, win_h);
++                    let v_sp = state.canvas_to_ui(v_can, win_w, win_h);
+                     let pos = egui::pos2(v_sp.x, v_sp.y);
+                     let is_corner = (r == 0 || r == rows - 1) && (c == 0 || c == cols - 1);
+                     let radius = if is_corner { 5.0 } else { 4.0 };
+@@ -4477,8 +4484,8 @@ fn render_transform_gizmos(
+         }
+         aurelia_core::transform::TransformMode::ThinPlateSpline => {
+             for (i, (&src_can, &tgt_can)) in session.tps_source_pins.iter().zip(session.tps_target_pins.iter()).enumerate() {
+-                let src_sp = state.canvas_to_screen(src_can, win_w, win_h);
+-                let tgt_sp = state.canvas_to_screen(tgt_can, win_w, win_h);
++                let src_sp = state.canvas_to_ui(src_can, win_w, win_h);
++                let tgt_sp = state.canvas_to_ui(tgt_can, win_w, win_h);
+                 let p_src = egui::pos2(src_sp.x, src_sp.y);
+                 let p_tgt = egui::pos2(tgt_sp.x, tgt_sp.y);
+ 
