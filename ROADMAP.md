@@ -111,15 +111,57 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
   via `brush::tilt_size_scale`, exposed as the **Tilt widens** slider. Off by default,
   freehand tools only, never mutates the stored brush size.
 
-### Performance baseline
+### Performance: the general (offset + blend) path
 
-`cargo run --release -p aurelia-render --example bench_composite` (no dependencies):
+Objective for v2.6.0. Measured with
+`cargo run --release -p aurelia-render --example bench_composite`
+(1920x1080, 4 layers, 20 iterations, one machine):
 
-| Shape of work | Measured | target |
-| :--- | ---: | ---: |
-| Plain 4-layer stack | 113.1 MPix/s | >= 40 |
-| With a layer mask | 92.6 MPix/s | >= 30 |
-| Offset + general blend path | 25.7 MPix/s | >= 60 (open) |
+| Case | v2.5.0 | now | change |
+| :--- | ---: | ---: | ---: |
+| Plain stack | 113.1 MPix/s | 203.4 MPix/s | +80% |
+| With layer mask | 92.6 MPix/s | 155.5 MPix/s | +68% |
+| General, opaque | 25.7 MPix/s | 36.6 MPix/s | **+42%** |
+| General, 50% coverage | - | 59.8 MPix/s | - |
+| General, 10% coverage | - | 156.4 MPix/s | - |
+| General, 10% + mask | - | 138.4 MPix/s | - |
+
+Tiered targets for the general path: **T1 30** (met) ? **T2 40** ? **T3 50** ? **T4 60** MPix/s.
+
+#### What was fixed (2.6.0 work so far)
+
+1. **Out-of-bounds work removed.** The loop visited every canvas pixel even when the
+   layer was offset; the valid span is now computed per row, so an offset layer only
+   touches the pixels it actually covers.
+2. **Transparent pixels skipped.** `composite_pixel` returned `dst` unchanged for
+   `sa <= 0.0001` but only after the full float path. Skipping `src alpha == 0` before
+   the call is exact, and on realistic artwork it is the dominant win: 10% coverage
+   runs ~4x faster than a fully opaque layer.
+3. **Per-pixel indirection removed.** `get_pixel()` (four bounds checks and an `Option`)
+   replaced by contiguous row indexing; the blend mode and mask are hoisted out of the
+   inner loop and `composite_pixel` is inlined.
+4. **Correctness gate.** `general_compositing_is_bit_identical_to_the_reference` runs
+   the previous implementation as an oracle over 702 combinations ? 13 blend modes x
+   3 offsets x 3 mask states x clipping on/off x 3 coverages ? and requires byte
+   equality. Speed may not change a pixel.
+
+#### Remaining work toward 60 MPix/s (opaque)
+
+1. **Monomorphise the blend per layer** ? resolve the mode once to a specialised loop so
+   each mode's maths inlines without the per-pixel `match`.
+2. **Row-parallel compositing** ? layers are independent; splitting rows across threads
+   is safe when each thread owns a disjoint output range. This is the most promising
+   route to 60 MPix/s without touching the maths.
+3. **Selection/clip pre-computation** ? a clipping layer currently re-reads its base's
+   alpha per pixel through `get_pixel`; a cached base-alpha row would remove that.
+
+#### Tried and rejected (measured, not assumed)
+
+- **256-entry `n/255.0` lookup table.** Expected to remove eight divides per pixel;
+  measured **29.7 MPix/s vs 36.6** - a 19% regression. A `static` table can alias the
+  output buffer, so LLVM reloads entries after every store. Reverted. Any retry needs the
+  table copied to the stack per row, or a `const` table consumed in a way that cannot
+  alias.
 
 ## Next (ordered)
 

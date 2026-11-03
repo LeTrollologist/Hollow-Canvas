@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum BlendMode {
     #[default]
@@ -144,6 +145,7 @@ impl BlendMode {
     }
 
     /// Full pixel compositing: dst is background, src is foreground with layer opacity
+    #[inline]
     pub fn composite_pixel(&self, dst: [u8; 4], src: [u8; 4], layer_opacity: f32) -> [u8; 4] {
         let sa = (src[3] as f32 / 255.0) * layer_opacity.clamp(0.0, 1.0);
         if sa <= 0.0001 {

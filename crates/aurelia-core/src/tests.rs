@@ -1181,4 +1181,224 @@ mod tests {
         assert!((x - y).abs() < 1e-4, "both axes are equivalent");
         assert!(tilt_size_scale(f32::NAN, 10.0, 1.0) == 1.0, "garbage tilt is ignored");
     }
+
+
+    /// The compositor as it stood before the v2.6.0 rewrite, kept verbatim as the
+    /// correctness oracle. The rewritten path must produce byte-identical output:
+    /// speed is never allowed to change a pixel.
+    fn reference_composite(doc: &Document, include_background: bool) -> Vec<u8> {
+        let total_bytes = (doc.width * doc.height * 4) as usize;
+        let mut out = vec![0u8; total_bytes];
+        if include_background && !doc.is_transparent {
+            let bg = doc.background_color().to_rgba8();
+            for chunk in out[..total_bytes].chunks_exact_mut(4) {
+                chunk.copy_from_slice(&bg);
+            }
+        }
+
+        for (layer_idx, layer) in doc.layers.iter().enumerate() {
+            if layer.is_group() || !doc.is_layer_effective_visible(layer.id) {
+                continue;
+            }
+            let prev_layer = if layer.clipping_mask && layer_idx > 0 {
+                let base = &doc.layers[layer_idx - 1];
+                if doc.is_layer_effective_visible(base.id) {
+                    Some(base)
+                } else {
+                    continue;
+                }
+            } else {
+                None
+            };
+            let eff_opacity = doc.effective_opacity(layer.id);
+            if eff_opacity <= 0.001 {
+                continue;
+            }
+            if layer.is_adjustment() {
+                continue; // the fixtures below use raster layers only
+            }
+
+            // The fast path is part of the semantics: it uses integer maths and is
+            // selected for Normal/zero-offset/no-clip layers, so the oracle has to
+            // reproduce it exactly as well.
+            if layer.blend_mode == crate::blend::BlendMode::Normal
+                && layer.offset_x == 0
+                && layer.offset_y == 0
+                && prev_layer.is_none()
+                && layer.pixels.len() >= total_bytes
+            {
+                let alpha_mul = (eff_opacity.clamp(0.0, 1.0) * 255.0).round() as u32;
+                let mask = layer.mask.as_ref().filter(|m| {
+                    m.enabled && m.pixels.len() >= (doc.width as usize) * (doc.height as usize)
+                });
+                for (i, (dst, src)) in out[..total_bytes]
+                    .chunks_exact_mut(4)
+                    .zip(layer.pixels[..total_bytes].chunks_exact(4))
+                    .enumerate()
+                {
+                    let mut sa = (src[3] as u32 * alpha_mul) / 255;
+                    if let Some(m) = mask {
+                        sa = sa * m.pixels[i] as u32 / 255;
+                    }
+                    if sa == 0 {
+                        continue;
+                    }
+                    let da = dst[3] as u32;
+                    if da == 0 {
+                        dst[0] = src[0];
+                        dst[1] = src[1];
+                        dst[2] = src[2];
+                        dst[3] = sa as u8;
+                    } else if sa == 255 {
+                        dst[0] = src[0];
+                        dst[1] = src[1];
+                        dst[2] = src[2];
+                        dst[3] = 255;
+                    } else {
+                        let inv_sa = 255 - sa;
+                        let out_a = sa + (da * inv_sa + 127) / 255;
+                        if out_a > 0 {
+                            let r = (src[0] as u32 * sa * 255 + dst[0] as u32 * da * inv_sa) / (out_a * 255);
+                            let g = (src[1] as u32 * sa * 255 + dst[1] as u32 * da * inv_sa) / (out_a * 255);
+                            let b = (src[2] as u32 * sa * 255 + dst[2] as u32 * da * inv_sa) / (out_a * 255);
+                            dst[0] = r.min(255) as u8;
+                            dst[1] = g.min(255) as u8;
+                            dst[2] = b.min(255) as u8;
+                            dst[3] = out_a.min(255) as u8;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            let mask = layer.mask.as_ref().filter(|m| m.enabled);
+            for y in 0..doc.height {
+                for x in 0..doc.width {
+                    let dst_idx = ((y * doc.width + x) * 4) as usize;
+                    let src_x = x as i32 - layer.offset_x;
+                    let src_y = y as i32 - layer.offset_y;
+                    let src_px = if src_x >= 0 && src_x < doc.width as i32 && src_y >= 0 && src_y < doc.height as i32 {
+                        layer.get_pixel(src_x as u32, src_y as u32).unwrap_or([0, 0, 0, 0])
+                    } else {
+                        [0, 0, 0, 0]
+                    };
+                    let mut opacity = eff_opacity;
+                    if let Some(m) = mask {
+                        opacity *= m.alpha_at(x, y) as f32 / 255.0;
+                    }
+                    if let Some(base) = prev_layer {
+                        let bx = x as i32 - base.offset_x;
+                        let by = y as i32 - base.offset_y;
+                        let base_a = if bx >= 0 && bx < doc.width as i32 && by >= 0 && by < doc.height as i32 {
+                            base.get_pixel(bx as u32, by as u32).map(|p| p[3] as f32 / 255.0).unwrap_or(0.0)
+                        } else {
+                            0.0
+                        };
+                        opacity *= base_a * doc.effective_opacity(base.id);
+                    }
+                    if opacity <= 0.001 {
+                        continue;
+                    }
+                    let dst_px = [out[dst_idx], out[dst_idx + 1], out[dst_idx + 2], out[dst_idx + 3]];
+                    let blended = layer.blend_mode.composite_pixel(dst_px, src_px, opacity);
+                    out[dst_idx] = blended[0];
+                    out[dst_idx + 1] = blended[1];
+                    out[dst_idx + 2] = blended[2];
+                    out[dst_idx + 3] = blended[3];
+                }
+            }
+        }
+        out
+    }
+
+    fn coverage_fixture(
+        mode: crate::blend::BlendMode,
+        offset: (i32, i32),
+        mask_case: u8,
+        clipping: bool,
+        coverage: f32,
+    ) -> Document {
+        const W: u32 = 12;
+        const H: u32 = 9;
+        let mut doc = Document::new(W, H);
+        let base = doc.active_layer_id;
+
+        // Base layer: opaque noise so every blend mode has something to work with.
+        if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == base) {
+            for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+                px[0] = (i * 7 % 251) as u8;
+                px[1] = (i * 13 % 241) as u8;
+                px[2] = (i * 29 % 233) as u8;
+                px[3] = 255;
+            }
+        }
+
+        let subject = doc.add_layer(Some("subject".into()));
+        if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == subject) {
+            layer.blend_mode = mode;
+            layer.offset_x = offset.0;
+            layer.offset_y = offset.1;
+            layer.opacity = 0.8;
+            for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+                let x = (i as u32) % W;
+                let y = (i as u32) / W;
+                let covered = coverage >= 1.0
+                    || ((x * 3 + y * 5) as f32 / ((W + H) as f32)) < coverage;
+                px[0] = (200 - (x * 5) as u8) as u8;
+                px[1] = (120 + (y * 11) as u8) as u8;
+                px[2] = (60 + ((x + y) * 9) as u8) as u8;
+                px[3] = if covered { 255 } else { 0 };
+            }
+        }
+        match mask_case {
+            1 => {
+                assert!(doc.add_layer_mask(subject, None));
+            }
+            2 => {
+                assert!(doc.add_layer_mask(subject, None));
+                assert!(doc.invert_layer_mask(subject));
+                assert!(doc.set_layer_mask_enabled(subject, false));
+            }
+            _ => {}
+        }
+
+        if clipping {
+            let clip = doc.add_layer(Some("clip".into()));
+            if let Some(layer) = doc.layers.iter_mut().find(|l| l.id == clip) {
+                layer.clipping_mask = true;
+                layer.opacity = 0.7;
+                for (i, px) in layer.pixels.chunks_exact_mut(4).enumerate() {
+                    let x = (i as u32) % W;
+                    px[0] = 30;
+                    px[1] = (x * 20) as u8;
+                    px[2] = 200;
+                    px[3] = if x % 3 == 0 { 255 } else { 90 };
+                }
+            }
+        }
+        doc
+    }
+
+    /// The rewritten general path must be byte-identical to the reference one for
+    /// every blend mode, offset, mask state and clipping combination.
+    #[test]
+    fn general_compositing_is_bit_identical_to_the_reference() {
+        for &mode in crate::blend::BlendMode::ALL {
+            for &offset in &[(0, 0), (3, 2), (-5, -4)] {
+                for mask_case in 0..3u8 {
+                    for clipping in [false, true] {
+                        for coverage in [1.0f32, 0.5, 0.15] {
+                            let doc = coverage_fixture(mode, offset, mask_case, clipping, coverage);
+                            let got = doc.composite_layers(false);
+                            let want = reference_composite(&doc, false);
+                            assert_eq!(
+                                got, want,
+                                "mismatch: {mode:?} offset {offset:?} mask {mask_case} clip {clipping} coverage {coverage}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -687,27 +687,54 @@ impl Document {
                 continue;
             }
 
+            // ?? General path: offsets, blending, clipping, masks ??
+            //
+            // Two things dominate here and both are avoidable work, not maths:
+            //   * the loop used to visit every pixel of the canvas even when the
+            //     layer was offset, or fully transparent there; and
+            //   * `get_pixel` did four bounds checks and an Option per pixel.
+            // The blend itself is untouched (still `composite_pixel`), so output is
+            // bit-identical to the straightforward implementation - see the
+            // equivalence tests in `tests.rs`.
+            let mask = layer.mask.as_ref().filter(|m| m.enabled);
+            // Copy the mode out of the layer so the inner loop reads a local instead of
+            // a field through a reference each pixel.
+            let blend_mode = layer.blend_mode;
+            let mask_w = self.width as usize;
+            let opacity = eff_opacity;
+            let x_start = layer.offset_x.max(0) as u32;
+            let x_end = (self.width as i32 + layer.offset_x).min(self.width as i32);
+            if x_start >= x_end as u32 {
+                continue;
+            }
             for y in 0..self.height {
-                for x in 0..self.width {
-                    let dst_idx = ((y * self.width + x) * 4) as usize;
-                    let dst_px = [
-                        out[dst_idx],
-                        out[dst_idx + 1],
-                        out[dst_idx + 2],
-                        out[dst_idx + 3],
-                    ];
+                let src_y = y as i32 - layer.offset_y;
+                if src_y < 0 || src_y >= self.height as i32 {
+                    continue;
+                }
+                let src_row = (src_y as usize) * mask_w;
+                let dst_row = (y as usize) * mask_w;
+                for x in x_start..x_end as u32 {
+                    let src_col = (x as i32 - layer.offset_x) as usize;
+                    let si = (src_row + src_col) * 4;
+                    if si + 3 >= layer.pixels.len() {
+                        break;
+                    }
+                    // Fully transparent source is a mathematical no-op; skipping it is
+                    // exact and is the single biggest win on real artwork.
+                    if layer.pixels[si + 3] == 0 {
+                        continue;
+                    }
+                    let dst_idx = (dst_row + x as usize) * 4;
+                    if dst_idx + 3 >= out.len() {
+                        break;
+                    }
 
-                    let src_x = x as i32 - layer.offset_x;
-                    let src_y = y as i32 - layer.offset_y;
-                    let src_px = if src_x >= 0 && src_x < self.width as i32 && src_y >= 0 && src_y < self.height as i32 {
-                        layer.get_pixel(src_x as u32, src_y as u32).unwrap_or([0, 0, 0, 0])
-                    } else {
-                        [0, 0, 0, 0]
-                    };
-
-                    let mut opacity = eff_opacity;
-                    if let Some(m) = layer.mask.as_ref().filter(|m| m.enabled) {
-                        opacity *= m.alpha_at(x, y) as f32 / 255.0;
+                    let mut opacity = opacity;
+                    if let Some(m) = mask {
+                        if let Some(&mv) = m.pixels.get((y as usize) * mask_w + x as usize) {
+                            opacity *= mv as f32 / 255.0;
+                        }
                     }
                     if let Some(base) = prev_layer {
                         let bx = x as i32 - base.offset_x;
@@ -719,12 +746,23 @@ impl Document {
                         };
                         opacity *= base_a * self.effective_opacity(base.id);
                     }
-
                     if opacity <= 0.001 {
                         continue;
                     }
 
-                    let blended = layer.blend_mode.composite_pixel(dst_px, src_px, opacity);
+                    let dst_px = [
+                        out[dst_idx],
+                        out[dst_idx + 1],
+                        out[dst_idx + 2],
+                        out[dst_idx + 3],
+                    ];
+                    let src_px = [
+                        layer.pixels[si],
+                        layer.pixels[si + 1],
+                        layer.pixels[si + 2],
+                        layer.pixels[si + 3],
+                    ];
+                    let blended = blend_mode.composite_pixel(dst_px, src_px, opacity);
                     out[dst_idx] = blended[0];
                     out[dst_idx + 1] = blended[1];
                     out[dst_idx + 2] = blended[2];
