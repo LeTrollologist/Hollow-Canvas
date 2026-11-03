@@ -288,4 +288,98 @@ mod tests {
         let loaded = load_project_from_reader(buf).expect("load");
         assert!(loaded.layers.iter().all(|l| l.mask.is_none()));
     }
+
+    /// The byte stream v2.4.x wrote: the current body with the sRGB8 magic and without the
+    /// per-layer mask section that AUR v2 introduced.
+    ///
+    /// It is derived from the current writer rather than transcribed by hand, so the test
+    /// cannot pass against a layout that never existed: the thumbnail is a PNG written
+    /// straight after the layer loop behind its u32 length, and the single byte between
+    /// the last layer and that length is its mask flag.
+    fn downgrade_to_v1(v2: &[u8]) -> Vec<u8> {
+        let png = v2
+            .windows(4)
+            .rposition(|w| w == b"\x89PNG")
+            .expect("thumbnail is a PNG");
+        let mask_flag_at = png - 5;
+        assert_eq!(v2[mask_flag_at], 0, "the v1 fixture must not carry a mask");
+        let mut v1 = Vec::with_capacity(v2.len() - 1);
+        v1.extend_from_slice(b"AUR\x01");
+        v1.extend_from_slice(&v2[4..mask_flag_at]);
+        v1.extend_from_slice(&v2[png - 4..]);
+        v1
+    }
+
+    #[test]
+    fn v1_project_files_still_load() {
+        let mut doc = Document::new(6, 5);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.active_layer_mut() {
+            layer.name = "Legacy".to_string();
+            layer.opacity = 0.5;
+            layer.offset_x = 2;
+            layer.offset_y = -1;
+        }
+        for (x, y, px) in [
+            (0u32, 0u32, [10u8, 20, 30, 255]),
+            (3, 4, [200, 100, 50, 128]),
+        ] {
+            if let Some(layer) = doc.active_layer_mut() {
+                layer.set_pixel(x, y, px);
+            }
+        }
+
+        let mut v2 = Vec::new();
+        save_project_to_writer(&doc, &mut v2).expect("save");
+        let v1 = downgrade_to_v1(&v2);
+        let loaded = load_project_from_reader(&v1[..]).expect("a v1 file must still load");
+
+        assert_eq!((loaded.width, loaded.height), (6, 5));
+        assert_eq!(loaded.active_layer_id, id);
+        assert_eq!(loaded.layers.len(), 1);
+        let layer = loaded.get_layer(id).expect("layer");
+        assert_eq!(layer.name, "Legacy");
+        assert_eq!(layer.opacity, 0.5);
+        assert_eq!((layer.offset_x, layer.offset_y), (2, -1));
+        assert_eq!(layer.get_pixel(0, 0), Some([10, 20, 30, 255]));
+        assert_eq!(layer.get_pixel(3, 4), Some([200, 100, 50, 128]));
+        assert!(layer.mask.is_none(), "v1 files never carry a mask");
+    }
+
+    /// A damaged file must be reported, not panic - a crash here would look like data loss
+    /// to the person opening it.
+    #[test]
+    fn truncated_project_files_are_rejected_without_panicking() {
+        let mut doc = Document::new(8, 6);
+        if let Some(layer) = doc.active_layer_mut() {
+            layer.set_pixel(0, 0, [1, 2, 3, 255]);
+        }
+        let mut v2 = Vec::new();
+        save_project_to_writer(&doc, &mut v2).expect("save");
+
+        // The preview thumbnail is the last thing in the file and is never read back, so
+        // it marks the boundary: everything before it is artwork data.
+        let thumb_len_at = v2
+            .windows(4)
+            .rposition(|w| w == b"\x89PNG")
+            .expect("thumbnail is a PNG")
+            - 4;
+
+        // Truncating anywhere inside the artwork must be reported.
+        for cut in [0usize, 3, 4, 12, 30, thumb_len_at - 1] {
+            let result = load_project_from_reader(&v2[..cut]);
+            assert!(result.is_err(), "a file truncated to {cut} bytes must be rejected");
+        }
+
+        // Losing only the thumbnail is tolerated on purpose: an openable project should not
+        // be rejected over preview data.
+        let loaded = load_project_from_reader(&v2[..thumb_len_at]).expect("artwork is intact");
+        assert_eq!(loaded.width, doc.width);
+
+        // And a file with a bad magic must not be mistaken for a project.
+        let mut bad = v2.clone();
+        bad[0..4].copy_from_slice(b"NOPE");
+        assert!(load_project_from_reader(&bad[..]).is_err());
+    }
 }

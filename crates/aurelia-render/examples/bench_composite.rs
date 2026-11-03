@@ -22,7 +22,7 @@ const W: u32 = 1920;
 const H: u32 = 1080;
 const LAYERS: u32 = 4;
 const ITERS: u32 = 20;
-const REPEATS: u32 = 3;
+const REPEATS: u32 = 5;
 
 fn build_doc(masked: bool, offset: bool, coverage: f32) -> Document {
     let mut doc = Document::new(W, H);
@@ -114,14 +114,16 @@ fn tier(rate: f64) -> &'static str {
     }
 }
 
-/// Times every case once per round and keeps the best round per case.
+/// Times every case once per round, then reports the median round for each case.
 ///
 /// Cases are interleaved rather than measured one after another: a laptop that throttles
-/// under sustained load would otherwise make the first case look fast and the last slow,
-/// which is exactly the mistake this benchmark exists to avoid.
-fn run(cases: &[Case]) -> Vec<f64> {
+/// under sustained load would otherwise make the first case look fast and the last slow.
+/// The median is reported rather than the minimum so the number is reproducible on a
+/// machine that is doing other things; the best round is shown alongside it so the spread
+/// is visible instead of hidden.
+fn run(cases: &[Case]) -> Vec<(f64, f64)> {
     let megapixels = (W as f64 * H as f64 * ITERS as f64) / 1_000_000.0;
-    let mut best = vec![f64::INFINITY; cases.len()];
+    let mut samples: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
     for _ in 0..REPEATS {
         for (idx, case) in cases.iter().enumerate() {
             let doc = (case.make)();
@@ -131,14 +133,24 @@ fn run(cases: &[Case]) -> Vec<f64> {
             for _ in 0..ITERS {
                 std::hint::black_box(doc.composite_layers(true));
             }
-            best[idx] = best[idx].min(start.elapsed().as_secs_f64());
+            samples[idx].push(start.elapsed().as_secs_f64());
         }
     }
-    best.iter().map(|secs| megapixels / secs).collect()
+    samples
+        .iter()
+        .map(|rounds| {
+            let mut sorted = rounds.clone();
+            sorted.sort_by(f64::total_cmp);
+            let median = sorted[sorted.len() / 2];
+            let best = sorted[0];
+            (megapixels / median, megapixels / best)
+        })
+        .collect()
 }
 
-fn report(label: &str, rate: f64) {
-    println!("{label:<26} {rate:>7.1} MPix/s");
+fn report(label: &str, rates: (f64, f64)) {
+    let (median, best) = rates;
+    println!("{label:<26} {median:>7.1} MPix/s   (best {best:.1})");
 }
 
 fn print_machine() {
@@ -160,7 +172,7 @@ fn print_machine() {
 fn main() {
     print_machine();
     println!(
-        "\nAurelia composite benchmark - {W}x{H}, {LAYERS} layers,          {ITERS} iterations x {REPEATS} interleaved rounds (best of)"
+        "\nAurelia composite benchmark - {W}x{H}, {LAYERS} layers,          {ITERS} iterations x {REPEATS} interleaved rounds (median of)"
     );
 
     let mut cases = vec![
@@ -197,12 +209,12 @@ fn main() {
         report(&format!("  {}", case.label), *rate);
     }
 
-    let opaque = rates[2];
+    let opaque = rates[2].0;
     let slowest = cases[split..]
         .iter()
         .zip(&rates[split..])
-        .min_by(|a, b| a.1.total_cmp(b.1))
-        .map(|(case, rate)| (case.label, *rate))
+        .min_by(|a, b| a.1 .0.total_cmp(&b.1 .0))
+        .map(|(case, rate)| (case.label, rate.0))
         .unwrap_or(("?", 0.0));
 
     println!("\nRelease tiers - general (offset+blend) path, opaque:");
@@ -211,7 +223,7 @@ fn main() {
     println!("  slowest mode: {} at {:.1} MPix/s", slowest.0, slowest.1);
     println!(
         "  plain {:.1} MPix/s (floor 40), masked {:.1} MPix/s (floor 30)",
-        rates[0], rates[1]
+        rates[0].0, rates[1].0
     );
 }
 
