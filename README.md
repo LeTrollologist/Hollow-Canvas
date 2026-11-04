@@ -23,7 +23,7 @@
     <img src="https://img.shields.io/badge/Privacy-Offline_%26_Zero_Telemetry-3FA796?style=for-the-badge&labelColor=1A120B" alt="Privacy" />
   </a>
   <a href="crates/aurelia-io/">
-    <img src="https://img.shields.io/badge/Format-AUR_v1_%2B_Image_Export-F3E7D6?style=for-the-badge&labelColor=1A120B" alt="Project Format" />
+    <img src="https://img.shields.io/badge/Format-AUR_v3_%2B_Image_Export-F3E7D6?style=for-the-badge&labelColor=1A120B" alt="Project Format" />
   </a>
   <a href="LICENSE.md">
     <img src="https://img.shields.io/badge/License-GPL--3.0-C9527F?style=for-the-badge&logo=opensourceinitiative&logoColor=1A120B&labelColor=1A120B" alt="License" />
@@ -150,7 +150,7 @@ Aurelia/
 ├── crates/
 │   ├── aurelia-core/  # Core domain models, perspective geometry, affine/quad/mesh/TPS deformation, adjustment filters, layers, and rasterizers
 │   ├── aurelia-render/ # Software renderer, perspective guides, texture caching, grid/ruler overlays, and UI primitives
-│   ├── aurelia-io/    # Binary AUR v1 project serialization, image export, and file parsing
+│   ├── aurelia-io/    # Binary AUR v3 project serialization, image export, and file parsing
 │   ├── aurelia-ui/    # Modern egui-based dock panels, studio viewport, tools shelf, transform studio, perspective dock, and palettes
 │   └── aurelia-app/   # Win32 + GDI host: message loop, stylus sampling, autosave ticker, CLI
 ```
