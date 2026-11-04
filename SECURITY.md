@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-As of November 2nd, 2026, I will provide security updates and patches for only the latest version of **Aurelia**.
+As of November 2nd, 2026, I will provide security updates and patches for only the latest version of **Aurelia**. The current release is [v3.9.1](https://github.com/LeTrollologist/Aurelia/releases/tag/v3.0.1).
 
 ---
 
@@ -73,7 +73,7 @@ Every official release distribution package (`Aurelia-v<version>-win64.zip` and
 ### How to Verify a Downloaded Release
 ```powershell
 # 1. Compute SHA-256 on Windows
-certutil -hashfile Aurelia-Setup-2.1.0.exe SHA256
+certutil -hashfile Aurelia-Setup-3.0.1.exe SHA256
 
 # 2. Compare with the matching line in SHA256SUMS.txt
 Get-Content SHA256SUMS.txt
