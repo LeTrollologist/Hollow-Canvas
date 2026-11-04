@@ -56,3 +56,10 @@ def test_bump_files_reports_only_real_changes(tmp_path):
     changed = bump_files(tmp_path, ["a.toml"], "3.1.0")
     assert changed == ["a.toml"]
     assert '3.1.0' in (tmp_path / "a.toml").read_text(encoding="utf-8")
+
+
+def test_files_without_a_version_declaration_are_tolerated(tmp_path):
+    (tmp_path / "workspace.toml").write_text("[workspace]\nmembers = []\n", encoding="utf-8")
+    (tmp_path / "a.toml").write_text('[package]\nversion = "3.0.2"\n', encoding="utf-8")
+    assert check_files(tmp_path, ["workspace.toml", "a.toml"], "3.0.2") == []
+    assert bump_files(tmp_path, ["workspace.toml", "a.toml"], "3.0.3") == ["a.toml"]

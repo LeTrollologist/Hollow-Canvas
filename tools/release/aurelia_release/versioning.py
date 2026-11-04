@@ -87,8 +87,10 @@ def check_files(repo: Path, files: Iterable[str], version: str) -> list[str]:
             continue
         found = declared_versions(text)
         if not found:
-            problems.append(f"{rel}: no version declaration found")
-        elif found != {version}:
+            # Some configured manifests (for example the workspace root) legitimately
+            # carry no package version; they are normalised when they do have one.
+            continue
+        if found != {version}:
             problems.append(f"{rel}: declares {', '.join(sorted(found))}, expected {version}")
     return problems
 
@@ -103,8 +105,4 @@ def bump_files(repo: Path, files: Iterable[str], version: str) -> list[str]:
         if replacements and updated != text:
             _write(path, updated)
             changed.append(Path(rel).as_posix())
-        elif not replacements:
-            raise PreflightError(
-                f"{rel}: no version declaration matched while bumping to {version}"
-            )
     return changed
