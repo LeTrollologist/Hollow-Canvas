@@ -23,7 +23,7 @@
     <img src="https://img.shields.io/badge/Privacy-Offline_%26_Zero_Telemetry-3FA796?style=for-the-badge&labelColor=1A120B" alt="Privacy" />
   </a>
   <a href="crates/aurelia-io/">
-    <img src="https://img.shields.io/badge/Format-AUR_v1_%2B_Image_Export-F3E7D6?style=for-the-badge&labelColor=1A120B" alt="Project Format" />
+    <img src="https://img.shields.io/badge/Format-AUR_v3_%2B_Image_Export-F3E7D6?style=for-the-badge&labelColor=1A120B" alt="Project Format" />
   </a>
   <a href="LICENSE.md">
     <img src="https://img.shields.io/badge/License-GPL--3.0-C9527F?style=for-the-badge&logo=opensourceinitiative&logoColor=1A120B&labelColor=1A120B" alt="License" />
@@ -136,7 +136,7 @@
 - ✍ **Stylus Pressure & Tilt**: Pen input is sampled through `WM_POINTER` / `GetPointerPenInfo`; real pressure drives brush size while the mouse path (and velocity dynamics) keeps working unchanged.
 - 🧠 **Memory-Bounded Undo**: The 50-step history also enforces a 512 MiB budget, evicting the oldest full-layer snapshots first so long sessions cannot balloon into multi-gigabyte RSS.
 - 📊 **Tone & Stylize Filters**: Levels (black/white/gamma), Colorize, Pixelate and Motion Blur alongside the existing blur/sharpen/grain/vignette/lens set — all with live, non-destructive previews and selection awareness.
-- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.aur`, AUR v1) alongside SHA-256-verified, VirusTotal-scanned installer and portable releases.
+- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.aur`, AUR v3) alongside SHA-256-verified, VirusTotal-scanned installer and portable releases.
 
 ---
 
@@ -150,7 +150,7 @@ Aurelia/
 ├── crates/
 │   ├── aurelia-core/  # Core domain models, perspective geometry, affine/quad/mesh/TPS deformation, adjustment filters, layers, and rasterizers
 │   ├── aurelia-render/ # Software renderer, perspective guides, texture caching, grid/ruler overlays, and UI primitives
-│   ├── aurelia-io/    # Binary AUR v1 project serialization, image export, and file parsing
+│   ├── aurelia-io/    # Binary AUR v3 project serialization, image export, and file parsing
 │   ├── aurelia-ui/    # Modern egui-based dock panels, studio viewport, tools shelf, transform studio, perspective dock, and palettes
 │   └── aurelia-app/   # Win32 + GDI host: message loop, stylus sampling, autosave ticker, CLI
 ```
