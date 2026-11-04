@@ -1,0 +1,56 @@
+[release]
+profile = "full"
+tag_prefix = "v"
+auto_compensate = "none"
+version_files = [
+    "Cargo.toml",
+    "crates/aurelia-core/Cargo.toml",
+    "crates/aurelia-render/Cargo.toml",
+    "crates/aurelia-io/Cargo.toml",
+    "crates/aurelia-ui/Cargo.toml",
+    "crates/aurelia-presence/Cargo.toml",
+    "crates/aurelia-app/Cargo.toml",
+    "README.md",
+    "INSTALL.md",
+    "Makefile",
+    "assets/banner.svg",
+    "installer/aurelia.iss",
+]
+
+[profiles]
+git  = ["preflight", "version", "tag", "publish", "verify"]
+full = ["preflight", "version", "quality", "build", "package", "sign", "scan", "tag", "publish", "release", "verify"]
+
+[git]
+remote = "origin"
+branch = "main"
+sign_tags = false
+
+[commands]
+quality = "cargo test --release --workspace"
+build = "cargo build --release -p aurelia-app"
+package = "python scripts/package_aurelia.py --tag {tag} --version {version} --dist {dist} --exe \"%AURELIA_BUILD_EXE%\" --iscc \"{iscc}\""
+
+[outputs]
+package = ["dist/{tag}/*.zip", "dist/{tag}/*.exe"]
+
+[scan]
+mode = "advisory"
+
+[publish]
+github = true
+draft = true
+repo = "LeTrollologist/Aurelia"
+token_env = "GITHUB_TOKEN"
+assets = [
+    "dist/{tag}/*.zip",
+    "dist/{tag}/*.exe",
+    "dist/{tag}/SHA256SUMS.txt",
+    "dist/{tag}/*.sig",
+]
+
+[sign]
+enabled = true
+private_key = "keys/aurelia-publisher-2026.priv"
+public_key = "keys/aurelia-publisher-2026.pub"
+sign_assets = true
