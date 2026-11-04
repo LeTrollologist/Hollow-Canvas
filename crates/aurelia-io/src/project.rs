@@ -374,7 +374,9 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
     reader.read_exact(&mut buf4)?;
     let layer_count = u32::from_le_bytes(buf4);
 
-    let mut layers = Vec::with_capacity(layer_count as usize);
+    // The count comes straight from the file. Reserving for all of it up front would let a
+    // tiny header ask for terabytes before the first layer (and its EOF) is ever read.
+    let mut layers = Vec::with_capacity((layer_count as usize).min(1024));
     let mut max_id = active_layer_id;
 
     for _ in 0..layer_count {
@@ -686,27 +688,40 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
             group.pass_through = pass_through;
             group
         } else {
-            let mut comp_bytes = vec![0u8; comp_len];
-            reader.read_exact(&mut comp_bytes)?;
+            // The header check above caps width*height, so the exact payload size is known
+            // before a single compressed byte is decoded. Bound the decoder to it: a small
+            // high-ratio deflate stream must not be able to allocate gigabytes before the
+            // length check below gets a chance to reject it.
+            let expected = match layer_format {
+                aurelia_core::layer::PixelFormat::Srgb8 => {
+                    (width as usize) * (height as usize) * 4
+                }
+                aurelia_core::layer::PixelFormat::Srgb16 => {
+                    (width as usize) * (height as usize) * 8
+                }
+            };
 
-            let mut decoder = DeflateDecoder::new(&comp_bytes[..]);
+            let mut compressed = reader.by_ref().take(comp_len as u64);
             let mut raw = Vec::new();
-            decoder.read_to_end(&mut raw)?;
+            {
+                let mut decoder =
+                    DeflateDecoder::new(&mut compressed).take(expected as u64 + 1);
+                decoder.read_to_end(&mut raw)?;
+            }
+            // A deflate stream can end before comp_len; discard the remainder so the reader
+            // is positioned at the mask section that follows.
+            std::io::copy(&mut compressed, &mut std::io::sink())?;
 
-            let expected_8 = (width as usize) * (height as usize) * 4;
+            if raw.len() != expected {
+                return Err(ProjectError::CorruptData);
+            }
             match layer_format {
                 aurelia_core::layer::PixelFormat::Srgb8 => {
-                    if raw.len() != expected_8 {
-                        return Err(ProjectError::CorruptData);
-                    }
                     Layer::from_pixels(id, name, width, height, raw)
                 }
                 aurelia_core::layer::PixelFormat::Srgb16 => {
                     // A 16-bit payload that is short or long is corrupt, not a reason to
                     // reinterpret it as 8-bit.
-                    if raw.len() != expected_8 * 2 {
-                        return Err(ProjectError::CorruptData);
-                    }
                     let channels: Vec<u16> = raw
                         .chunks_exact(2)
                         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
