@@ -1,0 +1,73 @@
+{
+  "tag": "v3.0.1",
+  "version": "3.0.1",
+  "product": "Aurelia",
+  "remote": "https://github.com/LeTrollologist/Aurelia.git",
+  "tests": "111 tests passed across the workspace (0 failed)",
+  "notes": "release-notes/v3.0.1.md",
+  "assets": [
+    {
+      "name": "Aurelia-Setup-3.0.1.exe",
+      "bytes": 4194546,
+      "sha256": "A6DB11CC5A28B372E546A66140A3D748A1AB78E109C0E550434B7D45978A606C"
+    },
+    {
+      "name": "Aurelia-v3.0.1-win64.zip",
+      "bytes": 2722473,
+      "sha256": "AE9DBBB10D6848864CFA734E26612E3FCB8A352F3E5D8637F92F8457ED48F430"
+    },
+    {
+      "name": "RELEASE_NOTES.md",
+      "bytes": 2174,
+      "sha256": "65BE38D74CA36705AB40FB661ACECABC485A283D0B5934108BDE4DF9FD900FDF"
+    },
+    {
+      "name": "virustotal-summary.txt",
+      "bytes": 824,
+      "sha256": "E6255CD95FC241229F3D71A4DD1B8876B5084E19AB15E31021853234D8EC2DDC"
+    }
+  ],
+  "installer": "Aurelia-Setup-3.0.1.exe",
+  "virustotal": [
+    {
+      "file": "Aurelia-v3.0.1-win64.zip",
+      "sha256": "ae9dbbb10d6848864cfa734e26612e3fcb8a352f3e5d8637f92f8457ed48f430",
+      "via": "existing",
+      "analysis_date": 1793750304,
+      "stats": {
+        "malicious": 0,
+        "suspicious": 0,
+        "undetected": 67,
+        "harmless": 0,
+        "timeout": 1,
+        "confirmed-timeout": 0,
+        "failure": 0,
+        "type-unsupported": 7
+      },
+      "engines": 75,
+      "permalink": "https://www.virustotal.com/gui/file/ae9dbbb10d6848864cfa734e26612e3fcb8a352f3e5d8637f92f8457ed48f430"
+    },
+    {
+      "file": "Aurelia-Setup-3.0.1.exe",
+      "sha256": "a6db11cc5a28b372e546a66140a3d748a1ab78e109c0e550434b7d45978a606c",
+      "via": "existing",
+      "analysis_date": 1793750442,
+      "stats": {
+        "malicious": 3,
+        "suspicious": 0,
+        "undetected": 66,
+        "harmless": 0,
+        "timeout": 1,
+        "confirmed-timeout": 0,
+        "failure": 1,
+        "type-unsupported": 4
+      },
+      "engines": 75,
+      "permalink": "https://www.virustotal.com/gui/file/a6db11cc5a28b372e546a66140a3d748a1ab78e109c0e550434b7d45978a606c"
+    }
+  ],
+  "published_at": "2026-11-04T00:08:35Z",
+  "republish_count": 0,
+  "recorded_near_commit": "3cba5eb97d6db9ac575bf6450ddccedd33a15a97",
+  "previous_publication": null
+}

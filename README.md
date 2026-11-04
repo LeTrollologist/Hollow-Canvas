@@ -11,7 +11,7 @@
 <!-- Tier 1: Project Metadata & Quality Assurance Badges -->
 <p align="center">
   <a href="https://github.com/LeTrollologist/Aurelia/releases">
-    <img src="https://img.shields.io/badge/Release-v3.0.0-F6C45A?style=for-the-badge&logo=github&logoColor=1A120B&labelColor=1A120B" alt="Release" />
+    <img src="https://img.shields.io/badge/Release-v3.0.1-F6C45A?style=for-the-badge&logo=github&logoColor=1A120B&labelColor=1A120B" alt="Release" />
   </a>
   <a href="crates/">
     <img src="https://img.shields.io/badge/Engine-100%25_Pure_Rust-E8963F?style=for-the-badge&logo=rust&logoColor=1A120B&labelColor=1A120B" alt="Engine" />
@@ -164,7 +164,7 @@ Full details, silent-install switches and verification steps live in [`INSTALL.m
 
 ### Option 1: Installer (Recommended)
 
-1. Download [`Aurelia-Setup-3.0.0.exe`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
+1. Download [`Aurelia-Setup-3.0.1.exe`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
 2. Run it — it installs per user to `%LOCALAPPDATA%\Programs\Aurelia` (no administrator rights, no UAC prompt).
 3. Optionally keep *"Open Aurelia projects with Aurelia (.aur, .hcv)"* checked for double-click opening, and tick *Create a desktop shortcut*.
 4. Launch **Aurelia** from the Start menu.
@@ -172,7 +172,7 @@ Full details, silent-install switches and verification steps live in [`INSTALL.m
 Silent install:
 
 ```powershell
-Aurelia-Setup-3.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+Aurelia-Setup-3.0.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
 ---
@@ -181,10 +181,10 @@ Aurelia-Setup-3.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
 No installer and no registry writes of its own:
 
-1. Download [`Aurelia-v3.0.0-win64.zip`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
+1. Download [`Aurelia-v3.0.1-win64.zip`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
 2. Extract it with PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\Aurelia-v3.0.0-win64.zip -DestinationPath .\Aurelia
+   Expand-Archive -Path .\Aurelia-v3.0.1-win64.zip -DestinationPath .\Aurelia
    ```
 3. Double-click `Aurelia\aurelia.exe` to launch immediately.
 
