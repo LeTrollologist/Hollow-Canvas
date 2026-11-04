@@ -136,7 +136,7 @@
 - ✍ **Stylus Pressure & Tilt**: Pen input is sampled through `WM_POINTER` / `GetPointerPenInfo`; real pressure drives brush size while the mouse path (and velocity dynamics) keeps working unchanged.
 - 🧠 **Memory-Bounded Undo**: The 50-step history also enforces a 512 MiB budget, evicting the oldest full-layer snapshots first so long sessions cannot balloon into multi-gigabyte RSS.
 - 📊 **Tone & Stylize Filters**: Levels (black/white/gamma), Colorize, Pixelate and Motion Blur alongside the existing blur/sharpen/grain/vignette/lens set — all with live, non-destructive previews and selection awareness.
-- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.aur`, AUR v1) alongside SHA-256-verified, VirusTotal-scanned installer and portable releases.
+- 🔒 **Local-First & Chain of Trust**: Completely offline, zero telemetry, no trackers, and local project serialization via binary compressed archives (`.aur`, AUR v3) alongside SHA-256-verified, VirusTotal-scanned installer and portable releases.
 
 ---
 
