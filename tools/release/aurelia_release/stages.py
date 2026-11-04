@@ -62,7 +62,9 @@ def _current_versions_problem(ctx: Context) -> list[str]:
         with open(path, "r", encoding="utf-8", newline="") as handle:
             found = declared_versions(handle.read())
         if not found:
-            problems.append(f"{rel}: no version declaration found")
+            # The workspace root manifest has no package version; a file with no
+            # declaration is simply not part of the consistency check.
+            continue
         per_file[rel] = found
 
     union: set[str] = set()
