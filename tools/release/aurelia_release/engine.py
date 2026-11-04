@@ -15,7 +15,7 @@ from .config import ReleaseConfig
 from .errors import ConfigError, StageError, VerificationError
 from .gitops import Git
 from .journal import Journal, OpState
-from .util import fingerprint, redact, sha256_file
+from .util import find_iscc, fingerprint, redact, sha256_file
 
 
 @dataclass
@@ -42,6 +42,7 @@ class Context:
             "version": self.version,
             "dist": self.dist.as_posix(),
             "repo": self.repo.as_posix(),
+            "iscc": str(find_iscc() or ""),
         }
 
 

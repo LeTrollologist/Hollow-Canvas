@@ -55,6 +55,12 @@ full = ["preflight", "version", "quality", "build", "package", "sign", "scan", "
 token (`GITHUB_TOKEN` or `[publish].token_env`) unless `[publish].github = false`.
 There is no hidden build logic: if a stage is listed, it must have a command.
 
+Commands can use `{tag}`, `{version}`, `{dist}`, `{repo}`, and `{iscc}`.
+`{iscc}` resolves Inno Setup's compiler from `ISCC`/`INNO_ISCC`, `PATH`,
+`Program Files`, or the per-user `%LOCALAPPDATA%\Programs\Inno` and
+`%LOCALAPPDATA%\Programs\Inno Setup 6` layouts. Using it when the compiler is
+missing fails preflight, and `doctor` prints the resolved path.
+
 ## Invariants
 
 1. **Write-ahead journal.** Every mutation writes an `intent` record before it

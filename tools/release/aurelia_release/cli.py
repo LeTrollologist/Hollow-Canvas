@@ -16,6 +16,7 @@ from .journal import Journal
 from .lock import ReleaseLock
 from .recovery import apply_compensation, plan_compensation, rollback, yank
 from .stages import build_operations
+from .util import find_iscc
 
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 
@@ -94,6 +95,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     print(f"repository: {ctx.repo}")
     for key, value in details.items():
         print(f"{key}: {value}")
+    print(f"inno_setup: {find_iscc() or 'not found'}")
     print("doctor: ok")
     return 0
 

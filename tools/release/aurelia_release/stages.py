@@ -28,7 +28,7 @@ from .signing import (
     verify_checksums,
     write_checksums,
 )
-from .util import expand_globs, run_command, sha256_file
+from .util import expand_globs, find_iscc, run_command, sha256_file
 from .versioning import bump_files, check_files, declared_versions
 
 VERSION_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
@@ -121,6 +121,12 @@ def _preflight(ctx: Context) -> dict[str, Any]:
     if ctx.cfg.git.sign_tags and not git.config_get("user.signingkey"):
         raise PreflightError(
             "git user.signingkey is not configured; set it or run with sign_tags = false"
+        )
+
+    if any("{iscc}" in command for command in ctx.cfg.commands.values()) and not find_iscc():
+        raise PreflightError(
+            "a configured command uses {iscc}, but Inno Setup's ISCC.exe was not found "
+            "in ISCC/INNO_ISCC, PATH, Program Files, or %LOCALAPPDATA%\\Programs\\Inno"
         )
 
     problems = _current_versions_problem(ctx)

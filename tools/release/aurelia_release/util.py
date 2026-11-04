@@ -6,11 +6,12 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from .errors import CommandError
 
@@ -128,3 +129,51 @@ def expand_globs(root: Path, patterns: Sequence[str], values: dict[str, str]) ->
             if path.is_file() and path not in found:
                 found.append(path)
     return found
+
+
+def find_iscc(
+    env: Mapping[str, str] | None = None,
+    *,
+    which: Callable[[str], str | None] | None = None,
+) -> Path | None:
+    """Locate Inno Setup's compiler.
+
+    Covers the environment overrides, PATH, Program Files, and the per-user
+    installs, including the non-standard ``%LOCALAPPDATA%\\Programs\\Inno``
+    layout used on some machines.
+    """
+    environment = os.environ if env is None else env
+    lookup = which or shutil.which
+
+    for variable in ("ISCC", "INNO_ISCC"):
+        value = environment.get(variable)
+        if value:
+            candidate = Path(value)
+            if candidate.is_file():
+                return candidate
+
+    for name in ("ISCC.exe", "ISCC", "iscc"):
+        found = lookup(name)
+        if found and Path(found).is_file():
+            return Path(found)
+
+    roots: list[Path] = []
+    for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+        base = environment.get(variable)
+        if base:
+            roots.append(Path(base))
+    local = environment.get("LOCALAPPDATA")
+    if local:
+        roots.extend([Path(local) / "Programs", Path(local)])
+
+    relatives = (
+        Path("Inno Setup 6") / "ISCC.exe",
+        Path("Inno Setup 5") / "ISCC.exe",
+        Path("Inno") / "ISCC.exe",
+    )
+    for root in roots:
+        for relative in relatives:
+            candidate = root / relative
+            if candidate.is_file():
+                return candidate
+    return None
