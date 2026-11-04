@@ -110,7 +110,18 @@ class GitHubClient:
     # ── releases ────────────────────────────────────────────────────────
     def get_release(self, tag: str) -> dict | None:
         data = self._json("GET", f"{self.api_base}/repos/{self.repo}/releases/tags/{tag}")
-        return data or None
+        if data:
+            return data
+        # Draft releases are not returned by the tag endpoint. Fall back to the
+        # release list so verification can see a just-created draft.
+        releases = self._json(
+            "GET", f"{self.api_base}/repos/{self.repo}/releases?per_page=100"
+        )
+        if isinstance(releases, list):
+            for release in releases:
+                if release.get("tag_name") == tag:
+                    return release
+        return None
 
     def create_release(self, tag: str, *, name: str, body: str, draft: bool) -> dict:
         try:
