@@ -1,0 +1,26 @@
+[project]
+name = "aurelia-release"
+version = "0.1.0"
+description = "Journal-backed release orchestrator for Aurelia"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+signing = ["cryptography>=42"]
+
+[project.scripts]
+aurelia-release = "aurelia_release.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["aurelia_release*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The sandbox used for this repository denies listing 0o700 directories, which
+# pytest's default temp factory creates. conftest.py provides a normal-mode
+# tmp_path fixture instead.
+addopts = "-p no:tmpdir -p no:cacheprovider"

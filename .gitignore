@@ -28,3 +28,7 @@ ui-*.png
 
 # benchmark / build logs
 *.log
+
+# Release orchestrator state
+.release/
+tools/release/tests/_work/

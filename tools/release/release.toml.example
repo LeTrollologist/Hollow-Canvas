@@ -1,0 +1,69 @@
+# Example release.toml. Copy to the repository root and adjust.
+#
+# The `git` profile needs no commands. The `full` profile runs the configured
+# commands in order and verifies their outputs; there is no hidden build logic.
+
+[release]
+profile = "git"                  # "git" or "full"
+tag_prefix = "v"
+auto_compensate = "local"        # none | local | all
+version_files = [
+    "Cargo.toml",
+    "crates/aurelia-core/Cargo.toml",
+    "crates/aurelia-render/Cargo.toml",
+    "crates/aurelia-io/Cargo.toml",
+    "crates/aurelia-ui/Cargo.toml",
+    "crates/aurelia-app/Cargo.toml",
+    "README.md",
+    "INSTALL.md",
+    "Makefile",
+    "assets/banner.svg",
+    "installer/aurelia.iss",
+]
+
+[profiles]
+git  = ["preflight", "version", "tag", "publish", "verify"]
+full = ["preflight", "version", "quality", "build", "package", "sign", "scan", "tag", "publish", "release", "verify"]
+
+[git]
+remote = "origin"
+branch = "main"
+sign_tags = true
+
+[commands]
+quality = "cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace"
+build   = "cargo build --release -p aurelia-app"
+package = "python scripts/package_aurelia.py --tag {tag} --out {dist}"
+sign    = "python scripts/sign_artifacts.py --dist {dist}"
+
+[outputs]
+build   = ["target/release/aurelia.exe"]
+package = ["dist/{tag}/*.zip", "dist/{tag}/*.exe"]
+sign    = ["dist/{tag}/SHA256SUMS.txt"]
+
+[scan]
+mode = "threshold"               # off | advisory | threshold | strict
+threshold = 3
+blocking_engines = []
+# Hashes with an audited reason can be allowlisted:
+# allowlist = ["<sha256>"]
+
+[publish]
+github = true
+draft = true
+repo = "LeTrollologist/Aurelia"   # or leave empty to infer from origin
+token_env = "GITHUB_TOKEN"
+assets = [
+    "dist/{tag}/*.zip",
+    "dist/{tag}/*.exe",
+    "dist/{tag}/SHA256SUMS.txt",
+    "dist/{tag}/*.sig",
+]
+
+[sign]
+enabled = true
+private_key = "keys/aurelia-publisher.priv"
+public_key = "keys/aurelia-publisher.pub"
+# Set to the name of an environment variable holding the PEM passphrase:
+passphrase_env = ""
+sign_assets = true
