@@ -30,6 +30,7 @@ DEFAULT_VERSION_FILES: tuple[str, ...] = (
     "crates/aurelia-render/Cargo.toml",
     "crates/aurelia-io/Cargo.toml",
     "crates/aurelia-ui/Cargo.toml",
+    "crates/aurelia-presence/Cargo.toml",
     "crates/aurelia-app/Cargo.toml",
     "README.md",
     "INSTALL.md",

@@ -4,12 +4,14 @@ members = [
     "crates/aurelia-render",
     "crates/aurelia-io",
     "crates/aurelia-ui",
+    "crates/aurelia-presence",
     "crates/aurelia-app",
 ]
 resolver = "2"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff", "tga", "ico"] }
 glam = { version = "0.28", features = ["serde"] }
 rayon = "1.10"

@@ -596,6 +596,24 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 ui.close_menu();
                             }
                             ui.separator();
+                            if state.discord_presence {
+                                if ui.button("🎮 Discord Rich Presence: On").clicked() {
+                                    state.discord_presence = false;
+                                    state.save_preferences();
+                                    ui.close_menu();
+                                }
+                            } else {
+                                let label = if state.discord_presence_configured {
+                                    "🎮 Enable Discord Rich Presence…"
+                                } else {
+                                    "🎮 Discord Rich Presence (not configured)"
+                                };
+                                if ui.button(label).clicked() {
+                                    state.show_discord_presence_dialog = true;
+                                    ui.close_menu();
+                                }
+                            }
+                            ui.separator();
                             if ui.button("❓ Shortcuts & Help (?)").clicked() {
                                 state.show_help = true;
                                 ui.close_menu();
@@ -4223,6 +4241,74 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical_centered(|ui| {
                     if ui.add_sized([100.0, 24.0], egui::Button::new(RichText::new("Close").strong())).clicked() {
                         state.show_about_dialog = false;
+                    }
+                });
+            });
+    }
+
+    // ── 11b. DISCORD RICH PRESENCE CONSENT ──
+    if state.show_discord_presence_dialog {
+        egui::Window::new("Discord Rich Presence")
+            .fixed_size(Vec2::new(430.0, 190.0))
+            .collapsible(false)
+            .resizable(false)
+            .default_pos(ctx.screen_rect().center())
+            .pivot(egui::Align2::CENTER_CENTER)
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new(
+                        "Your Discord friends will see that you’re using Aurelia. \
+                         Project names and file paths are never sent.",
+                    )
+                    .size(11.0),
+                );
+                ui.add_space(8.0);
+                if !state.discord_presence_configured {
+                    ui.label(
+                        RichText::new(
+                            "This build has no Discord application id. Build with \
+                             AURELIA_DISCORD_CLIENT_ID set to enable Rich Presence.",
+                        )
+                        .size(9.5)
+                        .color(Color32::from_rgb(220, 150, 120)),
+                    );
+                }
+                if ui
+                    .checkbox(
+                        &mut state.discord_show_project_name,
+                        "Show project name in my Discord activity",
+                    )
+                    .changed()
+                {
+                    state.save_preferences();
+                }
+                ui.label(
+                    RichText::new(
+                        "This is optional. File paths, layer names, and artwork are never sent.",
+                    )
+                    .size(9.5)
+                    .color(Color32::from_rgb(160, 150, 130)),
+                );
+                ui.add_space(12.0);
+                let can_enable = state.discord_presence_configured;
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            can_enable,
+                            egui::Button::new("Enable").min_size(egui::vec2(100.0, 24.0)),
+                        )
+                        .clicked()
+                    {
+                        state.discord_presence = true;
+                        state.show_discord_presence_dialog = false;
+                        state.save_preferences();
+                    }
+                    if ui
+                        .add_sized([100.0, 24.0], egui::Button::new("Cancel"))
+                        .clicked()
+                    {
+                        state.discord_presence = false;
+                        state.show_discord_presence_dialog = false;
                     }
                 });
             });

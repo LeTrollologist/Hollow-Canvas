@@ -1,0 +1,9 @@
+[package]
+name = "aurelia-presence"
+version = "3.0.3"
+edition = "2021"
+description = "Optional Discord Rich Presence integration for Aurelia"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

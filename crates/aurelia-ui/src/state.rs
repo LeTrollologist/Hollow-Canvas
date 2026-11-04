@@ -255,6 +255,14 @@ pub struct AppState {
     pub last_autosave: Instant,
     /// Set when an autosave snapshot has been written and not yet cleared by a real save.
     pub autosave_pending: bool,
+    // ── Discord Rich Presence ──
+    /// Opt-in. Off by default; nothing is sent to Discord until enabled.
+    pub discord_presence: bool,
+    /// True when the binary was built with a Discord application id.
+    pub discord_presence_configured: bool,
+    /// Separate opt-in: include the project display name in the activity.
+    pub discord_show_project_name: bool,
+    pub show_discord_presence_dialog: bool,
     // ── Export settings ──
     pub jpeg_quality: u8,
     pub sprite_columns: u32,
@@ -463,6 +471,10 @@ impl AppState {
             autosave_interval_secs: 120,
             last_autosave: Instant::now(),
             autosave_pending: false,
+            discord_presence: false,
+            discord_presence_configured: false,
+            discord_show_project_name: false,
+            show_discord_presence_dialog: false,
             jpeg_quality: 90,
             sprite_columns: 4,
             export_format: 0,
@@ -1726,6 +1738,8 @@ impl AppState {
                     }
                 }
                 "autosave" => self.autosave_enabled = value != "0",
+                "discord_presence" => self.discord_presence = value == "1",
+                "discord_show_project" => self.discord_show_project_name = value == "1",
                 "autosave_interval" => {
                     if let Ok(secs) = value.parse::<u64>() {
                         self.autosave_interval_secs = secs.clamp(15, 3600);
@@ -1755,6 +1769,14 @@ impl AppState {
         out.push_str(&format!("theme={}\n", theme));
         out.push_str(&format!("jpeg_quality={}\n", self.jpeg_quality));
         out.push_str(&format!("autosave={}\n", if self.autosave_enabled { 1 } else { 0 }));
+        out.push_str(&format!(
+            "discord_presence={}\n",
+            if self.discord_presence { 1 } else { 0 }
+        ));
+        out.push_str(&format!(
+            "discord_show_project={}\n",
+            if self.discord_show_project_name { 1 } else { 0 }
+        ));
         out.push_str(&format!("autosave_interval={}\n", self.autosave_interval_secs));
         for recent in &self.recent_files {
             out.push_str(&format!("recent={}\n", recent.display()));
@@ -1766,5 +1788,18 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::new(1920, 1080)
+    }
+}
+
+#[cfg(test)]
+mod discord_presence_defaults {
+    use super::AppState;
+
+    #[test]
+    fn presence_is_off_and_project_name_is_private_on_first_run() {
+        let state = AppState::default();
+        assert!(!state.discord_presence);
+        assert!(!state.discord_show_project_name);
+        assert!(!state.show_discord_presence_dialog);
     }
 }

@@ -14,6 +14,7 @@ aurelia-core = { path = "../aurelia-core", version = "3.0.3" }
 aurelia-io = { path = "../aurelia-io", version = "3.0.3" }
 aurelia-ui = { path = "../aurelia-ui", version = "3.0.3" }
 aurelia-render = { path = "../aurelia-render", version = "3.0.3" }
+aurelia-presence = { path = "../aurelia-presence", version = "3.0.3" }
 egui = { workspace = true }
 glam = { workspace = true }
 log = { workspace = true }

@@ -5,6 +5,7 @@ use aurelia_core::rasterizer::StrokeRasterizer;
 use aurelia_core::selection::SelectionMask;
 use aurelia_io::export::{export_flat_image, export_flat_image_with_quality, ExportFormat};
 use aurelia_io::project::load_project_file;
+use aurelia_presence::{project_name, PresenceManager, PresenceUpdate};
 use aurelia_render::SoftwareRenderer;
 use aurelia_ui::{
     configure_aurelia_style, render_ui, AppState, PendingFileAction,
@@ -13,6 +14,27 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::time::Instant;
+
+/// Discord application id for Rich Presence. Empty disables the integration.
+/// Resolution order: runtime env var, `%LOCALAPPDATA%\Aurelia\discord_client_id.txt`,
+/// then the build-time `AURELIA_DISCORD_CLIENT_ID`.
+const DISCORD_CLIENT_ID: &str = match option_env!("AURELIA_DISCORD_CLIENT_ID") {
+    Some(value) => value,
+    None => "",
+};
+
+fn discord_client_id() -> String {
+    let from_env = std::env::var("AURELIA_DISCORD_CLIENT_ID").ok();
+    let from_file = std::fs::read_to_string(
+        aurelia_ui::AppState::preferences_path().with_file_name("discord_client_id.txt"),
+    )
+    .ok();
+    from_env
+        .or(from_file)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DISCORD_CLIENT_ID.to_string())
+}
 
 type HWND = *mut std::ffi::c_void;
 type HDC = *mut std::ffi::c_void;
@@ -277,6 +299,7 @@ static mut GLOBAL_APP_PTR: *mut AureliaDesktopApp = std::ptr::null_mut();
 
 struct AureliaDesktopApp {
     state: AppState,
+    presence: PresenceManager,
     renderer: SoftwareRenderer,
     egui_ctx: egui::Context,
     start_time: Instant,
@@ -1955,6 +1978,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     render_ui(ctx, &mut app.state);
                 });
 
+                let project = project_name(app.state.document_path.as_deref());
+                app.presence.update(PresenceUpdate {
+                    enabled: app.state.discord_presence,
+                    show_project_name: app.state.discord_show_project_name,
+                    project_name: project,
+                    painting: app.state.is_painting,
+                });
+
                 if !full_output.platform_output.copied_text.is_empty() {
                     unsafe {
                         set_clipboard_text(hwnd, &full_output.platform_output.copied_text);
@@ -2582,6 +2613,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let discord_client_id = discord_client_id();
+    app_state.discord_presence_configured = !discord_client_id.is_empty();
     app_state.left_panel_w *= dpi_scale;
     app_state.right_panel_w *= dpi_scale;
     app_state.header_h *= dpi_scale;
@@ -2592,6 +2625,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut desktop_app = Box::new(AureliaDesktopApp {
         state: app_state,
+        presence: PresenceManager::new(discord_client_id),
         renderer: SoftwareRenderer::new(),
         egui_ctx,
         start_time: Instant::now(),
