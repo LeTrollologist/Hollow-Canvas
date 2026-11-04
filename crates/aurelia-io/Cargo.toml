@@ -1,11 +1,11 @@
 [package]
 name = "aurelia-io"
-version = "3.0.3"
+version = "3.1.0"
 edition = "2021"
 description = "File format encoders, decoders, PNG exporter, and binary project serializer for Aurelia"
 
 [dependencies]
-aurelia-core = { path = "../aurelia-core", version = "3.0.3" }
+aurelia-core = { path = "../aurelia-core", version = "3.1.0" }
 image = { workspace = true }
 flate2 = "1.0"
 thiserror = { workspace = true }
