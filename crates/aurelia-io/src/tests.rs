@@ -408,6 +408,24 @@ mod tests {
         assert!(load_project_from_reader(&bad[..]).is_err());
     }
 
+    /// The layer count is read before any layer body. Reserving for an implausible count
+    /// would let a header-only file request terabytes, so the reservation must be bounded.
+    #[test]
+    fn impossible_layer_count_is_rejected_without_huge_reservation() {
+        let mut file = Vec::new();
+        file.extend_from_slice(b"AUR\x03");
+        file.extend_from_slice(&4u32.to_le_bytes());
+        file.extend_from_slice(&4u32.to_le_bytes());
+        file.extend_from_slice(&1u64.to_le_bytes());
+        file.extend_from_slice(&[0, 1, 0, 0]); // background, transparency, theme, format
+        file.extend_from_slice(&u32::MAX.to_le_bytes());
+
+        assert!(
+            load_project_from_reader(&file[..]).is_err(),
+            "a header claiming billions of layers must be rejected, not reserved for"
+        );
+    }
+
     /// Malformed files must be rejected, never reinterpreted. Every case here would be a
     /// silent 8-bit fallback if the reader guessed instead of validating.
     #[test]
