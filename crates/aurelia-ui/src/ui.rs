@@ -645,16 +645,17 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             state.set_status(format!("Stabilizer: {}", state.brush.stabilization_label()));
                         }
 
-                        // Active Tool Badge in remaining space
+                        // Active Tool Badge
                         let tool_label = format!("{} · {}px", state.brush.tool.label(), state.brush.size as u32);
-                        egui::Frame::none()
-                            .fill(accent_dim_c32)
-                            .stroke(egui::Stroke::new(1.0_f32, accent_c32))
-                            .rounding(6.0)
-                            .inner_margin(egui::vec2(9.0, 3.0))
-                            .show(ui, |ui| {
-                                ui.label(RichText::new(tool_label).size(11.0).strong().color(accent_c32));
-                            });
+                        ui.scope(|ui| {
+                            ui.spacing_mut().button_padding = egui::vec2(9.0, 3.0);
+                            ui.add(
+                                egui::Button::new(RichText::new(tool_label).size(11.0).strong().color(accent_c32))
+                                    .fill(accent_dim_c32)
+                                    .stroke(egui::Stroke::new(1.0_f32, accent_c32))
+                                    .rounding(6.0),
+                            );
+                        });
                     });
                 });
             });
