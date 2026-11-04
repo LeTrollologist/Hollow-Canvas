@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-As of November 2nd, 2026, I will provide security updates and patches for only the latest version of **Aurelia**. The current release is [v3.9.1](https://github.com/LeTrollologist/Aurelia/releases/tag/v3.0.1).
+As of November 2nd, 2026, I will provide security updates and patches for only the latest version of **Aurelia**. The current release is [v3.0.1](https://github.com/LeTrollologist/Aurelia/releases/tag/v3.0.1).
 
 ---
 
