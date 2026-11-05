@@ -642,3 +642,39 @@ What the editor can and cannot do with a 16-bit document today:
 The refusal message names the operation and the document format, and mutates nothing. That is
 the whole point of the hardening pass in v3.3.0: every remaining 8-bit-only path fails loudly
 instead of panicking.
+
+## Audit: where 8-bit assumptions remain (post-selection work)
+
+`grep -rn as_srgb8 crates` outside test modules resolves to exactly these, each with its
+reason:
+
+| Location | Sites | State |
+| :--- | ---: | :--- |
+| `aurelia-ui/src/ui.rs` | **0** | clean |
+| `aurelia-ui/src/state.rs` | 17 | **all** inside `begin_transform_session` (8) and `update_transform_preview` (9); the session cannot start on a 16-bit document |
+| `aurelia-core/src/document.rs` | 4 | the 8-bit compositor branch, unreachable once a layer is 16-bit (format check returns earlier) |
+| `aurelia-core/src/animation.rs` | 5 | the 8-bit frame path, unreachable once a frame holds a 16-bit layer (delegation runs first) |
+| `aurelia-core/src/layer.rs` | 11 | the accessor, its documented panic, and inline tests |
+| `aurelia-core/src/history.rs` | 7 | inline tests and comments; the command paths use storage bytes |
+| `aurelia-render/examples/*` | 3 | benchmark fixtures, deliberately 8-bit |
+
+The scratchpad is **not** on that list: it owns `scratchpad_pixels: Vec<u8>`, but that buffer
+is a dock-local mixing surface, never a document layer and never composited into one. Its
+document-touching path (clearing a selection) now uses the native fill.
+
+One refusal therefore remains, and it is the only unimplemented 16-bit operation: free
+transform. Its session holds an 8-bit source patch and 8-bit original pixels, and the
+transform renderers sample a `&[u8]` source. Genericising it is a change to `transform.rs`
+itself:
+
+1. `TransformSession::extracted_patch` becomes a channel-generic patch (`Vec<u8>` or
+   `Vec<u16>`, or a small enum) and `original_layer_pixels` becomes storage bytes restored
+   through `write_storage_bytes`.
+2. `sample_nearest` / `sample_bilinear` / `sample_bicubic` / `sample_interpolated` become
+   generic over the source channel and return working-precision pixels, the same shape as the
+   filters' read helpers.
+3. `render_transformed_patch` and its quad/mesh/TPS siblings take a generic source alongside
+   the generic destination they already have, and `composite_pixel_in_place` takes the sampled
+   working-precision pixel instead of four `u8`s.
+4. The 8-bit path must stay byte-identical; the transform tests and a pinned digest are the
+   gate, as they were for filters and text.
