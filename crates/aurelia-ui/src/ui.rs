@@ -3954,7 +3954,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     // ── Export Animation Modal ──
     if state.show_export_animation_dialog {
         egui::Window::new("🎬 Export Flipbook Animation")
-            .fixed_size(Vec2::new(360.0, 240.0))
+            .fixed_size(Vec2::new(360.0, 276.0))
             .collapsible(false)
             .resizable(false)
             .default_pos(ctx.screen_rect().center())
@@ -3962,6 +3962,17 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .show(ctx, |ui| {
                 ui.label(RichText::new("Export Multi-Frame Animation").size(12.0).strong().color(Color32::from_rgb(253, 249, 236)));
                 ui.add_space(6.0);
+
+                // Export cost, checked against the same limits `aurelia-io` enforces, so the
+                // reason an export is refused is visible before the button is pressed.
+                let limits = aurelia_io::ExportLimits::default();
+                let frame_count = state.timeline.frames.len();
+                let per_frame_bytes = (state.document.width as u64) * (state.document.height as u64) * 4;
+                let total_bytes = per_frame_bytes.saturating_mul(frame_count as u64);
+                let over_limit = state.document.width > limits.max_dimension
+                    || state.document.height > limits.max_dimension
+                    || frame_count > limits.max_frames
+                    || total_bytes > limits.max_total_bytes;
 
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Total Frames:").size(11.0).color(Color32::from_rgb(215, 206, 180)));
@@ -3988,50 +3999,104 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 }
 
                 ui.checkbox(&mut state.export_anim_loop, "Infinite Loop (Repeat)");
-                ui.add_space(8.0);
+
+                ui.add_space(4.0);
+                let (budget_color, budget_text) = if over_limit {
+                    (
+                        Color32::from_rgb(228, 120, 96),
+                        format!(
+                            "Too large: {:.1} MB total exceeds {} frames / {} MB",
+                            total_bytes as f64 / (1024.0 * 1024.0),
+                            limits.max_frames,
+                            limits.max_total_bytes / (1024 * 1024)
+                        ),
+                    )
+                } else {
+                    (
+                        Color32::from_rgb(150, 140, 118),
+                        format!(
+                            "~{:.1} MB per frame · {:.1} MB total",
+                            per_frame_bytes as f64 / (1024.0 * 1024.0),
+                            total_bytes as f64 / (1024.0 * 1024.0)
+                        ),
+                    )
+                };
+                ui.label(RichText::new(budget_text).size(9.5).color(budget_color));
+
+                ui.add_space(6.0);
                 ui.separator();
                 ui.add_space(6.0);
 
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("✓ Export Animation").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
-                        state.timeline.sync_from_document(&state.document);
-                        let w = state.document.width;
-                        let h = state.document.height;
-                        let bg_val = state.document.background_value;
-                        let inc_bg = !state.document.is_transparent;
+                    ui.add_enabled_ui(!over_limit, |ui| {
+                        if ui.button(RichText::new("✓ Export Animation").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
+                            state.timeline.sync_from_document(&state.document);
+                            let w = state.document.width;
+                            let h = state.document.height;
+                            let bg_val = state.document.background_value;
+                            let inc_bg = !state.document.is_transparent;
 
-                        let mut frames_rgba = Vec::with_capacity(state.timeline.frames.len());
-                        for f in &state.timeline.frames {
-                            let comp = f.composite_layers(w, h, inc_bg, bg_val);
-                            frames_rgba.push(comp);
+                            let out_dir = std::path::PathBuf::from("exports");
+                            let _ = std::fs::create_dir_all(&out_dir);
+
+                            // Frames are composited as the encoder consumes them: no second copy
+                            // of the animation is held in memory.
+                            let result = match state.export_anim_format {
+                                0 => {
+                                    let out_path = out_dir.join("animation.gif");
+                                    let frames = state.timeline.frames.iter()
+                                        .map(|frame| frame.composite_layers(w, h, inc_bg, bg_val));
+                                    aurelia_io::export_animated_gif_stream(
+                                        frames,
+                                        w,
+                                        h,
+                                        state.export_anim_fps,
+                                        state.export_anim_loop,
+                                        &out_path,
+                                        &limits,
+                                    )
+                                    .map(|()| format!("Exported animated GIF to {}", out_path.display()))
+                                }
+                                1 => {
+                                    let out_path = out_dir.join("spritesheet.png");
+                                    let frames = state.timeline.frames.iter()
+                                        .map(|frame| frame.composite_layers(w, h, inc_bg, bg_val));
+                                    aurelia_io::export_sprite_sheet_stream(
+                                        frames,
+                                        w,
+                                        h,
+                                        state.sprite_columns,
+                                        &out_path,
+                                        &limits,
+                                    )
+                                    .map(|(sw, sh)| format!(
+                                        "Exported {}×{} sprite sheet ({} frames) to {}",
+                                        sw, sh, frame_count, out_path.display()
+                                    ))
+                                }
+                                _ => {
+                                    let frames = state.timeline.frames.iter()
+                                        .map(|frame| frame.composite_layers(w, h, inc_bg, bg_val));
+                                    aurelia_io::export_frame_sequence_stream(
+                                        frames,
+                                        w,
+                                        h,
+                                        &out_dir,
+                                        "frame",
+                                        aurelia_io::ExportFormat::Png,
+                                        &limits,
+                                    )
+                                    .map(|paths| format!("Exported {} frames to {}", paths.len(), out_dir.display()))
+                                }
+                            };
+
+                            match result {
+                                Ok(message) => state.set_status(message),
+                                Err(error) => state.set_status(format!("Export failed: {}", error)),
+                            }
+                            state.show_export_animation_dialog = false;
                         }
-
-                        let out_dir = std::path::PathBuf::from("exports");
-                        let _ = std::fs::create_dir_all(&out_dir);
-
-                        if state.export_anim_format == 0 {
-                            let out_path = out_dir.join("animation.gif");
-                            match aurelia_io::export_animated_gif(&frames_rgba, w, h, state.export_anim_fps, state.export_anim_loop, &out_path) {
-                                Ok(_) => state.set_status(format!("Exported animated GIF to {}", out_path.display())),
-                                Err(e) => state.set_status(format!("Export failed: {}", e)),
-                            }
-                        } else if state.export_anim_format == 1 {
-                            let out_path = out_dir.join("spritesheet.png");
-                            match aurelia_io::export_sprite_sheet(&frames_rgba, w, h, state.sprite_columns, &out_path) {
-                                Ok((sw, sh)) => state.set_status(format!(
-                                    "Exported {}×{} sprite sheet ({} frames) to {}",
-                                    sw, sh, frames_rgba.len(), out_path.display()
-                                )),
-                                Err(e) => state.set_status(format!("Export sprite sheet failed: {}", e)),
-                            }
-                        } else {
-                            match aurelia_io::export_frame_sequence(&frames_rgba, w, h, &out_dir, "frame", aurelia_io::ExportFormat::Png) {
-                                Ok(paths) => state.set_status(format!("Exported {} frames to {}", paths.len(), out_dir.display())),
-                                Err(e) => state.set_status(format!("Export sequence failed: {}", e)),
-                            }
-                        }
-                        state.show_export_animation_dialog = false;
-                    }
+                    });
                     if ui.button("Cancel").clicked() {
                         state.show_export_animation_dialog = false;
                     }
