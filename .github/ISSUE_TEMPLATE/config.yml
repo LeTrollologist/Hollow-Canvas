@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security Vulnerability Reporting
+    url: https://github.com/LeTrollologist/Aurelia/security/advisories/new
+    about: Report security vulnerabilities privately. Do not publish exploit details in public issues.
+
+  - name: Aurelia Documentation
+    url: https://github.com/LeTrollologist/Aurelia/wiki
+    about: Consult the Aurelia wiki for guides and technical documentation.
+
+  - name: Existing Issues
+    url: https://github.com/LeTrollologist/Aurelia/issues
+    about: Search existing reports before submitting a new issue.
