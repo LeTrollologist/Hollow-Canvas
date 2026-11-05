@@ -4309,3 +4309,116 @@ mod transform_patch {
         assert!(bytes.iter().all(|&b| b == 7));
     }
 }
+
+/// Commit C, part 2 prerequisites: the four-way source/destination matrix and the alpha edges
+/// the session will depend on.
+#[cfg(test)]
+mod transform_matrix {
+    use crate::transform::{render_transformed_patch, AffineTransform2D, InterpolationMode};
+    use glam::Vec2;
+
+    const SIDE: u32 = 4;
+
+    fn identity(size: u32) -> AffineTransform2D {
+        let center = Vec2::new(size as f32 * 0.5, size as f32 * 0.5);
+        let mut transform = AffineTransform2D::new(center);
+        transform.pivot = center;
+        transform
+    }
+
+    /// 8-bit source -> 16-bit destination widens by exactly 257, with no rounding.
+    #[test]
+    fn eight_bit_source_scales_exactly_into_sixteen_bit_destination() {
+        let patch = vec![200u8, 100, 50, 255].repeat((SIDE * SIDE) as usize);
+        let mut dst = vec![0u16; (SIDE * SIDE * 4) as usize];
+
+        render_transformed_patch(
+            &patch, SIDE, SIDE, Vec2::new(1.0, 1.0), &identity(SIDE),
+            InterpolationMode::Nearest, &mut dst, SIDE, SIDE,
+        );
+
+        let index = ((2 * SIDE + 2) * 4) as usize;
+        assert_eq!(dst[index], crate::pixel::srgb8_to_srgb16(200));
+        assert_eq!(dst[index + 1], crate::pixel::srgb8_to_srgb16(100));
+        assert_eq!(dst[index + 2], crate::pixel::srgb8_to_srgb16(50));
+        assert_eq!(dst[index + 3], 65535);
+    }
+
+    /// Non-zero RGB under zero alpha must not contaminate the destination. This is the case
+    /// that catches a compositor reading colour without checking alpha first.
+    #[test]
+    fn colour_under_zero_alpha_never_contaminates() {
+        for wide in [false, true] {
+            let mut eight_dst = vec![0u8; (SIDE * SIDE * 4) as usize];
+            let mut wide_dst = vec![0u16; (SIDE * SIDE * 4) as usize];
+
+            if wide {
+                // Opaque red with alpha 0: colour is present, coverage is not.
+                let patch = vec![65535u16, 0, 0, 0].repeat((SIDE * SIDE) as usize);
+                render_transformed_patch(
+                    &patch, SIDE, SIDE, Vec2::new(1.0, 1.0), &identity(SIDE),
+                    InterpolationMode::Nearest, &mut wide_dst, SIDE, SIDE,
+                );
+                assert!(wide_dst.iter().all(|&c| c == 0), "a zero-alpha 16-bit source must paint nothing");
+            } else {
+                let patch = vec![255u8, 0, 0, 0].repeat((SIDE * SIDE) as usize);
+                render_transformed_patch(
+                    &patch, SIDE, SIDE, Vec2::new(1.0, 1.0), &identity(SIDE),
+                    InterpolationMode::Nearest, &mut eight_dst, SIDE, SIDE,
+                );
+                assert!(eight_dst.iter().all(|&c| c == 0), "a zero-alpha 8-bit source must paint nothing");
+            }
+        }
+    }
+
+    /// Partial source alpha over a transparent destination keeps the colour and halves the
+    /// alpha, at both widths - the unpremultiply path, where colour and coverage separate.
+    #[test]
+    fn partial_alpha_over_transparent_keeps_colour_and_scales_alpha() {
+        let patch = vec![255u8, 0, 0, 128].repeat((SIDE * SIDE) as usize);
+        let mut dst = vec![0u8; (SIDE * SIDE * 4) as usize];
+        render_transformed_patch(
+            &patch, SIDE, SIDE, Vec2::new(1.0, 1.0), &identity(SIDE),
+            InterpolationMode::Nearest, &mut dst, SIDE, SIDE,
+        );
+        let index = ((2 * SIDE + 2) * 4) as usize;
+        assert_eq!(dst[index], 255, "colour must not be dimmed by its own coverage");
+        assert_eq!(dst[index + 3], 128, "alpha carries the coverage");
+
+        // The same in 16 bits: alpha scales, colour does not.
+        let wide_patch = vec![65535u16, 0, 0, 128 * 257].repeat((SIDE * SIDE) as usize);
+        let mut wide_dst = vec![0u16; (SIDE * SIDE * 4) as usize];
+        render_transformed_patch(
+            &wide_patch, SIDE, SIDE, Vec2::new(1.0, 1.0), &identity(SIDE),
+            InterpolationMode::Nearest, &mut wide_dst, SIDE, SIDE,
+        );
+        assert_eq!(wide_dst[index], 65535, "16-bit colour survives at full value");
+        assert_eq!(wide_dst[index + 3], 128 * 257);
+    }
+
+    /// A partially transparent source over a partially transparent destination composes:
+    /// out_a = sa + da(1 - sa), and the result stays between the two colours rather than
+    /// jumping to a fully opaque value.
+    #[test]
+    fn partial_source_over_partial_destination_composes() {
+        let mut dst = vec![0u16; (SIDE * SIDE * 4) as usize];
+        for px in dst.chunks_exact_mut(4) {
+            px[2] = 65535; // opaque blue background
+            px[3] = 65535;
+        }
+        let patch = vec![65535u16, 0, 0, 32768].repeat((SIDE * SIDE) as usize); // half red
+
+        render_transformed_patch(
+            &patch, SIDE, SIDE, Vec2::new(1.0, 1.0), &identity(SIDE),
+            InterpolationMode::Nearest, &mut dst, SIDE, SIDE,
+        );
+
+        let index = ((2 * SIDE + 2) * 4) as usize;
+        assert_eq!(dst[index + 3], 65535, "opaque destination stays opaque");
+        let red = dst[index];
+        let blue = dst[index + 2];
+        assert!(red > 0 && red < 65535, "red must be blended, got {red}");
+        assert!(blue > 0 && blue < 65535, "blue must be blended, got {blue}");
+        assert!(red as u32 + blue as u32 > 60000, "the two channels should roughly sum to white");
+    }
+}
