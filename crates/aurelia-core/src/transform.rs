@@ -1432,3 +1432,110 @@ impl TransformPatch {
         patch
     }
 }
+
+/// Which renderer a patch should go through.
+pub enum RenderMode<'a> {
+    Affine(&'a AffineTransform2D),
+    Quad(&'a PerspectiveQuadTransform),
+    Mesh(&'a MeshWarpGrid),
+    Tps(&'a ThinPlateSpline2D),
+}
+
+impl TransformPatch {
+    /// Clears a rectangle of a layer to transparent, format-aware.
+    ///
+    /// Used to remove the extracted region before the transformed patch is drawn over it.
+    /// `keep` selects which source pixels to clear, mirroring extraction.
+    pub fn clear_region(
+        layer: &mut crate::layer::Layer,
+        origin_x: u32,
+        origin_y: u32,
+        width: u32,
+        height: u32,
+        keep: &dyn Fn(u32, u32) -> bool,
+    ) {
+        let stride = layer.width;
+        match layer.buffer_mut() {
+            crate::layer::LayerBuffer::Srgb8(pixels) => {
+                Self::clear_region_impl(pixels, stride, origin_x, origin_y, width, height, keep)
+            }
+            crate::layer::LayerBuffer::Srgb16(pixels) => {
+                Self::clear_region_impl(pixels, stride, origin_x, origin_y, width, height, keep)
+            }
+        }
+    }
+
+    fn clear_region_impl<C: Channel>(
+        pixels: &mut [C],
+        stride: u32,
+        origin_x: u32,
+        origin_y: u32,
+        width: u32,
+        height: u32,
+        keep: &dyn Fn(u32, u32) -> bool,
+    ) {
+        for py in 0..height {
+            for px in 0..width {
+                let x = origin_x + px;
+                let y = origin_y + py;
+                if !keep(x, y) {
+                    continue;
+                }
+                let index = ((y as usize) * stride as usize + x as usize) * 4;
+                if index + 3 < pixels.len() {
+                    pixels[index] = C::ZERO;
+                    pixels[index + 1] = C::ZERO;
+                    pixels[index + 2] = C::ZERO;
+                    pixels[index + 3] = C::ZERO;
+                }
+            }
+        }
+    }
+
+    /// Renders this patch onto a layer, dispatching the source width and the destination width
+    /// in one place. The renderers stay generic; only this function knows both types.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_into(
+        &self,
+        dst: &mut crate::layer::Layer,
+        patch_w: u32,
+        patch_h: u32,
+        origin: Vec2,
+        interp: InterpolationMode,
+        mode: RenderMode<'_>,
+    ) {
+        let (doc_w, doc_h) = (dst.width, dst.height);
+        macro_rules! run {
+            ($src:expr, $dst:expr) => {
+                match mode {
+                    RenderMode::Affine(transform) => render_transformed_patch(
+                        $src, patch_w, patch_h, origin, transform, interp, $dst, doc_w, doc_h,
+                    ),
+                    RenderMode::Quad(quad) => render_quad_transformed_patch(
+                        $src, patch_w, patch_h, quad, interp, $dst, doc_w, doc_h,
+                    ),
+                    RenderMode::Mesh(mesh) => render_mesh_warped_patch(
+                        $src, patch_w, patch_h, mesh, interp, $dst, doc_w, doc_h,
+                    ),
+                    RenderMode::Tps(tps) => render_tps_warped_patch(
+                        $src, patch_w, patch_h, origin, tps, interp, $dst, doc_w, doc_h,
+                    ),
+                }
+            };
+        }
+        match (self, dst.buffer_mut()) {
+            (TransformPatch::Srgb8(src), crate::layer::LayerBuffer::Srgb8(dst)) => run!(src, dst),
+            (TransformPatch::Srgb8(src), crate::layer::LayerBuffer::Srgb16(dst)) => run!(src, dst),
+            (TransformPatch::Srgb16(src), crate::layer::LayerBuffer::Srgb8(dst)) => run!(src, dst),
+            (TransformPatch::Srgb16(src), crate::layer::LayerBuffer::Srgb16(dst)) => run!(src, dst),
+        }
+    }
+
+    /// Copies the patch's pixels as a typed slice for tests and diagnostics.
+    pub fn pixels_as_8(&self) -> Option<&[u8]> {
+        match self {
+            TransformPatch::Srgb8(bytes) => Some(bytes),
+            TransformPatch::Srgb16(_) => None,
+        }
+    }
+}
