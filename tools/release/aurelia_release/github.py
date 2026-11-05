@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -112,15 +113,18 @@ class GitHubClient:
         data = self._json("GET", f"{self.api_base}/repos/{self.repo}/releases/tags/{tag}")
         if data:
             return data
-        # Draft releases are not returned by the tag endpoint. Fall back to the
-        # release list so verification can see a just-created draft.
-        releases = self._json(
-            "GET", f"{self.api_base}/repos/{self.repo}/releases?per_page=100"
-        )
-        if isinstance(releases, list):
-            for release in releases:
-                if release.get("tag_name") == tag:
-                    return release
+        # Draft releases are not returned by the tag endpoint. GitHub's release
+        # list can also lag a moment behind the create response, so retry briefly.
+        for attempt in range(20):
+            releases = self._json(
+                "GET", f"{self.api_base}/repos/{self.repo}/releases?per_page=100"
+            )
+            if isinstance(releases, list):
+                for release in releases:
+                    if release.get("tag_name") == tag:
+                        return release
+            if attempt < 19:
+                time.sleep(0.5)
         return None
 
     def create_release(self, tag: str, *, name: str, body: str, draft: bool) -> dict:
