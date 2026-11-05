@@ -1,0 +1,57 @@
+name: Documentation
+description: Report documentation errors or suggest improvements to Aurelia's documentation.
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to report incorrect, missing, outdated, or unclear documentation.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Documentation Type
+      options:
+        - README
+        - Wiki
+        - Installation Instructions
+        - Development Documentation
+        - API or Technical Reference
+        - In-Application Help
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Affected Document or Page
+      description: Provide the filename, heading, or URL.
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Explain what is incorrect, missing, or unclear.
+    validations:
+      required: true
+
+  - type: textarea
+    id: improvement
+    attributes:
+      label: Suggested Improvement
+      description: Describe the correction or additional information that would help.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Submission Checklist
+      options:
+        - label: I have checked whether this documentation issue already exists.
+          required: true
