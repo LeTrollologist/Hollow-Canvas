@@ -71,7 +71,7 @@ python -m aurelia_release --repo . yank v3.1.0 --reason "…"  # withdrawn publi
 | Stage | Operations | Notes |
 | :--- | :--- | :--- |
 | `preflight` | clean tree, branch, remote, tag, signing key, version consistency | no mutations |
-| `version` | rewrite declarations, commit `chore(release): vX.Y.Z` | includes every crate and docs |
+| `version` | rewrite declarations, commit `chore(release): vX.Y.Z` | includes every crate, docs and `Cargo.lock` |
 | `quality` | `cargo test --release --workspace` | configurable command |
 | `build` | `cargo build --release -p aurelia-app` | configurable command |
 | `package` | portable zip + Inno installer | `scripts/package_aurelia.py` |
@@ -145,10 +145,20 @@ Before trusting a release run:
 4. Verify the downloaded assets independently.
 5. Confirm `git log --all -- keys/*.priv` is empty and `git check-ignore` covers the key.
 
-## 8. Failure-injection coverage still needed
+## 8. Failure-injection coverage
 
-The journal is designed for crashes and partial remotes, but the test suite does not yet inject
-them. Add tests for: killed upload mid-asset, tag push succeeding while release creation fails,
-draft upload digest mismatch, interrupted version commit, remote tag drift, compensation failure,
-and a clean-checkout release rehearsal. Until then, treat the orchestrator as verified for the
-happy path and for the draft-verification fix in `get_release()`, not as fully failure-proof.
+The suite now covers the failure modes that exercise the journal's recovery paths:
+
+- **Partial upload**: the second asset disconnects; the draft survives, resume uploads only the
+  missing asset and publishes without duplicates.
+- **Digest mismatch**: a corrupted download fails `release.upload` before publication; resume
+  verifies the corrected bytes and publishes.
+- **Release creation failure**: a failed GitHub draft leaves a resumable journal; resume
+  creates and publishes it.
+- **Remote tag drift**: a tag this run did not create is refused at preflight.
+- **Interrupted operation**: a `running` journal entry refuses to resume until `recover`.
+- **Published-draft verification**: re-verifying after publication accepts the published state.
+
+Still worth adding: a killed process during the journal append itself (partial final line), a
+compensation that fails partway, and a clean-clone rehearsal against a throwaway remote. The
+orchestrator is now tested for the resume paths it depends on, not only the happy path.

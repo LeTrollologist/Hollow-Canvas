@@ -118,6 +118,23 @@ Actions:
 6. **Keep release notes and version examples current.** Every release should update README
    examples and release notes in the version commit, not by hand afterwards.
 
+Progress:
+
+- The version stage now includes `Cargo.lock` automatically; the git-profile end-to-end test
+  asserts the release commit owns the lock and leaves a clean tree.
+- The journal's status is no longer sticky: a failed verification that passes on resume now
+  reports `published`/`verified`, and `last_error` clears.
+- Failure injection covers partial upload resume, digest mismatch, release-creation failure,
+  remote tag drift, interrupted operation, and post-publication draft verification.
+- #15 and #28 are closed; the only open issue is Authenticode (#5).
+
+Remaining:
+
+- Authenticode signing and a real VirusTotal key are still external/pending.
+- Add the partial-journal-append, compensation-failure and clean-clone rehearsal cases.
+- Prove the next release leaves `main` clean (the lock fix is in place but not yet exercised by
+  a release).
+
 Exit criteria:
 
 - Signed installer and executable; SmartScreen/AV report improves and is recorded per release.

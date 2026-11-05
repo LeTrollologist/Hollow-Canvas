@@ -46,15 +46,30 @@ def _file_hashes(repo: Path, paths: list[str]) -> dict[str, str]:
     return {rel: sha256_file(repo / rel) for rel in paths}
 
 
+def _version_files(ctx: Context) -> list[str]:
+    """Configured declarations plus the workspace lockfile.
+
+    Cargo rewrites `Cargo.lock` when the manifests move to the release version, but that
+    happens during quality/build, *after* the version commit. Including the lockfile in the
+    version stage means the release commit owns the final lock and the tree is clean when the
+    release finishes, without a manual follow-up commit.
+    """
+    files = list(ctx.cfg.version_files)
+    lock = "Cargo.lock"
+    if lock not in files and (ctx.repo / lock).is_file():
+        files.append(lock)
+    return files
+
+
 def _current_versions_problem(ctx: Context) -> list[str]:
     states = ctx.journal.state()
     bump = states.get("version.bump")
     if bump and bump.status == "ok":
-        return check_files(ctx.repo, ctx.cfg.version_files, ctx.version)
+        return check_files(ctx.repo, _version_files(ctx), ctx.version)
 
     problems: list[str] = []
     per_file: dict[str, set[str]] = {}
-    for rel in ctx.cfg.version_files:
+    for rel in _version_files(ctx):
         path = ctx.repo / rel
         if not path.is_file():
             problems.append(f"{rel}: missing")
@@ -144,22 +159,23 @@ def _preflight(ctx: Context) -> dict[str, Any]:
 
 
 def _version_bump(ctx: Context) -> dict[str, Any]:
-    changed = bump_files(ctx.repo, ctx.cfg.version_files, ctx.version)
+    changed = bump_files(ctx.repo, _version_files(ctx), ctx.version)
     return {"paths": changed}
 
 
 def _version_bump_verify(ctx: Context, outputs: dict[str, Any]) -> dict[str, Any]:
-    problems = check_files(ctx.repo, ctx.cfg.version_files, ctx.version)
+    files = _version_files(ctx)
+    problems = check_files(ctx.repo, files, ctx.version)
     if problems:
         raise VerificationError("; ".join(problems))
-    return {"files": len(ctx.cfg.version_files)}
+    return {"files": len(files)}
 
 
 def _version_bump_snapshot(ctx: Context) -> dict[str, Any]:
     return {
         "files": {
             rel: sha256_file(ctx.repo / rel)
-            for rel in ctx.cfg.version_files
+            for rel in _version_files(ctx)
             if (ctx.repo / rel).is_file()
         }
     }
@@ -168,13 +184,13 @@ def _version_bump_snapshot(ctx: Context) -> dict[str, Any]:
 def _version_bump_compensate(ctx: Context, state: OpState) -> None:
     # Local-only: restore the version files from HEAD. If the bump was already
     # committed, version.commit compensates first (reverse order) and this is a no-op.
-    ctx.git.checkout(list(ctx.cfg.version_files))
+    ctx.git.checkout(_version_files(ctx))
 
 
 def _version_commit(ctx: Context) -> dict[str, Any]:
     message = f"chore(release): {ctx.tag}"
     if ctx.git.status_porcelain():
-        ctx.git.add(list(ctx.cfg.version_files))
+        ctx.git.add(_version_files(ctx))
         ctx.git.commit(message)
         return {"message": message}
 
@@ -191,7 +207,7 @@ def _version_commit_verify(ctx: Context, outputs: dict[str, Any]) -> dict[str, A
     subject = ctx.git.commit_subject("HEAD")
     if subject != outputs.get("meta", {}).get("message", f"chore(release): {ctx.tag}"):
         raise VerificationError(f"HEAD is {subject!r}, not the release commit")
-    problems = check_files(ctx.repo, ctx.cfg.version_files, ctx.version)
+    problems = check_files(ctx.repo, _version_files(ctx), ctx.version)
     if problems:
         raise VerificationError("; ".join(problems))
     return {"head": ctx.git.head()}

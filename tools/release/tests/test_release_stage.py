@@ -25,11 +25,16 @@ class FakeGitHub:
         self.assets: dict[int, dict] = {}
         self.paths: dict[int, Path] = {}
         self._next = 1
+        self.fail_upload_after: int | None = None
+        self.fail_create = False
+        self.corrupt_download = False
 
     def get_release(self, tag: str) -> dict | None:
         return dict(self.release) if self.release else None
 
     def create_release(self, tag: str, *, name: str, body: str, draft: bool) -> dict:
+        if self.fail_create:
+            raise RuntimeError("simulated GitHub release creation failure")
         self.release = {"id": 1, "tag_name": tag, "name": name, "body": body, "draft": draft}
         return dict(self.release)
 
@@ -42,6 +47,11 @@ class FakeGitHub:
         return [dict(asset) for asset in self.assets.values()]
 
     def upload_asset(self, release_id: int, path: Path) -> dict:
+        if (
+            self.fail_upload_after is not None
+            and len(self.assets) >= self.fail_upload_after
+        ):
+            raise RuntimeError("simulated upload connection reset")
         asset = {
             "id": self._next,
             "name": path.name,
@@ -54,6 +64,8 @@ class FakeGitHub:
         return dict(asset)
 
     def download_asset(self, asset_id: int) -> bytes:
+        if self.corrupt_download:
+            return b"corrupted bytes"
         return self.paths[asset_id].read_bytes()
 
     def delete_asset(self, asset_id: int) -> None:
@@ -160,3 +172,77 @@ def test_published_release_refuses_deletion(tmp_path, monkeypatch):
 
     with pytest.raises(CompensationError):
         stages._release_publish_compensate(ctx, type("S", (), {"before": {"draft": True}})())
+
+
+def test_partial_upload_failure_resumes_without_duplicates(tmp_path, monkeypatch):
+    artifacts = tmp_path / "dist" / "v1.0.0"
+    artifacts.mkdir(parents=True)
+    for name in ("a.zip", "b.zip", "c.zip"):
+        (artifacts / name).write_bytes(name.encode())
+
+    fake = FakeGitHub()
+    fake.fail_upload_after = 1
+    monkeypatch.setattr(stages, "client_for_context", lambda ctx: fake)
+    ctx = make_ctx(tmp_path)
+
+    from aurelia_release.errors import StageError
+
+    with pytest.raises(StageError):
+        Engine(ctx, build_operations(ctx)).run()
+
+    assert fake.release is not None and fake.release["draft"], "failure must leave a draft"
+    assert len(fake.assets) == 1, "the first asset was uploaded before the disconnect"
+    assert ctx.journal.status() == "failed"
+
+    fake.fail_upload_after = None
+    assert Engine(ctx, build_operations(ctx)).run() == "published"
+    assert {asset["name"] for asset in fake.assets.values()} == {"a.zip", "b.zip", "c.zip"}
+    assert len(fake.assets) == 3, "resume must not duplicate the already-uploaded asset"
+
+
+def test_upload_digest_mismatch_blocks_publication_and_can_resume(tmp_path, monkeypatch):
+    artifacts = tmp_path / "dist" / "v1.0.0"
+    artifacts.mkdir(parents=True)
+    (artifacts / "a.zip").write_bytes(b"binary")
+
+    fake = FakeGitHub()
+    fake.corrupt_download = True
+    monkeypatch.setattr(stages, "client_for_context", lambda ctx: fake)
+    ctx = make_ctx(tmp_path)
+
+    from aurelia_release.errors import VerificationError
+
+    with pytest.raises(VerificationError):
+        Engine(ctx, build_operations(ctx)).run()
+
+    assert fake.release is not None and fake.release["draft"], "a bad digest must not publish"
+    assert ctx.journal.status() == "failed"
+
+    fake.corrupt_download = False
+    result = Engine(ctx, build_operations(ctx)).run()
+    assert result == "published", (
+        f"state={ctx.journal.status()} error={ctx.journal.last_error()} "
+        f"tail={ctx.journal.records()[-6:]}"
+    )
+
+
+def test_release_creation_failure_leaves_a_resumable_draft(tmp_path, monkeypatch):
+    artifacts = tmp_path / "dist" / "v1.0.0"
+    artifacts.mkdir(parents=True)
+    (artifacts / "a.zip").write_bytes(b"binary")
+
+    fake = FakeGitHub()
+    fake.fail_create = True
+    monkeypatch.setattr(stages, "client_for_context", lambda ctx: fake)
+    ctx = make_ctx(tmp_path)
+
+    from aurelia_release.errors import StageError
+
+    with pytest.raises(StageError):
+        Engine(ctx, build_operations(ctx)).run()
+    assert fake.release is None
+    assert ctx.journal.status() == "failed"
+
+    fake.fail_create = False
+    assert Engine(ctx, build_operations(ctx)).run() == "published"
+    assert fake.release is not None and not fake.release["draft"]

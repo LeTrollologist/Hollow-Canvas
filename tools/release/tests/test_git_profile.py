@@ -65,6 +65,9 @@ def make_repo(tmp_path: Path) -> Path:
     )
     (work / "README.md").write_text("# Test\n\nRelease-v0.0.1\n", encoding="utf-8")
     (work / "Makefile").write_text("TAG ?= v0.0.1\n", encoding="utf-8")
+    (work / "Cargo.lock").write_text(
+        '[[package]]\nname = "aurelia-test"\nversion = "0.0.1"\n', encoding="utf-8"
+    )
     (work / ".gitignore").write_text(".release/\ndist/\n", encoding="utf-8")
     git(work, "add", ".")
     git(work, "commit", "-m", "initial")
@@ -112,6 +115,8 @@ def test_git_profile_end_to_end_and_idempotent(tmp_path):
     head = git(work, "rev-parse", "HEAD")
     assert git(work, "log", "-1", "--format=%s") == "chore(release): v0.1.0"
     assert 'version = "0.1.0"' in (work / "Cargo.toml").read_text(encoding="utf-8")
+    assert 'version = "0.1.0"' in (work / "Cargo.lock").read_text(encoding="utf-8")
+    assert git(work, "status", "--porcelain") == "", "the release commit must own the lockfile"
     assert git(work, "rev-parse", "refs/tags/v0.1.0^{commit}") == head
     assert ctx.git.remote_refs["refs/heads/main"] == head
     assert ctx.git.remote_refs["refs/tags/v0.1.0"] == git(work, "rev-parse", "refs/tags/v0.1.0")
@@ -125,6 +130,17 @@ def test_git_profile_end_to_end_and_idempotent(tmp_path):
     third = Engine(ctx, build_operations(ctx))
     assert third.run() == "verified"
     assert ctx.git.remote_refs["refs/tags/v0.1.0"] == git(work, "rev-parse", "refs/tags/v0.1.0")
+
+
+def test_preflight_rejects_a_remote_tag_this_run_did_not_create(tmp_path):
+    work = make_repo(tmp_path)
+    ctx = make_context(work, tmp_path)
+    ctx.git.remote_refs["refs/tags/v0.1.0"] = "b" * 40
+
+    from aurelia_release.errors import StageError
+
+    with pytest.raises(StageError, match="already exists"):
+        Engine(ctx, build_operations(ctx)).run()
 
 
 def test_push_command_is_atomic_and_explicit():

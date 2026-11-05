@@ -26,6 +26,7 @@ class OpState:
     before: dict[str, Any] = field(default_factory=dict)
     outputs: dict[str, Any] = field(default_factory=dict)
     verified: bool = False
+    verify_status: str | None = None
     verify_details: dict[str, Any] = field(default_factory=dict)
     compensated: bool = False
     compensation_error: str | None = None
@@ -109,7 +110,8 @@ class Journal:
                 state.outputs = record.get("outputs") or {}
             elif kind == "verify" and op:
                 state = states.setdefault(op, OpState(name=str(op)))
-                state.verified = record.get("status") == "passed"
+                state.verify_status = str(record.get("status") or "failed")
+                state.verified = state.verify_status == "passed"
                 state.verify_details = record.get("details") or {}
             elif kind == "compensate" and op:
                 state = states.setdefault(op, OpState(name=str(op)))
@@ -140,12 +142,11 @@ class Journal:
             return "yanked"
         if any(record.get("type") == "rollback" for record in records):
             return "rolled_back"
-        if any(
-            record.get("type") == "verify" and record.get("status") == "failed"
-            for record in records
-        ):
-            return "failed"
         states = self.state()
+        # Only the latest verification for an operation matters. A failed verify that was
+        # retried successfully during a resume must not keep the whole release failed forever.
+        if any(state.verify_status == "failed" for state in states.values()):
+            return "failed"
         if any(state.status == "error" for state in states.values()):
             return "failed"
         if any(record.get("type") == "compensate" for record in records):
@@ -166,6 +167,8 @@ class Journal:
         return "running"
 
     def last_error(self) -> str | None:
+        if self.status() != "failed":
+            return None
         for record in reversed(self.records()):
             if record.get("type") == "result" and record.get("status") == "error":
                 return str(record.get("error", "unknown failure"))
