@@ -1,426 +1,205 @@
 # Aurelia · Roadmap
 
-Tracks what shipped through `v3.1.0`, what is deliberately next, and what is
-explicitly out of scope for the Windows-native build.
+**Status:** v3.4.1 shipped (2026-11-05). Native 16-bit editing, compositing, filters, text,
+selection edits and free transform are complete. The next phase is **stabilization, viewport
+correctness and distribution trust**, not another engine feature.
 
-Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs design work)
-
----
-
-## Shipped in v3.1.0
-
-| Item | Status | Notes |
-| :--- | :--- | :--- |
-| Optional Discord Rich Presence | ✅ | `aurelia-presence`; local IPC only, off by default, project name opt-in |
-| Presence privacy tests | ✅ | Default payload contains no document name or path |
-| Journal-backed release orchestrator | ✅ | `tools/release`, `git`/`full` profiles, write-ahead journal, compensation/yank |
-| Ed25519 artifact signing | ✅ | Detached signatures for binaries and `SHA256SUMS.txt` |
-| GitHub draft → verify → publish | ✅ | Assets verified by digest before publication |
-| Documentation baseline | ✅ | Architecture, format, security, compatibility and troubleshooting docs |
+Legend: Now = current focus · Next = queued · Later = designed, not started · Deferred = out of scope
 
 ---
 
-## Shipped in v2.1.0
+## The short version
 
-### Packaging & release engineering
+Aurelia's engine is ahead of its product surface. The most valuable next work is not another
+pixel feature; it is making the thing users actually see and install trustworthy:
 
-| Item | Status | Notes |
-| :--- | :--- | :--- |
-| Morrow-style staged pipeline | ♻️ | Historical; superseded in 3.1.0 by `tools/release` and `release.toml` |
-| Per-tag release records | ✅ | `releases/<tag>.json` (assets, hashes, tests, republish count) + `release-notes/<tag>.md` |
-| Git-only publishing | ✅ | Commit pipeline-owned files, annotated tag, push, verify the remote tag object |
-| REST artifact upload | ✅ | `scripts/release_page.py` (no forge CLI), refuses to upload bytes that disagree with `SHA256SUMS.txt` |
-| Inno Setup installer | ✅ | Per-user `%LOCALAPPDATA%\Programs\Aurelia`, optional `.aur`/`.hcv` associations, smart uninstall |
-| Portable zip + manifest | ✅ | `Aurelia-v<ver>-win64.zip`, `SHA256SUMS.txt` |
-| VPack retired | ✅ | No `.vpack`, no signing stage, no VirusTotal upload (see below) |
+1. **Viewport truth.** The canvas is the product, and it has had recurring visibility/refresh
+   bugs, no visual regression tests, and a 16-bit document is still presented at 8 bits. This is
+   the highest-value code work.
+2. **Distribution trust.** The installer is unsigned, so SmartScreen and generic AV heuristics
+   still fire. Authenticode is the highest-value non-code change left.
+3. **Release and documentation hygiene.** v3.4.x exposed gaps: `Cargo.lock` is not part of the
+   version stage, issues #15 and #28 are implemented but still open, and this roadmap had drifted
+   three releases behind.
+4. **Measured performance.** Only after correctness: the 16-bit sparse path is at 0.67 against a
+   0.60 budget (pass, little headroom), and the bilinear transparent-edge limitation is still
+   open.
+5. **Then UX gaps**: mask painting, selection combine modes, preferences, history panel.
 
-
-### Rebrand: Hollow Canvas → Aurelia
-
-| Item | Status | Notes |
-| :--- | :--- | :--- |
-| Product, docs and code renamed | ✅ | Crates `aurelia-{core,render,io,ui,app}`, binary `aurelia.exe`, `Aurelia` window class |
-| New project format | ✅ | `.aur` with `AUR\x01` signature; legacy `.hcv` v2–v5 still readable |
-| Explorer associations | ✅ | `.aur` + `.hcv`, `Aurelia.Project` ProgID, pre-2.0 keys auto-removed |
-| Settings relocation | ✅ | `%LOCALAPPDATA%\Aurelia` (preferences + autosave) |
-| New branding graphics | ✅ | Gold "A" prism icon (PNG/ICO regenerated), new banner and icon SVG |
-| Aurelia Dawn / Dusk / Ember themes | ✅ | Warm-ink studio retheme across panels, rulers, guides and graders |
-
-### Save safety (was: silent data loss)
-
-| Item | Status | Notes |
-| :--- | :--- | :--- |
-| Unsaved-changes guard on window close | ✅ | `WM_CLOSE` → Save / Discard / Cancel |
-| Project path tracking + quick save | ✅ | `Ctrl+S` writes straight to the known path |
-| Save As | ✅ | `Ctrl+Shift+S` |
-| Recent projects menu | ✅ | Persisted in `%LOCALAPPDATA%\Aurelia\preferences.txt` |
-| Atomic project writes | ✅ | `art.aur.tmp` → rename over target |
-| Autosave + crash recovery | ✅ | Snapshot every 120 s of dirty edits; restore prompt on launch |
-| Dirty marker in the title bar | ✅ | `Aurelia · art.aur *` |
-
-### Input
-
-| Item | Status | Notes |
-| :--- | :--- | :--- |
-| Stylus pressure (`WM_POINTER` + `GetPointerPenInfo`) | ✅ | Pressure overrides velocity dynamics; mouse path untouched |
-| Pen tilt sampling | ✅ | Captured into `pen_tilt`, reserved for tilt-aware dynamics |
-| Velocity dynamics / stroke stabilization | ✅ | Pre-existing |
-
-### Compositing & selection
-
-| Item | Status | Notes |
-| :--- | :--- | :--- |
-| Selection intersect | ✅ | `SelectionMask::intersect` |
-| Select from layer alpha | ✅ | `SelectionMask::from_layer_alpha` |
-| `∩ Intersect with Layer Alpha` | ✅ | Select menu |
-
-### Colour & filters
-
-| Item | Status | Notes |
-| :--- | :--- | :--- |
-| Levels (black/white/gamma) | ✅ | Live preview modal |
-| Colorize (hue/saturation over luminance) | ✅ | Live preview modal |
-| Pixelate | ✅ | Configurable block size |
-| Motion blur | ✅ | Distance + angle |
-| JPEG export quality | ✅ | 1–100 slider in File → Export Image |
-| PNG / JPEG / WebP export | ✅ | JPEG flattens alpha over white |
-
-### Interop
-
-| Item | Status | Notes |
-| :--- | :--- | :--- |
-| TIFF / TGA / ICO decoding | ✅ | Now matches the extensions registered in the Explorer context menu |
-| Sprite-sheet export | ✅ | Grid columns configurable |
-| Animated GIF + PNG sequence | ✅ | Pre-existing |
-| AUR v1 project format | ✅ | Deflate-compressed, reads legacy HCV v2–v5 |
-
-### Platform & scale
-
-| Item | Status | Notes |
-| :--- | :--- | :--- |
-| Per-monitor V2 DPI awareness | ✅ | `SetProcessDpiAwarenessContext` + `egui` pixels-per-point |
-| Undo memory budget | ✅ | 512 MiB default; oldest steps evicted, newest kept |
-| Theme persistence | ✅ | Saved with preferences |
-| CI | ✅ | Local only — `cargo test --workspace` + `aurelia-release` (no GitHub Actions by design) |
+**Not now:** 32-bit floating-point / linear-light editing, a custom GUI framework to replace
+egui, or a cross-platform rewrite. Each is a separate proposal with its own gate and kill
+criterion.
 
 ---
 
-## Shipped in v2.5.0
+## What changed since the last roadmap
 
-### Layer masks
-
-- [x] `LayerMask { width, height, pixels, enabled }` on every layer, composited into
-  the alpha of the fast path, the general (offset/blend) path and adjustment layers.
-- [x] Create from the current selection, invert, enable/disable, remove; masks copy
-  with the layer and never modify pixels.
-- [x] **AUR v2** project format with a per-layer mask section; AUR v1 files still load
-  and simply have no masks.
-- [ ] Painting *into* a mask with the brush (next: route freehand strokes at a mask
-  target, the same way strokes currently route at layer pixels).
-
-### Stylus tilt
-
-- [x] `pen_tilt` (sampled since 2.0, previously unused) folds into freehand stroke width
-  via `brush::tilt_size_scale`, exposed as the **Tilt widens** slider. Off by default,
-  freehand tools only, never mutates the stored brush size.
-
-### Performance: the general (offset + blend) path
-
-**Closed in v2.6.0.** All four release gates met. Reproduce with
-`cargo run --release -p aurelia-render --example bench_composite`, which prints the
-machine and compiler with the numbers; the table below is from an Intel Alder Lake
-(12 logical cores), rustc 1.93.1, release profile, 1920x1080, 4 layers, 20 iterations x 3
-interleaved rounds, best round reported.
-
-| Case | v2.5.0 | v2.6.0 |
-| :--- | ---: | ---: |
-| **General path, opaque** | 25.7 MPix/s | **83.6 MPix/s** (3.3x) |
-| General, 50% coverage | - | 128.1 MPix/s |
-| General, 10% coverage | - | 209.5 MPix/s |
-| General, 10% + layer mask | - | 188.4 MPix/s |
-| General, clipping layer | - | 60.4 MPix/s |
-| Plain stack | 113.1 MPix/s | 160.2 MPix/s |
-| With layer mask | 92.6 MPix/s | 140.7 MPix/s |
-
-All 13 modes on their own, opaque general path: **61.0 (Soft Light) to 95.0 (Darken)
-MPix/s** across two runs - no single mode is hiding behind Normal.
-
-Run-to-run variation on this laptop is +-10%: a confirmation run of the same binary gave
-91.4 MPix/s for opaque general, 167.6 plain and 254.5 for the sparse clipping case. The
-gates are met in both, which is why the benchmark reports best-of-interleaved-rounds and
-prints the machine.
-
-#### Improved again: the generic computation model (step 2 of the pixel-format plan)
-
-The general path now runs one generic loop instantiated for `u8`, with the blend maths
-factored into a single working-precision implementation (`BlendMode::composite_working`)
-that `composite_pixel` and the per-mode `compose_*` functions both call. The 8-bit integer
-fast path is untouched, and the 702-combination oracle stayed byte-identical throughout.
-
-| Workload | v2.6.1 | now | change |
-| :--- | ---: | ---: | ---: |
-| General, opaque | 79.8 | **91.3** | +14% |
-| General, 50% coverage | 95.9 | **122.1** | +27% |
-| General, 10% coverage | 157.3 | **191.9** | +22% |
-| General, 10% + mask | 154.9 | **177.7** | +15% |
-| General, clipping | 56.6 | **68.3** | +21% |
-| General, clipping 10% | 137.1 | **215.1** | +57% |
-| All 13 modes | 64.3 - 79.9 | **80.9 - 94.1** | every mode up |
-
-Plain and masked paths are unchanged in code and within noise in measurement.
-
-#### Release gates
-
-| Gate | Status |
+| Release | Change |
 | :--- | :--- |
-| T1 30 MPix/s | met (36.1 before parallelism) |
-| T2 40 MPix/s | met |
-| T3 50 MPix/s | met |
-| T4 60 MPix/s, opaque general compositing | **met: 83.6** |
-| No correctness regressions | met: 54 tests, oracle byte-identical over 936 combinations |
-| No measurable regression in ordinary compositing | met: plain and masked paths untouched and no slower |
-| Benchmarks for sparse and opaque workloads | met: 10%, 50%, 100% coverage rows |
-| Machine, thread count, compiler and config recorded | met: printed by the benchmark |
+| v3.2.0-v3.4.0 development | 16-bit documents in the editor (#13), native 16-bit text (#14), native compositing output (#15), 16-bit filters (#28), adjustment layers, merge-visible / merge-down, selection fill/stroke, navigator |
+| v3.4.0 | Free transform made native at both storage widths; 16-bit editing complete at `checkpoint/v3.4.0-16bit-complete` (`bfa6709`) |
+| v3.4.1 | Live Navigator during strokes; paper/background/transparency invalidation; release verification fix |
 
-#### What the time was actually going on
+Current measurements are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md), the 16-bit record is in
+[docs/16bit-plan.md](docs/16bit-plan.md), and release mechanics are in
+[RELEASE_PROCESS.md](RELEASE_PROCESS.md).
 
-None of it was the blend maths:
+---
 
-1. **Out-of-bounds work.** Every canvas pixel was visited even for an offset layer, each
-   through `get_pixel` (four bounds checks and an `Option`). The valid span is now computed
-   per row and indexed directly.
-2. **Transparent pixels.** `composite_pixel` returns the destination for a transparent
-   source, but only after the float path. Skipping those first is exact and is the biggest
-   win on real artwork: 10% coverage now runs 2.5x the opaque rate.
-3. **Per-pixel blend dispatch.** Resolved once per layer; each mode runs a monomorphised
-   loop (`compose_normal`, ...) while the maths stays single-sourced in `composite_pixel`.
-4. **Clip base lookups.** A clipped layer resolved its base alpha through `get_pixel` per
-   pixel; it is now a contiguous span per row.
-5. **One core.** Rows of a layer are independent, so they are composed in parallel: fixed
-   row ownership per thread, join before the next layer, cap of 8 threads, and a 128x128
-   floor so small canvases stay single-threaded.
+## Now — P0: viewport truth
 
-#### Methodology, because it matters
+**Why first:** issue #16 ("Canvas Not Visible in Main Viewport") has been reported once and
+fixed once, and the v3.4.x Navigator work showed the same class of bug can return. Users judge
+every engine improvement through this surface. A broken viewport makes a correct 16-bit
+compositor irrelevant.
 
-- **Interleaved rounds, best of.** Measuring cases one after another on a throttling laptop
-  made the first case look fast and the last slow: Normal fell from 31.9 to 7.0 MPix/s
-  within a single run of identical work. Cases are now visited round-robin and the best
-  round is kept.
-- **One general-path layer per mode.** The first per-mode bench set the mode on all four
-  layers, which measured the general path four times over and reported every mode at
-  ~8 MPix/s ? a harness bug, not a finding.
-- **The machine is printed.** A throughput number without CPU, cores and compiler is not
-  comparable with anything.
+Actions:
 
-#### Tried and rejected (measured, not assumed)
+1. **Add a viewport regression harness.** State/renderer tests for an empty 8-bit document, an
+   empty 16-bit document, a transparent document, a dark-paper document, DPI-scaled layouts,
+   zoom/pan round trips, and the Navigator framing box. Prefer a small deterministic rendered
+   fixture over a screenshot service.
+2. **Audit the paper/background model.** One source of truth for `background_value`,
+   `is_transparent`, theme paper and the rendered framebuffer. A black canvas must be an explicit
+   background choice, never a default that looks like a broken renderer.
+3. **Keep the Navigator live and cheap.** Current per-frame updates are correct but should get a
+   measured cost budget; coalesce uploads if the downsample becomes visible in frame timing.
+4. **Decide the 16-bit presentation question with a timeboxed spike.** Prototype one RGBA16
+   texture path through a custom paint callback or native surface. Do not fork egui and do not
+   rewrite the UI. The spike succeeds only if it keeps the existing viewport tests green and
+   costs no measurable frame rate.
 
-- **256-entry `n/255.0` lookup table.** 29.7 vs 36.6 MPix/s ? a 19% regression: a `static`
-  table can alias the output buffer, so entries are reloaded after every store. Any retry
-  needs a stack-local copy, which is now possible because the loop is inlined per mode.
-- **Full-row clip pre-pass.** Resolving the base alpha for the whole row before the pixel
-  loop touched every pixel even where the layer is empty and made a clipped layer twice as
-  slow as an opaque one. Span indexing needs no pre-pass and no allocation.
+Exit criteria:
 
-#### Still open (not blocking)
+- No canvas-invisible/black-viewport report across two consecutive patch releases.
+- Viewport tests run in the normal local suite, not only by hand.
+- A written decision on 16-bit presentation: adopt, defer with a date, or reject with evidence.
 
-1. **Persistent thread pool.** A layer spawns its scoped threads on each call (~50 us each).
-   Measured overhead is a few percent; a pool would remove it.
-2. **Parallelise the fast path.** The plain stack is still single-threaded at ~160 MPix/s;
-   the same row split applies.
-3. **Stack-local channel table** ? the rejected LUT, retried with the aliasing fixed.
+---
 
-## Stabilization and performance (current phase)
+## Now — P0: distribution trust and release hygiene
 
-Free transform closed 16-bit feature completeness at `checkpoint/v3.4.0-16bit-complete`
-(`bfa6709`). The next phase is stabilization, not new architecture:
+**Why now:** the installer is unsigned, and the engine's quality is undermined by a SmartScreen
+warning and generic heuristic detections. This is issue #5 and it is explicitly the highest-value
+integrity upgrade.
 
-1. **Soak and regression.** Keep the full workspace suite green in debug and release, and run
-   the 16-bit document paths through long editing sessions before any performance work.
-2. **Re-measure the baseline.** The completion measurements are recorded in
-   `docs/PERFORMANCE.md`: gate 2 sparse ratio 0.67 (pass, budget 0.60), general-path composite
-   105.4 MPix/s opaque, and 16-bit brush throughput at parity or better than 8-bit.
-3. **Performance work after correctness.** Optimise the general and sparse paths from that
-   baseline, one measured change at a time; no throughput change is bundled into a correctness
-   fix.
-4. **Known limitation queue.** Bilinear transparent-edge interpolation is the first correctness
-   item in this phase, because it needs an 8-bit baseline before it can move (see
-   `docs/16bit-plan.md`). Until then it stays documented rather than silently changed.
+Actions:
 
-**32-bit floating-point / linear-light editing is deliberately not started.** It changes how
-values combine, invalidates the byte-identical 8-bit oracle and needs its own proposal, gate and
-kill criterion. 16-bit sRGB storage is the completed milestone.
+1. **Authenticode-sign the installer and executable** as part of the release pipeline, with the
+   certificate kept outside the repository and a documented rotation/lost-key procedure. This is
+   a release gate, not a post-release step.
+2. **Configure VirusTotal scanning** with a real API key in the release environment; keep
+   `advisory` while signing is being established, then decide whether `threshold` should block.
+3. **Close implemented issues.** #15 (native 16-bit output) and #28 (16-bit filters) are shipped;
+   verify the acceptance criteria, comment with the tests/commits, and close them. Remove stale
+   claims from the issue tracker rather than letting the backlog lie.
+4. **Fix the version-stage gap.** `Cargo.lock` is updated by quality/build after the release
+   commit and currently lands in a post-release commit. Add it to `version_files` (or to the
+   version stage explicitly) so a release leaves a clean tree without a follow-up commit.
+5. **Add failure-injection tests** for the release journal: killed upload, tag pushed but release
+   creation failed, draft digest mismatch, interrupted version commit, remote tag drift. The
+   happy path is tested; the failure path is still described as "needed" in RELEASE_PROCESS.md.
+6. **Keep release notes and version examples current.** Every release should update README
+   examples and release notes in the version commit, not by hand afterwards.
 
-## Next (ordered)
+Exit criteria:
 
-1. **Mask painting** ? target a mask with the brush, keeping it non-destructive.
-2. **General-path compositing speed** ? the completion baseline is 105.4 MPix/s opaque
-   (slowest blend mode 82.5); the next target is the sparse path and the slowest blend modes,
-   measured against `docs/PERFORMANCE.md` rather than the old 25.7 figure.
-3. **Layer styles** ? stroke, glow, drop shadow as composite-time effects.
-4. **Selection combine modes** ? Replace / Union / Subtract / Intersect for new selections.
-5. **Preferences UI** ? autosave interval, undo budget, JPEG quality, theme.
-6. **History panel** ? visible undo stack with memory readout.
-7. **Multi-document tabs** ? see the design below.
+- Signed installer and executable; SmartScreen/AV report improves and is recorded per release.
+- A release run leaves `main` clean with no manual post-release commit.
+- #15 and #28 closed or explicitly re-scoped.
+- Failure-injection suite covers the listed crash points.
 
-## Designed, not built
+---
 
-### Colour management / higher bit depth
+## Next — P1: stabilization and performance
 
-> **Status: 16-bit sRGB shipped, 32-bit not started.** Native 16-bit storage, editing,
-> compositing, filters, text, selection edits and free transform are complete as of the
-> `checkpoint/v3.4.0-16bit-complete` checkpoint (see `docs/16bit-plan.md`). The text below is
-> kept as the design record; it is no longer a description of missing functionality.
-> Linear-light and 32-bit floating-point editing remain future work and have not been started.
+**Why:** 16-bit is complete but the remaining performance headroom is thin, and one interpolation
+limitation is still documented rather than fixed.
 
-**Step 1 is done (v2.6.1, uncommitted at the time of writing).** `Layer::pixels` is
-private and every caller goes through `as_srgb8()` / `as_srgb8_mut()`, with
-`pixels_vec_mut()` for length changes and `set_pixels()` for replacement. 170 call sites
-across core, io, ui, app and render were migrated, the fast path hoists the slice once
-per layer, and all 78 tests - including the 702-combination byte-identical oracle - pass
-unchanged. Nothing about the representation is promised to callers any more, which is the
-whole point: the next step is a type change inside `layer.rs`, not a repo-wide rewrite.
+1. **Soak the 16-bit paths.** Long editing sessions across paint, filters, transform, undo/redo,
+   save/load, and animation frames. Measure memory, retained history and time-to-first-frame.
+2. **Fix bilinear transparent edges with a baseline first.** The current sampler averages colour
+   and alpha independently; a zero-alpha border with non-black RGB can darken interpolated edges.
+   Capture the 8-bit output baseline before changing it, then make the smallest correct change.
+   This remains the first correctness item in the stabilization phase.
+3. **Sparse 16-bit throughput.** Current gate-2 ratio is **0.67** against a 0.60 budget. Set a
+   target of **>= 0.75** (or justify why 0.67 is the practical floor), measure paired rounds, and
+   record the result in PERFORMANCE.md. Do not bundle throughput changes with correctness fixes.
+4. **General-path tail.** Slowest blend mode is Luminosity at 82.5 MPix/s; the opaque general path
+   is 105.4. Optimise only with a benchmark and a rollback number.
+5. **Memory.** Keep the delta-history budget honest at 1080p and 4K; measure, do not infer.
 
-Measured inventory of what a 16-bit move still touches, so the decision is made with
-numbers rather than optimism:
+Exit criteria:
 
-| Surface | Size |
-| :--- | :--- |
-| 8-bit pixel maths (`as u8`, `/255.0`, `*255`) | 211 lines |
-| Filters, all `&mut [u8]`, six round-trip through u8 HSL | 20 filters, 793 lines |
-| Rasterizer (brushes, gradients, magic wand) | 1285 lines |
-| Transform / resampling | 1012 lines |
-| Software renderer texture upload | 1154 lines |
-| Export (`ImageBuffer<Rgba<u8>>`) | PNG/TIFF can be 16-bit; JPEG/WebP/GIF/TGA/BMP cannot |
-| Project format | needs AUR v3 plus v2 migration |
+- Bilinear edge fixed or explicitly re-scoped with a test that pins the intended behaviour.
+- Sparse ratio target met or a written decision to stop.
+- Soak results recorded with the machine and build.
 
-**The cost that decides it:** the compositor is memory-bandwidth bound - 8 threads on 12
-logical cores bought only 2.3x, not 8x. Doubling bytes per pixel therefore puts opaque
-general compositing at roughly 45-55 MPix/s, below the T4=60 gate shipped in v2.6.0, and
-the u8 integer fast path loses half its SIMD lanes. Precision would be bought with the
-throughput just earned.
+---
 
-**The migration trick that keeps the oracle:** storing an 8-bit value as `v * 257` puts it
-exactly on the 16-bit lattice, and because `65535 = 255 x 257`, `(257v)/65535` and `v/255`
-are the same real value - so the f32 blend maths is bit-identical, and `(v16 + 128) / 257`
-recovers the original byte exactly. The existing oracle can therefore run in 16-bit mode
-and be compared byte-for-byte after downconversion. Only the integer fast path needs a
-tolerance of +-1 LSB or a rewrite. Nothing gets weakened to accommodate the change.
+## Next — P2: UX and editing gaps
 
-The staged plan continues:
+These are user-visible gaps, not architecture changes:
 
-1. Introduce `PixelFormat` on `Document` (`Srgb8`, `Linear16`) and a `LayerBuffer`
-   abstraction that only the compositor dereferences, keeping `Vec<u8>` behind it.
-2. Move filters and blend modes to operate on `LayerBuffer`, converting at the edges;
-   the fast path stays 8-bit when the document is `Srgb8`.
-3. Add an ICC profile reference to the project header (v3) and a working-space
-   conversion at export; keep sRGB as the only output until colour proofing exists.
-4. 16-bit only after the above is green in tests - the risk is silent banding in blend
-   modes, not the storage.
-
-#### Decision order for the abstraction (GitHub issue #11)
-
-Each row is a gate. Answering a later one while an earlier one is open produces a shape
-chosen by accident rather than by design:
-
-| # | Decision | Required outcome |
+| Item | Why it matters | Notes |
 | :--- | :--- | :--- |
-| 1 | Buffer responsibilities | Explicit interface and ownership rules |
-| 2 | Format access | Defined immutable and mutable access patterns |
-| 3 | Computation | Monomorphised format-specific paths |
-| 4 | Conversion | Documented boundaries and scratch ownership |
-| 5 | Persistence | AUR v3 format and migration rules |
-| 6 | Performance | Prototype meets agreed throughput requirements |
-| 7 | Correctness | Existing oracle remains byte-identical after downconversion |
+| **Mask painting** | Masks can be created but not brushed; non-destructive workflow is incomplete | Route freehand strokes at a mask target, preserving pixel layers |
+| **Selection combine modes** | Replace / Union / Subtract / Intersect is expected in any editor with selections | Extend `SelectionMask` and the Select menu |
+| **Preferences UI** | Autosave interval, undo budget, JPEG quality and theme are file-only today | No new backend; expose existing state |
+| **History panel** | Undo is invisible; users cannot see what will be undone or how much memory it holds | Read-only list with a memory readout |
+| **Navigator/viewport polish** | Fit/centre/zoom now behave; add explicit tests for DPI and dock-width changes | Follows the P0 harness |
 
-Ordering rationale: conversion boundaries (4) cannot be judged without ownership rules (1);
-persistence (5) follows from the access patterns (2); the performance gate (6) needs a
-prototype that only exists once computation (3) is settled. Correctness (7) is last only
-because it is the final proof - it constrains every earlier row.
+---
 
-#### Draft recommendation: one working format per document
+## Later — P3: larger bets
 
-The first 16-bit implementation should use a **document-wide working format**, not
-per-layer formats. Per-layer depths cost a format tag in the UI for every row, a
-definition for every pair of depths inside one file, a conversion at every operation
-boundary instead of at two edges, and filters that silently behave differently depending
-on the layer they run on.
+Only after the P0/P1 exit criteria:
 
-The realistic pressure for mixed formats is **import**: opening a 16-bit PNG into an 8-bit
-document. That is better answered explicitly than by supporting the matrix - either
-**promote the document** to the higher depth on import, or **convert on import** and tell
-the person the source depth was reduced. If a concrete use case later demands per-layer
-depth, the Phase 1 accessors make it an additive change rather than a rewrite.
+- **Layer styles**: stroke, glow, drop shadow as composite-time effects.
+- **16-bit presentation**: adopt only if the P0 spike proves it without destabilising the viewport.
+- **Multi-document tabs**: `DocumentSession` refactor, per-document history/path/pan/zoom.
+- **Colour management**: ICC profile reference, working-space conversion, soft proofing.
+- **PSD import/export, animated WebP/MP4**: third-party codecs; separate scoping.
+- **Cross-platform port**: `eframe`/`winit`/`wgpu` front-end swap; not a small port while the
+  renderer is GDI-hosted.
 
-No implementation starts until the proposal in #11 is written and reviewed. Phase 1 was
-valuable precisely because it removed the obstacle without guessing at the answer.
+---
 
-**Proposal:** `docs/pixel-format-proposal.md` answers gates 1-5 and *specifies* 6-7 as
-acceptance gates (measured, not asserted). Three concepts are kept separate there and must
-never be merged into one setting:
+## Deferred / explicitly not started
 
-| Concept | Responsibility |
+- **32-bit floating-point / linear-light editing.** It changes how values combine, invalidates
+  the byte-identical 8-bit oracle and needs its own proposal, gate and kill criterion. 16-bit
+  sRGB storage is the completed milestone.
+- **Forking or replacing egui.** The viewport is a GDI framebuffer path, not an egui texture
+  limitation. A custom UI framework is not justified by the current bug class.
+- **A 16-bit fast path.** No evidence it is needed before the sparse-path work is measured.
+- **Authenticode is not deferred**; it is P0 above.
+
+---
+
+## Shipped record
+
+| Area | State |
 | :--- | :--- |
-| Storage format | How layer pixels are represented |
-| Working precision | Precision used during filters and compositing |
-| Working colour space | How colour values are interpreted and combined |
+| 16-bit sRGB documents | Storage, editing, compositing, filters, text, selection, transforms, merge, save/load |
+| Free transform | Affine, quad, mesh, TPS; native at both widths; observational-invariance tests |
+| Paint / erase / fill / gradient / shapes | Native 8-bit and 16-bit |
+| Layers | Groups, masks, clipping, alpha lock, adjustment layers, text, animation timeline |
+| Release engineering | Journaled `tools/release`, Ed25519 signatures, draft/verify/publish, installer + portable zip |
+| Platform | Windows 10/11 x86-64, per-monitor V2 DPI, Win32 + GDI |
 
-16-bit sRGB storage does not provide linear-light compositing; f32 filter intermediates do
-not require f32 storage; and a colour-space change alters output *by definition*, so it
-cannot ride along with a storage change - that would invalidate the oracle that makes the
-storage change safe.
+The detailed historical performance work (v2.5-v2.7 compositor optimisations) is preserved in
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md) rather than repeated here.
 
-Two findings from the proposal that constrain the rest of the work: scratch buffers must be
-**per row band, not per document** (rows compose in parallel; one shared buffer would
-serialise or lock the hot loop), and import policy is a **product decision**, not an
-implementation detail - a 16-bit image into an 8-bit document either promotes the document
-or converts with a visible notice.
+---
 
-A prototype measuring four workloads - opaque, sparse, masked, clipped - validates the
-computation model before the architecture is approved, with the kill criterion stated in
-advance: if it cannot hold T4 on opaque, the storage change does not ship in that form.
+## Working rules
 
-**Prototype result (gate 6, measured).** `crates/aurelia-render/examples/proto_pixel_format.rs`
-
-**16-bit plan:** `docs/16bit-plan.md` turns that into three gates - fidelity and
-correctness, performance and memory, then production architecture - and settles the naming
-question: the variant is `Srgb16`, not `Linear16`. Linear light is a colour-space change
-that alters every blend result by definition and therefore cannot be validated by the
-byte-identical oracle; the fidelity problem that motivates 16-bit work is banding, which
-is storage precision. `Linear16` stays reserved for a future linear-light working space,
-which the f32 generic model from v2.7.0 makes reachable without another storage change.
-implements the model in isolation and asserts, before measuring, that its `u8` instantiation
-reproduces the production compositor byte for byte and that a `v * 257` 16-bit document
-downconverts to the same bytes - both hold. Throughput: **T4 fails at 43.5 MPix/s against 60,
-and the storage width is not the cause.** The bench fixture lets three of four layers use the
-8-bit fast path, which a 16-bit document cannot have under the decision to keep the fast path
-8-bit; the all-general 8-bit baseline is 24.6 MPix/s, the same ceiling or lower. Width costs
-+9% where the loop is compute-bound (opaque) and **-39% where it is bandwidth-bound (sparse)**,
-which is the realistic artwork case. The generic model is faster than today's general path on
-every all-general workload, so migrating to it pays for itself independent of 16-bit.
-
-Two things the prototype changed: the first implementation must quantise **per layer** (that
-is what keeps the oracle byte-identical; a whole-pass f32 buffer is a separate proposal with
-its own re-baselining), and the 16-bit performance target must be defined against the general
-path rather than the mixed fixture - or a 16-bit fast path must be built.
-
-### Multi-document
-
-`AppState` owns exactly one `Document`, and ~40 places reach into `state.document`
-directly. The plan:
-
-1. Introduce `DocumentId` + `Vec<Document>` inside `AppState` with `active` accessor;
-   replace `state.document` call sites mechanically (compiler-guided).
-2. Per-document: history stack, file path, dirty flag, pan/zoom, selection, timeline.
-   These already live in `AppState`, so they move into a `DocumentSession` struct.
-3. UI: a tab strip above the canvas, drag-reorder, `Ctrl+Tab` cycling, close prompting
-   for dirty documents (the existing quit guard already knows how to ask).
-4. Autosave keys by document id; the recovery dialog lists every snapshot.
-
-### Deferred (unchanged)
-
-- ?? **Cross-platform port** ? the host is Win32 + GDI; `eframe`/`winit`/`wgpu` is a rewrite.
-- ?? **PSD import/export, animated WebP / MP4** ? needs third-party codecs.
-- ?? **`render_ui` split** ? mechanical but touch-heavy; best done behind the new tests.
-- ?? **ED25519 signing** ? retired in 2.1.0; plan is a `sign` stage between verify and publish.
-- ?? **Authenticode certificate** ? still the highest-value integrity upgrade; the
-   unsigned installer keeps 2-4 generic heuristic detections.
+1. **Correctness before throughput.** No optimisation is bundled into a correctness change; no
+   correctness fix is hidden inside a performance change.
+2. **A test or it did not happen.** New viewport, release and 16-bit claims need a deterministic
+   test or a recorded measurement.
+3. **One source of truth.** Version numbers, release notes, issue state and roadmap status move
+   together in the release commit.
+4. **No silent fallback.** An unsupported format or operation refuses with a message; it never
+   downconverts behind the user's back.
