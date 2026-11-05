@@ -11,9 +11,9 @@ pending. Baseline: `main` @ `3ecf8cd` (v3.2.0), 112 tests passing, 1 ignored.
 | WS-4 (#15, native 16-bit output) | **done** | `910d30c` |
 | WS-3 (#14, 16-bit text) | **done** | see below |
 | WS-6 (D8, navigator/viewport) | **done** | see below |
-| WS-5 (#13, UI) | not started | — |
+| WS-5 (#13, 16-bit documents in the UI) | **done** | see below |
 
-Workspace tests: **164 passing, 1 ignored** (was 112). The 8-bit compositor oracle and the
+Workspace tests: **174 passing, 1 ignored** (was 112). The 8-bit compositor oracle and the
 digest tests are unchanged.
 
 Scope: issues #20, #15, #14, #13, plus one add-on requested by the maintainer (D8,
@@ -503,6 +503,19 @@ the adjustment-layer fix (F2) and a `srgb16` mode on `bench_composite`.
 ---
 
 ### WS-5 — #13: 16-bit documents in the UI
+
+**Status: done.** `Document::pixel_format` (D1), AUR tag authoritative, New Canvas depth row,
+footer and per-layer format reporting, filters and merge-down refused with a message (D2).
+
+Two findings from implementing it:
+
+- **Merge-down is 8-bit by construction** (`get_pixel`/`set_pixel`), so `Document::merge_layer_down`
+  now refuses a 16-bit document instead of flattening it. `merge_visible_layers` *does* honour
+  the format: a 16-bit document merges through the native compositor into a 16-bit layer.
+- **D6 has no call site today.** Opening an image creates a *new* document, which is correctly
+  8-bit because the source is 8-bit; there is no "import image as a layer into the current
+  document" path in the app. The rule stands for when one is added - promote `v * 257` into the
+  document format - but no test can be written for a path that does not exist.
 
 **Preconditions:** WS-2 and WS-3 merged. Filters are **blocked, not implemented** (D2): the
 destination-write plumbing and the 8-bit capability guard they need land here as part of #13,

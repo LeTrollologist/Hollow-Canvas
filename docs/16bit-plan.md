@@ -611,3 +611,34 @@ which had no format guard at all and would have panicked - works at both widths.
 
 What is *not* claimed: nothing here moves the 8-bit rounding. The difference between the two
 widths is where quantisation happens, not which formula is used.
+
+## Documents in the editor (v3.4.0, #13)
+
+`Document` now carries an explicit `pixel_format`, and it is what saves:
+
+- `Document::new` is 8-bit; `new_with_format(w, h, format)` creates a document whose base layer
+  and every future layer use `format`.
+- `add_layer` and `add_text_layer` inherit it. Deleting the last 16-bit layer no longer turns
+  the document 8-bit, because the format is no longer derived from the layers.
+- The AUR `document_format` byte records this field (see `docs/PROJECT_FORMAT.md`). No format
+  bump was needed: the tag already existed and was already read.
+- `merge_visible_layers` merges through `composite_layers_srgb16` for a 16-bit document, so
+  flattening does not downconvert. `merge_layer_down` composites in 8-bit and therefore refuses
+  a 16-bit document; the UI reports the refusal rather than silently flattening.
+
+What the editor can and cannot do with a 16-bit document today:
+
+| Operation | 16-bit |
+| :--- | :--- |
+| Create / open / save | yes |
+| Paint, erase, fill, gradient, shapes | yes (native) |
+| Text | yes (native) |
+| Flip / rotate / crop / scale | yes (native) |
+| Compositing and merge-visible | yes (native) |
+| Filters (all 15) | **refused with a message** - still 8-bit, next slice |
+| Merge down | **refused with a message** - 8-bit by construction |
+| Viewport | shows an 8-bit presentation; egui textures are 8-bit |
+
+The refusal message names the operation and the document format, and mutates nothing. That is
+the whole point of the hardening pass in v3.3.0: every remaining 8-bit-only path fails loudly
+instead of panicking.
