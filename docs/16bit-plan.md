@@ -705,8 +705,17 @@ review can check them against the diff rather than against a conversation.
    downconverted would collapse to multiples of 257.
 3. **Previews and commits preserve the document format.** Transform never calls `set_pixels` and
    never reconstructs the buffer; format is asserted after begin, after preview and after commit.
-4. **A failed or cancelled transform leaves no partial state.** Cancelling restores storage bytes
-   exactly, and the history stack gains nothing.
+4. **A failed or cancelled transform leaves no partial state**, and the document is
+   *observationally* unchanged. Cancelling must restore all of:
+
+   - the active layer's storage bytes, byte for byte;
+   - the document's storage format;
+   - the active layer identity;
+   - the undo and redo stacks (nothing pushed, nothing dropped);
+   - the document's dirty state, so a cancelled transform does not imply unsaved work.
+
+   Restoring pixels alone is not enough: a cancel that leaves a stray history entry or a dirty
+   flag changes what the user's next action means.
 
 Additional coverage required beyond the five digests:
 
