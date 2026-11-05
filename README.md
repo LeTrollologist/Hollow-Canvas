@@ -11,7 +11,7 @@
 <!-- Tier 1: Project Metadata & Quality Assurance Badges -->
 <p align="center">
   <a href="https://github.com/LeTrollologist/Aurelia/releases">
-    <img src="https://img.shields.io/badge/Release-v3.2.0-F6C45A?style=for-the-badge&logo=github&logoColor=1A120B&labelColor=1A120B" alt="Release" />
+    <img src="https://img.shields.io/badge/Release-v3.4.0-F6C45A?style=for-the-badge&logo=github&logoColor=1A120B&labelColor=1A120B" alt="Release" />
   </a>
   <a href="crates/">
     <img src="https://img.shields.io/badge/Engine-Rust_%2B_Win32_FFI-E8963F?style=for-the-badge&logo=rust&logoColor=1A120B&labelColor=1A120B" alt="Engine: Rust with Win32 FFI" />
@@ -180,7 +180,7 @@ Full details, silent-install switches and verification steps live in [`INSTALL.m
 
 ### Option 1: Installer (Recommended)
 
-1. Download [`Aurelia-Setup-3.2.0.exe`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
+1. Download [`Aurelia-Setup-3.4.0.exe`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
 2. Run it — it installs per user to `%LOCALAPPDATA%\Programs\Aurelia` (no administrator rights, no UAC prompt).
 3. Optionally keep *"Open Aurelia projects with Aurelia (.aur, .hcv)"* checked for double-click opening, and tick *Create a desktop shortcut*.
 4. Launch **Aurelia** from the Start menu.
@@ -188,7 +188,7 @@ Full details, silent-install switches and verification steps live in [`INSTALL.m
 Silent install:
 
 ```powershell
-Aurelia-Setup-3.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+Aurelia-Setup-3.4.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
 ---
@@ -197,10 +197,10 @@ Aurelia-Setup-3.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
 No installer and no registry writes of its own:
 
-1. Download [`Aurelia-v3.2.0-win64.zip`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
+1. Download [`Aurelia-v3.4.0-win64.zip`](https://github.com/LeTrollologist/Aurelia/releases/latest) from the latest release.
 2. Extract it with PowerShell or Windows Explorer:
    ```powershell
-   Expand-Archive -Path .\Aurelia-v3.2.0-win64.zip -DestinationPath .\Aurelia
+   Expand-Archive -Path .\Aurelia-v3.4.0-win64.zip -DestinationPath .\Aurelia
    ```
 3. Double-click `Aurelia\aurelia.exe` to launch immediately.
 
@@ -213,7 +213,7 @@ Each release publishes `SHA256SUMS.txt`, a detached `.sig` for it and for every 
 `aurelia-publisher-2026.pub`. The `.sig` files are raw 64-byte Ed25519 signatures — not hashes.
 
 ```powershell
-Get-FileHash .\Aurelia-v3.2.0-win64.zip -Algorithm SHA256
+Get-FileHash .\Aurelia-v3.4.0-win64.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt        # compare the digest
 ```
 
@@ -224,7 +224,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(Path("aurelia-publisher-2026.pub").read_text().strip()))
-for name in ("Aurelia-v3.2.0-win64.zip", "Aurelia-Setup-3.2.0.exe", "SHA256SUMS.txt"):
+for name in ("Aurelia-v3.4.0-win64.zip", "Aurelia-Setup-3.4.0.exe", "SHA256SUMS.txt"):
     pub.verify(Path(name + ".sig").read_bytes(), Path(name).read_bytes())
 print("signatures verified")
 ```
