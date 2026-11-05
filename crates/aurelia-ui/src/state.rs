@@ -380,11 +380,16 @@ pub struct AppState {
     pub show_text_hud: bool,
     pub show_shell_status_modal: Option<String>,
 
-    // ── Canvas Viewport & Composited Texture ──
-    pub canvas_texture: Option<egui::TextureHandle>,
-    pub canvas_composite_buffer: Vec<u8>,
-    pub canvas_dirty: bool,
-    pub viewport_rect: egui::Rect,
+    // ── Navigator ──
+    /// The navigator thumbnail, and the only owner of it.
+    pub navigator_texture: Option<egui::TextureHandle>,
+    /// Bumped by every content change. The navigator rebuilds only when this moves, so an idle
+    /// frame costs no recomposite, no downsample and no texture upload.
+    pub document_revision: u64,
+    /// The revision `navigator_texture` currently reflects.
+    pub navigator_revision: u64,
+    /// The document size `navigator_texture` was built for.
+    pub navigator_size: (u32, u32),
 }
 
 impl AppState {
@@ -585,10 +590,10 @@ impl AppState {
             show_text_hud: true,
             show_shell_status_modal: None,
 
-            canvas_texture: None,
-            canvas_composite_buffer: vec![0u8; (width * height * 4) as usize],
-            canvas_dirty: true,
-            viewport_rect: egui::Rect::ZERO,
+            navigator_texture: None,
+            document_revision: 0,
+            navigator_revision: u64::MAX,
+            navigator_size: (0, 0),
         }
     }
 
@@ -717,31 +722,28 @@ impl AppState {
         true
     }
 
-    /// Recomposites the document layers into the egui GPU canvas texture
-    pub fn recomposite_canvas(&mut self, ctx: &egui::Context) {
-        let w = self.document.width as usize;
-        let h = self.document.height as usize;
-        let needed_bytes = w * h * 4;
-        if self.canvas_composite_buffer.len() != needed_bytes {
-            self.canvas_composite_buffer.resize(needed_bytes, 0);
-        }
-        self.document.composite_layers_into(&mut self.canvas_composite_buffer, true);
-
-        let color_image = egui::ColorImage::from_rgba_unmultiplied([w, h], &self.canvas_composite_buffer);
-        if let Some(tex) = &mut self.canvas_texture {
-            if tex.size() == [w, h] {
-                tex.set(color_image, egui::TextureOptions::NEAREST);
-            } else {
-                self.canvas_texture = Some(ctx.load_texture("canvas_composite", color_image, egui::TextureOptions::NEAREST));
-            }
-        } else {
-            self.canvas_texture = Some(ctx.load_texture("canvas_composite", color_image, egui::TextureOptions::NEAREST));
-        }
-        self.canvas_dirty = false;
+    /// Records that the document's pixels changed, so the navigator rebuilds next frame.
+    ///
+    /// This is the only signal the thumbnail has: pan and zoom deliberately do not bump it,
+    /// because the thumbnail shows the document, not the viewport (the viewport is drawn as a
+    /// framing box on top).
+    pub fn mark_canvas_dirty(&mut self) {
+        self.document_revision = self.document_revision.wrapping_add(1);
     }
 
-    pub fn mark_canvas_dirty(&mut self) {
-        self.canvas_dirty = true;
+    /// Whether the navigator thumbnail must be rebuilt this frame.
+    ///
+    /// `navigator_revision` starts at `u64::MAX`, so the first frame always refreshes; after
+    /// that only a content change or a size change does.
+    pub fn navigator_needs_refresh(&self) -> bool {
+        self.navigator_revision != self.document_revision
+            || self.navigator_size != (self.document.width, self.document.height)
+    }
+
+    /// Records that the thumbnail now reflects the current document.
+    pub fn note_navigator_refreshed(&mut self) {
+        self.navigator_revision = self.document_revision;
+        self.navigator_size = (self.document.width, self.document.height);
     }
 
     // ── Animation Timeline Management ──
@@ -903,26 +905,81 @@ impl AppState {
         Vec2::new(win_w * 0.5, win_h * 0.5) + self.pan + self.viewport_center_offset()
     }
 
+    /// The visible slice of the canvas in **normalised canvas coordinates** (0..1 per axis).
+    ///
+    /// Derived from the same `viewport_rect` and `viewport_center` the renderer clips and
+    /// maps with, so the navigator frames exactly what is on screen. Values are returned
+    /// unclamped: a viewport larger than the canvas legitimately reports outside 0..1, and
+    /// the caller clamps only when drawing.
+    pub fn viewport_canvas_fraction(&self, win_w: usize, win_h: usize) -> (f32, f32, f32, f32) {
+        let [x0, y0, x1, y1] = self.viewport_rect(win_w, win_h);
+        let center = self.viewport_center(win_w as f32, win_h as f32);
+        let zoom = self.zoom.max(0.0001);
+        let doc_w = (self.document.width.max(1)) as f32;
+        let doc_h = (self.document.height.max(1)) as f32;
+
+        // Renderer mapping: canvas = (screen - center) / zoom + doc / 2.
+        let axis = |screen: f32, center: f32, extent: f32| {
+            ((screen - center) / zoom + extent * 0.5) / extent
+        };
+        (
+            axis(x0 as f32, center.x, doc_w),
+            axis(y0 as f32, center.y, doc_h),
+            axis(x1 as f32, center.x, doc_w),
+            axis(y1 as f32, center.y, doc_h),
+        )
+    }
+
+    /// The zoom at which the document exactly fits the visible viewport.
+    ///
+    /// Uses `viewport_rect`, not the window: "Fit" used to subtract a magic margin from the
+    /// whole window and then scale by 0.92, which left the canvas smaller than the space it
+    /// had and off-centre whenever the timeline was open.
+    pub fn fit_zoom(&self, win_w: f32, win_h: f32) -> f32 {
+        let [x0, y0, x1, y1] = self.viewport_rect(win_w as usize, win_h as usize);
+        let available_w = (x1.saturating_sub(x0)).max(1) as f32;
+        let available_h = (y1.saturating_sub(y0)).max(1) as f32;
+        let doc_w = (self.document.width.max(1)) as f32;
+        let doc_h = (self.document.height.max(1)) as f32;
+        (available_w / doc_w).min(available_h / doc_h).clamp(0.05, 8.0)
+    }
+
     pub fn reset_view_centered(&mut self, win_w: f32, win_h: f32) {
         self.pan = Vec2::ZERO;
-        let bottom = if self.timeline.is_enabled { 88.0 } else { self.footer_h.max(24.0) };
-        let (chrome_w, chrome_h) = if self.show_ui_panels {
-            let ruler = if self.show_rulers { crate::design::RULER_PX } else { 0.0 };
-            (self.left_panel_w + self.right_panel_w + ruler, self.header_h + bottom + ruler)
-        } else {
-            (0.0, 0.0)
-        };
-        let avail_w = (win_w - chrome_w - 30.0).max(200.0);
-        let avail_h = (win_h - chrome_h - 30.0).max(200.0);
-        let scale_x = avail_w / self.document.width as f32;
-        let scale_y = avail_h / self.document.height as f32;
-        self.zoom = (scale_x.min(scale_y) * 0.92).clamp(0.05, 5.0);
+        self.zoom = self.fit_zoom(win_w, win_h);
         self.set_status(format!("Fit to screen ({:.0}%)", self.zoom * 100.0));
     }
 
+    /// Centres the view on a canvas point.
+    ///
+    /// `viewport_center()` already carries the panel offset, so shifting `pan` by the target's
+    /// distance from the document centre puts that point at the viewport's midpoint.
     pub fn pan_to_canvas_center(&mut self, target_canvas_pos: Vec2) {
         let canvas_size = Vec2::new(self.document.width as f32, self.document.height as f32);
         self.pan = -(target_canvas_pos - canvas_size * 0.5) * self.zoom;
+    }
+
+    /// Pans by a screen-space delta, in physical pixels.
+    ///
+    /// Used by the navigator's drag: dragging the viewport box right moves the view right,
+    /// which moves the document left on screen.
+    pub fn pan_by_screen_delta(&mut self, delta: Vec2) {
+        self.pan -= delta;
+    }
+
+    /// Changes zoom while keeping the canvas point under `anchor` (physical pixels) fixed.
+    ///
+    /// Without this a wheel zoom drifts away from the cursor: the anchor has to be resolved
+    /// against the *old* zoom before the scale changes.
+    pub fn zoom_at(&mut self, new_zoom: f32, anchor: Vec2, win_w: f32, win_h: f32) {
+        let new_zoom = new_zoom.clamp(0.05, 8.0);
+        let offset = self.viewport_center_offset();
+        let origin = Vec2::new(win_w * 0.5, win_h * 0.5) + offset;
+        let center = origin + self.pan;
+        let ratio = new_zoom / self.zoom.max(0.0001);
+        let center_after = anchor - (anchor - center) * ratio;
+        self.pan = center_after - origin;
+        self.zoom = new_zoom;
     }
 
     pub fn theme_accent_color(&self) -> Color {
@@ -1804,6 +1861,172 @@ impl Default for AppState {
 }
 
 #[cfg(test)]
+mod viewport_geometry {
+    use super::AppState;
+
+    /// Panel-free window so the viewport is the whole window, which makes the numbers
+    /// checkable by hand.
+    fn full_window(doc_w: u32, doc_h: u32) -> AppState {
+        let mut state = AppState::new(doc_w, doc_h);
+        state.show_ui_panels = false;
+        state.show_rulers = false;
+        state
+    }
+
+    /// The renderer's inverse mapping, for asserting what is under a screen point.
+    fn canvas_under(state: &AppState, screen: glam::Vec2, win_w: f32, win_h: f32) -> glam::Vec2 {
+        let center = state.viewport_center(win_w, win_h);
+        let doc = glam::Vec2::new(state.document.width as f32, state.document.height as f32);
+        (screen - center) / state.zoom + doc * 0.5
+    }
+
+    /// The framing box must be derived from the same geometry `render_canvas` clips with.
+    #[test]
+    fn navigator_framing_box_matches_the_renderer_viewport() {
+        let mut state = full_window(100, 100);
+
+        // 2x zoom in a window twice the document: exactly the whole canvas is visible.
+        state.zoom = 2.0;
+        state.pan = glam::Vec2::ZERO;
+        let (x0, y0, x1, y1) = state.viewport_canvas_fraction(200, 200);
+        assert!((x0 - 0.0).abs() < 1e-4 && (y0 - 0.0).abs() < 1e-4, "top-left: {x0},{y0}");
+        assert!((x1 - 1.0).abs() < 1e-4 && (y1 - 1.0).abs() < 1e-4, "bottom-right: {x1},{y1}");
+
+        // 1x zoom: the window shows twice the canvas, centred, so it extends half a canvas
+        // beyond each edge. The function reports this unclamped; the caller clamps to draw.
+        state.zoom = 1.0;
+        let (x0, y0, x1, y1) = state.viewport_canvas_fraction(200, 200);
+        assert!((x0 + 0.5).abs() < 1e-4, "left {x0}");
+        assert!((y0 + 0.5).abs() < 1e-4, "top {y0}");
+        assert!((x1 - 1.5).abs() < 1e-4, "right {x1}");
+        assert!((y1 - 1.5).abs() < 1e-4, "bottom {y1}");
+
+        // Panning right moves the visible slice right.
+        state.pan = glam::Vec2::new(10.0, 0.0);
+        let (x0, _, x1, _) = state.viewport_canvas_fraction(200, 200);
+        assert!((x1 - x0 - 2.0).abs() < 1e-4, "the box keeps its width");
+        assert!(x0 < -0.5, "panning right must move the box left: {x0}");
+    }
+
+    /// "Fit" must target the viewport rect, not the window minus a fudge factor.
+    #[test]
+    fn fit_to_viewport_is_exact() {
+        let mut state = full_window(100, 50);
+        // Window 200x200, document 100x50: the limiting axis is width, 200/100 = 2.
+        assert!((state.fit_zoom(200.0, 200.0) - 2.0).abs() < 1e-5);
+
+        // A tall document is limited by height.
+        let tall = full_window(50, 400);
+        assert!((tall.fit_zoom(200.0, 200.0) - 0.5).abs() < 1e-5);
+
+        // With panels the available rect shrinks, and the fit follows it exactly.
+        state.show_ui_panels = true;
+        state.left_panel_w = 40.0;
+        state.right_panel_w = 60.0;
+        state.header_h = 20.0;
+        state.footer_h = 30.0;
+        let [x0, y0, x1, y1] = state.viewport_rect(400, 300);
+        let expected = ((x1 - x0) as f32 / 100.0).min((y1 - y0) as f32 / 50.0);
+        assert!((state.fit_zoom(400.0, 300.0) - expected).abs() < 1e-5);
+
+        // And reset_view_centered applies it and re-centres.
+        state.pan = glam::Vec2::new(123.0, 45.0);
+        state.reset_view_centered(400.0, 300.0);
+        assert!(state.pan == glam::Vec2::ZERO, "fit must re-centre");
+        assert!((state.zoom - expected).abs() < 1e-5);
+    }
+
+    /// A wheel zoom must keep the canvas point under the cursor where it is.
+    #[test]
+    fn zoom_at_keeps_the_anchor_pixel_fixed() {
+        let mut state = full_window(400, 300);
+        state.zoom = 1.0;
+        state.pan = glam::Vec2::new(17.0, -9.0);
+        let anchor = glam::Vec2::new(137.0, 88.0);
+        let before = canvas_under(&state, anchor, 800.0, 600.0);
+
+        state.zoom_at(2.5, anchor, 800.0, 600.0);
+
+        assert!((state.zoom - 2.5).abs() < 1e-6);
+        let after = canvas_under(&state, anchor, 800.0, 600.0);
+        assert!(
+            (after - before).length() < 1e-3,
+            "the point under the cursor moved: {before:?} -> {after:?}"
+        );
+    }
+
+    /// Dragging the navigator box by a screen delta moves the view by that delta.
+    #[test]
+    fn drag_carries_the_viewport_box() {
+        let mut state = full_window(100, 100);
+        state.zoom = 2.0;
+        let before = state.viewport_canvas_fraction(200, 200);
+
+        state.pan_by_screen_delta(glam::Vec2::new(20.0, 0.0));
+
+        let after = state.viewport_canvas_fraction(200, 200);
+        // 20 screen px at 2x is 0.1 of a 100 px canvas, and dragging the box right moves the
+        // visible slice right.
+        assert!((after.0 - before.0 - 0.1).abs() < 1e-4, "{} -> {}", before.0, after.0);
+        assert!((after.2 - before.2 - 0.1).abs() < 1e-4);
+        assert!((state.pan.x + 20.0).abs() < 1e-4, "pan must move opposite the drag");
+    }
+
+    /// The thumbnail is rebuilt on content changes only - never on an idle frame, and never
+    /// merely because the user panned or zoomed.
+    #[test]
+    fn idle_frame_rebuilds_nothing() {
+        let mut state = full_window(64, 64);
+        assert!(state.navigator_needs_refresh(), "the first frame needs a thumbnail");
+
+        state.note_navigator_refreshed();
+        assert!(!state.navigator_needs_refresh(), "an idle frame must not rebuild");
+
+        state.pan = glam::Vec2::new(40.0, 12.0);
+        state.zoom = 3.0;
+        assert!(!state.navigator_needs_refresh(), "pan and zoom do not change the document");
+
+        state.mark_canvas_dirty();
+        assert!(state.navigator_needs_refresh(), "an edit must rebuild");
+        state.note_navigator_refreshed();
+
+        state.document.width = 128;
+        assert!(
+            state.navigator_needs_refresh(),
+            "a size change must rebuild even without an edit"
+        );
+    }
+
+    /// Clicking the navigator puts that canvas point at the viewport's midpoint. The midpoint
+    /// is `viewport_center`'s origin - it already accounts for asymmetric panels - so the test
+    /// resolves the canvas point under it rather than assuming the window centre.
+    #[test]
+    fn pan_to_canvas_center_accounts_for_the_viewport_offset() {
+        let mut state = AppState::new(100, 100);
+        state.show_ui_panels = true;
+        state.left_panel_w = 40.0;
+        state.right_panel_w = 60.0;
+        state.header_h = 20.0;
+        state.footer_h = 30.0;
+        state.zoom = 2.0;
+
+        let target = glam::Vec2::new(25.0, 75.0);
+        state.pan_to_canvas_center(target);
+
+        let (win_w, win_h) = (400.0_f32, 300.0_f32);
+        let viewport_midpoint = glam::Vec2::new(win_w * 0.5, win_h * 0.5) + state.viewport_center_offset();
+        let doc = glam::Vec2::new(100.0, 100.0);
+        let canvas_at_midpoint =
+            (viewport_midpoint - state.viewport_center(win_w, win_h)) / state.zoom + doc * 0.5;
+
+        assert!(
+            (canvas_at_midpoint - target).length() < 1e-3,
+            "expected {target:?} at the viewport midpoint, got {canvas_at_midpoint:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod discord_presence_defaults {
     use super::AppState;
 
@@ -1815,3 +2038,4 @@ mod discord_presence_defaults {
         assert!(!state.show_discord_presence_dialog);
     }
 }
+

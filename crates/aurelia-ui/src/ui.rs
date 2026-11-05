@@ -152,6 +152,28 @@ fn restore_and_preview(state: &mut AppState, apply: impl Fn(&mut [u8], u32, u32)
     }
 }
 
+/// The largest rect with the given aspect ratio that fits inside `available`, centred.
+///
+/// The navigator used to paint the thumbnail into the whole slot, so a tall or wide document
+/// was stretched, and its framing box was computed in a different space than the image it sat
+/// on. Both now use this rect.
+fn letterbox(available: egui::Rect, aspect: f32) -> egui::Rect {
+    if !aspect.is_finite() || aspect <= 0.0 || available.width() <= 0.0 || available.height() <= 0.0 {
+        return available;
+    }
+    let available_aspect = available.width() / available.height();
+    if available_aspect > aspect {
+        // Slot is wider than the document: full height, centred horizontally.
+        let width = available.height() * aspect;
+        let x0 = available.min.x + (available.width() - width) * 0.5;
+        egui::Rect::from_min_size(egui::pos2(x0, available.min.y), egui::vec2(width, available.height()))
+    } else {
+        let height = available.width() / aspect;
+        let y0 = available.min.y + (available.height() - height) * 0.5;
+        egui::Rect::from_min_size(egui::pos2(available.min.x, y0), egui::vec2(available.width(), height))
+    }
+}
+
 /// Screen size in physical pixels (egui reports points).
 fn screen_px(ctx: &egui::Context) -> (f32, f32) {
     let ppp = ctx.pixels_per_point().max(0.01);
@@ -1509,6 +1531,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         let thumb_h = (thumb_w / aspect).clamp(70.0, 170.0);
                         let (rect, response) = ui.allocate_exact_size(egui::vec2(thumb_w, thumb_h), egui::Sense::click_and_drag());
 
+                        // Letterbox the document inside the allocated slot. Drawing it into the
+                        // full rect stretched tall and wide documents, and the framing box was
+                        // then computed in a different space than the image it sat on.
+                        let inner = letterbox(rect, aspect);
+
                         let painter = ui.painter_at(rect);
                         // Background paper frame
                         let bg_c = if state.document.is_transparent {
@@ -1518,57 +1545,47 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             Color32::from_rgb(v, v, v)
                         };
                         painter.rect_filled(rect, 0.0, bg_c);
-                        if let Some(tex) = &state.canvas_texture {
+                        if let Some(tex) = &state.navigator_texture {
                             painter.image(
                                 tex.id(),
-                                rect,
+                                inner,
                                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                                 Color32::WHITE,
                             );
                         }
-                        painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0_f32, Color32::from_rgb(95, 82, 45)));
+                        painter.rect_stroke(inner, 4.0, egui::Stroke::new(1.0_f32, Color32::from_rgb(95, 82, 45)));
 
-                        // Draw live active viewport framing box inside the thumbnail
-                        let canvas_center_x = doc_w * 0.5 - state.pan.x / state.zoom;
-                        let canvas_center_y = doc_h * 0.5 - state.pan.y / state.zoom;
-
+                        // Framing box from the renderer's own viewport geometry, so it frames
+                        // what is actually visible rather than an approximation of it.
                         let (win_w_f, win_h_f) = screen_px(ctx);
-                        let open_vp_w = (win_w_f - state.left_panel_w - state.right_panel_w - 20.0).max(100.0);
-                        let open_vp_h = (win_h_f - state.header_h - state.footer_h - 10.0).max(100.0);
-
-                        let vp_canvas_w = open_vp_w / state.zoom;
-                        let vp_canvas_h = open_vp_h / state.zoom;
-
-                        let vp_min_cx = canvas_center_x - vp_canvas_w * 0.5;
-                        let vp_min_cy = canvas_center_y - vp_canvas_h * 0.5;
-                        let vp_max_cx = canvas_center_x + vp_canvas_w * 0.5;
-                        let vp_max_cy = canvas_center_y + vp_canvas_h * 0.5;
-
-                        let scale_x = thumb_w / doc_w;
-                        let scale_y = thumb_h / doc_h;
-
-                        let box_min_x = (rect.min.x + vp_min_cx * scale_x).clamp(rect.min.x, rect.max.x);
-                        let box_min_y = (rect.min.y + vp_min_cy * scale_y).clamp(rect.min.y, rect.max.y);
-                        let box_max_x = (rect.min.x + vp_max_cx * scale_x).clamp(rect.min.x, rect.max.x);
-                        let box_max_y = (rect.min.y + vp_max_cy * scale_y).clamp(rect.min.y, rect.max.y);
-
-                        let vp_rect = egui::Rect::from_min_max(
-                            egui::pos2(box_min_x, box_min_y),
-                            egui::pos2(box_max_x.max(box_min_x + 4.0), box_max_y.max(box_min_y + 4.0)),
+                        let (fx0, fy0, fx1, fy1) = state.viewport_canvas_fraction(
+                            win_w_f as usize,
+                            win_h_f as usize,
                         );
-
+                        let to_rect = |fx: f32, fy: f32| {
+                            egui::pos2(
+                                inner.min.x + fx.clamp(0.0, 1.0) * inner.width(),
+                                inner.min.y + fy.clamp(0.0, 1.0) * inner.height(),
+                            )
+                        };
+                        let min = to_rect(fx0, fy0);
+                        let max = to_rect(fx1, fy1);
+                        let vp_rect = egui::Rect::from_min_max(
+                            min,
+                            egui::pos2(max.x.max(min.x + 4.0), max.y.max(min.y + 4.0)),
+                        );
                         painter.rect_filled(vp_rect, 2.0, Color32::from_rgba_unmultiplied(92, 224, 216, 35));
                         painter.rect_stroke(vp_rect, 2.0, egui::Stroke::new(1.5_f32, Color32::from_rgb(224, 180, 92)));
 
-                        // Interactive: Click / Drag in Navigator to pan canvas immediately
-                        if response.clicked() || response.dragged() {
+                        // Drag carries the framing box; a click centres on the clicked point.
+                        if response.dragged() {
+                            let delta = response.drag_delta() * ctx.pixels_per_point();
+                            state.pan_by_screen_delta(glam::Vec2::new(delta.x, delta.y));
+                        } else if response.clicked() {
                             if let Some(mouse_pos) = response.interact_pointer_pos() {
-                                let rel_x = (mouse_pos.x - rect.min.x) / thumb_w;
-                                let rel_y = (mouse_pos.y - rect.min.y) / thumb_h;
-                                let target_canvas_pos = glam::Vec2::new(
-                                    (rel_x * doc_w).clamp(0.0, doc_w),
-                                    (rel_y * doc_h).clamp(0.0, doc_h),
-                                );
+                                let rel_x = ((mouse_pos.x - inner.min.x) / inner.width()).clamp(0.0, 1.0);
+                                let rel_y = ((mouse_pos.y - inner.min.y) / inner.height()).clamp(0.0, 1.0);
+                                let target_canvas_pos = glam::Vec2::new(rel_x * doc_w, rel_y * doc_h);
                                 state.pan_to_canvas_center(target_canvas_pos);
                             }
                         }
@@ -1576,12 +1593,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         // Quick Viewport Action Buttons
                         ui.add_space(3.0);
                         ui.horizontal(|ui| {
-                            if ui.button("⛶ Fit").on_hover_text("Fit Canvas to Screen (Ctrl+0)").clicked() {
+                            if ui.button("⛶ Fit").on_hover_text("Fit Canvas to the Viewport (Ctrl+0)").clicked() {
                                 state.reset_view_centered(win_w_f, win_h_f);
                             }
-                            if ui.button("100%").on_hover_text("Actual 1:1 Pixel Size (Ctrl+1)").clicked() {
+                            if ui.button("100%").on_hover_text("Actual 1:1 Pixel Size, keeping the view centred (Ctrl+1)").clicked() {
+                                // Zoom only: resetting `pan` here threw away the user's position.
                                 state.zoom = 1.0;
-                                state.pan = glam::Vec2::ZERO;
                             }
                             if ui.button("⟲ Center").on_hover_text("Reset Pan to Center").clicked() {
                                 state.pan = glam::Vec2::ZERO;
@@ -4888,5 +4905,34 @@ fn paint_ruler_numbers(ctx: &egui::Context, state: &AppState) {
                     .with_angle(-std::f32::consts::FRAC_PI_2),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::letterbox;
+    use egui::{pos2, vec2, Rect};
+
+    /// The navigator's image and its framing box must live in the same rect, and that rect
+    /// must not distort the document.
+    #[test]
+    fn letterbox_preserves_aspect_and_centres() {
+        let slot = Rect::from_min_size(pos2(10.0, 20.0), vec2(200.0, 100.0));
+
+        // A 3:1 document in a 2:1 slot: full width, letterboxed vertically.
+        let wide = letterbox(slot, 3.0);
+        assert!((wide.width() - 200.0).abs() < 1e-4);
+        assert!((wide.height() - 200.0 / 3.0).abs() < 1e-3);
+        assert!((wide.center().y - slot.center().y).abs() < 1e-4, "must be vertically centred");
+
+        // A 1:2 document: full height, letterboxed horizontally.
+        let tall = letterbox(slot, 0.5);
+        assert!((tall.height() - 100.0).abs() < 1e-4);
+        assert!((tall.width() - 50.0).abs() < 1e-4);
+        assert!((tall.center().x - slot.center().x).abs() < 1e-4, "must be horizontally centred");
+
+        // A degenerate aspect falls back to the slot rather than producing a zero rect.
+        assert_eq!(letterbox(slot, f32::NAN), slot);
+        assert_eq!(letterbox(slot, 0.0), slot);
     }
 }

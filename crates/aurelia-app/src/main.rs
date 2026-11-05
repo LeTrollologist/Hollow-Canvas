@@ -1790,7 +1790,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.mouse_pos = egui::pos2(screen_pos.x, screen_pos.y);
 
             if !app.is_over_ui(screen_pos) {
-                app.state.zoom = (app.state.zoom * (1.0 + delta * 0.1)).clamp(0.05, 8.0);
+                // Zoom about the cursor: the canvas point under the pointer stays put.
+                let new_zoom = (app.state.zoom * (1.0 + delta * 0.1)).clamp(0.05, 8.0);
+                app.state.zoom_at(new_zoom, screen_pos, app.win_w as f32, app.win_h as f32);
             }
             app.events.push(egui::Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Point,
@@ -2261,10 +2263,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.state.selection.as_ref().map(|s| s.mask.as_slice()),
                 );
 
-                // 2.5 Refresh the Navigator thumbnail from this frame's composite
-                if app.state.show_ui_panels && app.state.show_navigator {
+                // 2.5 Refresh the Navigator thumbnail, but only when the document changed:
+                // rebuilding it every frame cost a downsample and a texture upload on an idle
+                // canvas. Pan and zoom deliberately do not invalidate it.
+                if app.state.show_ui_panels && app.state.show_navigator && app.state.navigator_needs_refresh() {
                     if let Some(img) = app.renderer.navigator_thumbnail(&app.state.document, 320) {
-                        match &mut app.state.canvas_texture {
+                        match &mut app.state.navigator_texture {
                             Some(tex) if tex.size() == img.size => {
                                 tex.set(img, egui::TextureOptions::LINEAR);
                             }
@@ -2272,6 +2276,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                                 *slot = Some(app.egui_ctx.load_texture("navigator_thumb", img, egui::TextureOptions::LINEAR));
                             }
                         }
+                        app.state.note_navigator_refreshed();
                     }
                 }
 
@@ -2452,6 +2457,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             }
                         }
                         app.state.document = doc;
+                        app.state.mark_canvas_dirty();
                         app.state.history.clear();
                         app.state.selection = None;
                         app.state.document_path = None;
@@ -2487,6 +2493,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             match load_project_file(&path) {
                                 Ok(doc) => {
                                     app.state.document = doc;
+                                    app.state.mark_canvas_dirty();
                                     app.state.history.clear();
                                     app.state.document_path = Some(path.clone());
                                     app.state.mark_saved();
@@ -2550,6 +2557,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     match load_project_file(&path) {
                         Ok(doc) => {
                             app.state.document = doc;
+                            app.state.mark_canvas_dirty();
                             app.state.history.clear();
                             app.state.document_path = Some(path.clone());
                             app.state.mark_saved();
@@ -2570,6 +2578,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         layer.set_pixels(rgba.into_raw());
                     }
                     app.state.document = doc;
+                    app.state.mark_canvas_dirty();
                     app.state.history.clear();
                     app.state.document_path = None;
                     app.state.mark_saved();
