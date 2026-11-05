@@ -418,6 +418,11 @@ pub struct AppState {
     pub navigator_revision: u64,
     /// The document size `navigator_texture` was built for.
     pub navigator_size: (u32, u32),
+    /// The history generation `navigator_texture` was built at. Painting, filters, undo and
+    /// redo all move this, so the thumbnail stays live without a dirty call at every call site.
+    pub navigator_history: u64,
+    /// The paper state `navigator_texture` was built for: `(background_value, is_transparent)`.
+    pub navigator_paper: (u8, bool),
 }
 
 impl AppState {
@@ -623,6 +628,8 @@ impl AppState {
             document_revision: 0,
             navigator_revision: u64::MAX,
             navigator_size: (0, 0),
+            navigator_history: u64::MAX,
+            navigator_paper: (0, false),
         }
     }
 
@@ -767,12 +774,16 @@ impl AppState {
     pub fn navigator_needs_refresh(&self) -> bool {
         self.navigator_revision != self.document_revision
             || self.navigator_size != (self.document.width, self.document.height)
+            || self.navigator_history != self.history.generation()
+            || self.navigator_paper != (self.document.background_value, self.document.is_transparent)
     }
 
     /// Records that the thumbnail now reflects the current document.
     pub fn note_navigator_refreshed(&mut self) {
         self.navigator_revision = self.document_revision;
         self.navigator_size = (self.document.width, self.document.height);
+        self.navigator_history = self.history.generation();
+        self.navigator_paper = (self.document.background_value, self.document.is_transparent);
     }
 
     // ── Animation Timeline Management ──
@@ -1985,6 +1996,28 @@ mod viewport_geometry {
             state.navigator_needs_refresh(),
             "a size change must rebuild even without an edit"
         );
+    }
+
+    /// Painting and paper changes must invalidate the thumbnail even though neither path calls
+    /// `mark_canvas_dirty` explicitly: history generation and the paper state are part of the
+    /// freshness key.
+    #[test]
+    fn navigator_refreshes_on_paint_and_paper_changes() {
+        use aurelia_core::history::LayerPixelsDeltaCommand;
+
+        let mut state = AppState::new(32, 32);
+        state.note_navigator_refreshed();
+        assert!(!state.navigator_needs_refresh());
+
+        state.document.background_value = 13;
+        assert!(state.navigator_needs_refresh(), "a paper change must rebuild the thumbnail");
+        state.note_navigator_refreshed();
+        assert!(!state.navigator_needs_refresh());
+
+        let id = state.document.active_layer_id;
+        let bytes = state.document.active_layer().expect("layer").storage_bytes();
+        state.history.push(Box::new(LayerPixelsDeltaCommand::new(id, "paint", bytes.clone(), bytes)));
+        assert!(state.navigator_needs_refresh(), "a committed edit must rebuild the thumbnail");
     }
 
     /// Clicking the navigator puts that canvas point at the viewport's midpoint. The midpoint

@@ -1317,6 +1317,48 @@ mod ruler_tests {
     }
 
     #[test]
+    fn empty_sixteen_bit_document_renders_white_paper() {
+        let doc = Document::new_with_format(16, 16, aurelia_core::layer::PixelFormat::Srgb16);
+        let mut renderer = SoftwareRenderer::new();
+        let mut buffer = vec![0u32; 32 * 32];
+        renderer.render_canvas(
+            &mut buffer,
+            32,
+            32,
+            &doc,
+            glam::Vec2::ZERO,
+            1.0,
+            glam::Vec2::ZERO,
+            [0, 0, 32, 32],
+            None,
+            &[],
+            None,
+        );
+        assert_eq!(buffer[16 * 32 + 16], 0xFFFF_FFFF, "empty 16-bit document must show white paper");
+    }
+
+    #[test]
+    fn default_document_renders_white_paper() {
+        let doc = Document::new(16, 16);
+        let mut renderer = SoftwareRenderer::new();
+        let mut buffer = vec![0u32; 32 * 32];
+        renderer.render_canvas(
+            &mut buffer,
+            32,
+            32,
+            &doc,
+            glam::Vec2::ZERO,
+            1.0,
+            glam::Vec2::ZERO,
+            [0, 0, 32, 32],
+            None,
+            &[],
+            None,
+        );
+        assert_eq!(buffer[16 * 32 + 16], 0xFFFF_FFFF, "empty new document must show white paper");
+    }
+
+    #[test]
     fn blending_respects_alpha() {
         let mut buffer = [0xFF00_0000u32];
         blend_px(&mut buffer, 0, 0xFFFF_FFFF, 0);
