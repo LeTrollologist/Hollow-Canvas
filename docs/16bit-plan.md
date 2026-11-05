@@ -559,3 +559,31 @@ What this changed:
 Two of these were not in the original plan because reading the call sites found them late: the
 magic wand sampled the active layer directly, and flip/rotate/crop rewrote the buffer as
 `Srgb8` through `set_pixels`. Both are covered by tests now.
+
+## Native output and adjustment layers (v3.3.0)
+
+`Document::composite_layers_srgb16` / `composite_layers_into_srgb16` expose the working-precision
+compositor directly, and the 8-bit entry point now routes through the same body followed by one
+downconversion, so there is a single compositor and a single blend implementation. The native
+path writes into the caller's buffer: no scratch allocation, and no second copy of the result.
+
+Two things had to be fixed for it to be honest output rather than a wider-looking one:
+
+1. **Adjustment layers.** The 16-bit path skipped every adjustment layer, so a 16-bit document
+   rendered *differently*, not merely at lower precision. `AdjustmentType::apply_to_rgb_working`
+   applies the same formulas on normalised channels, and `apply_to_rgb` stays byte-for-byte as
+   it was - it remains the definition of shipped 8-bit output. The two are the same function of
+   the same real numbers; they can differ by at most one 8-bit step where a result sits on a
+   rounding boundary, and `adjustment_working_matches_eight_bit` pins that across a swept grid.
+2. **Half the maths duplicated.** `rgb_to_hsl_f32` / `hsl_to_rgb_f32` are now the single
+   implementations, with the 8-bit functions as quantising wrappers, so HSL cannot drift apart
+   between the two widths.
+
+Integration requirements, for the follow-up issues:
+
+| Consumer | Requirement |
+| :--- | :--- |
+| Viewport | egui 0.28 `ColorImage` is 8-bit. The viewport keeps showing a downconverted *presentation* of a 16-bit document; that is a display limitation, not data loss, and the UI should say so rather than imply the document is 8-bit. No 16-bit texture path is proposed. |
+| PNG export | `image` can write `ExtendedColorType::Rgba16`, so a native export path is a straight call once the export module accepts 16-bit input. Tracked as a follow-up. |
+| Flipbook / GIF | GIF is 8-bit by definition; frames composite through `Document::composite_layers` and downconvert at the end, which is correct. |
+| AUR save | Already native (v3). |

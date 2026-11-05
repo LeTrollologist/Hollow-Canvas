@@ -8,9 +8,10 @@ pending. Baseline: `main` @ `3ecf8cd` (v3.2.0), 112 tests passing, 1 ignored.
 | WS-1 (#20, export limits) | **done** | `617e374` |
 | WS-2 steps 1–4, 6 (hardening) | **done** | `dad3ed2`, `b590d0e`, `d786079` |
 | WS-2 step 5 (filter guard) | deferred into WS-5, per D2 | — |
-| WS-3 (#14), WS-4 (#15), WS-5 (#13), WS-6 (D8) | not started | — |
+| WS-4 (#15, native 16-bit output) | **done** | see below |
+| WS-3 (#14), WS-5 (#13), WS-6 (D8) | not started | — |
 
-Workspace tests: **142 passing, 1 ignored** (was 112). The 8-bit compositor oracle and the
+Workspace tests: **147 passing, 1 ignored** (was 112). The 8-bit compositor oracle and the
 digest tests are unchanged.
 
 Scope: issues #20, #15, #14, #13, plus one add-on requested by the maintainer (D8,
@@ -432,6 +433,9 @@ Ordered by blast radius, each its own commit:
 ---
 
 ### WS-4 — #15: native 16-bit composite output
+
+**Status: done.** `CompositeError`, `composite_layers_srgb16`, `composite_layers_into_srgb16`,
+the adjustment-layer fix (F2) and a `srgb16` mode on `bench_composite`.
 
 **Goal:** one compositor, two output widths, no duplicate blend maths.
 
