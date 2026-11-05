@@ -2187,6 +2187,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     needs_repaint = true;
                 }
 
+                // A stroke in progress has not pushed its history entry yet, so bump the
+                // document revision here: the Navigator should follow the brush live, not
+                // wait for mouse-up. The per-frame cost is the same downsample the thumbnail
+                // already did before it was revision-gated.
+                if app.stroke_dirty {
+                    app.state.mark_canvas_dirty();
+                }
+
                 // 2. Render canvas layer composite with up-to-date state, tracing paper, and onion skinning
                 let tracing_cfg = if app.state.tracing_enabled {
                     app.state.reference_image.as_ref().map(|(w, h, rgba)| {
