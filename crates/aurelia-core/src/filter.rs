@@ -1,4 +1,27 @@
+//! Filters and adjustment passes.
+//!
+//! Every operation here is generic over the **storage channel**, so it runs natively on an
+//! `Srgb16` layer as well as an `Srgb8` one. The pattern matches the compositor and the
+//! rasterizer: the maths is written once, dispatch happens once per operation (see the layer
+//! entry points at the bottom), and no pixel loop ever asks what format it is writing.
+//!
+//! Two rules make that safe for existing output:
+//!
+//! * **Arithmetic stays in the channel's own scale.** `to_scaled_f32` is `0..=255` for `u8`
+//!   and `0..=65535` for `u16`, so a `u8` filter computes exactly the numbers it always did and
+//!   a `u16` filter computes the same formulas at its own precision.
+//! * **The rounding rule travels with the filter.** Some filters round (`store_rounded`), some
+//!   have always truncated (`store_truncated` - a float `as u8`). Unifying them would move
+//!   bytes, so both exist and each filter keeps its own.
+//!
+//! `eight_bit_filter_output_is_unchanged` pins the result of every filter, captured before this
+//! module was generalised.
+
+use crate::layer::{Layer, LayerBuffer};
+use crate::pixel::Channel;
 use crate::selection::SelectionMask;
+
+// ── Colour-space helpers ────────────────────────────────────────────────────────────────────
 
 /// Converts RGB (0..255) to HSL (H: 0..360, S: 0..1, L: 0..1)
 pub fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
@@ -97,9 +120,53 @@ pub fn hsl_to_rgb_f32(h: f32, s: f32, l: f32) -> [f32; 3] {
     ]
 }
 
+// ── Storage access ──────────────────────────────────────────────────────────────────────────
+
+/// The channel's maximum in its own scale: `255` for `u8`, `65535` for `u16`.
+#[inline]
+fn max_scaled<C: Channel>() -> f32 {
+    C::MAX_SCALED as f32
+}
+
+/// `255`-relative constants (brush amounts, thresholds) expressed in the channel's own scale.
+#[inline]
+fn per_255<C: Channel>(value: f32) -> f32 {
+    value * (max_scaled::<C>() / 255.0)
+}
+
+#[inline]
+fn read_scaled<C: Channel>(pixels: &[C], idx: usize) -> [f32; 4] {
+    [
+        pixels[idx].to_scaled_f32(),
+        pixels[idx + 1].to_scaled_f32(),
+        pixels[idx + 2].to_scaled_f32(),
+        pixels[idx + 3].to_scaled_f32(),
+    ]
+}
+
+/// Writes a pixel with the round-to-nearest rule (the majority of the filters).
+#[inline]
+fn store_rounded<C: Channel>(pixels: &mut [C], idx: usize, pixel: [f32; 4]) {
+    pixels[idx] = C::from_scaled_f32(pixel[0]);
+    pixels[idx + 1] = C::from_scaled_f32(pixel[1]);
+    pixels[idx + 2] = C::from_scaled_f32(pixel[2]);
+    pixels[idx + 3] = C::from_scaled_f32(pixel[3]);
+}
+
+/// Writes a pixel with the truncation rule (sepia, posterize, grain, vignette).
+#[inline]
+fn store_truncated<C: Channel>(pixels: &mut [C], idx: usize, pixel: [f32; 4]) {
+    pixels[idx] = C::from_scaled_f32_trunc(pixel[0]);
+    pixels[idx + 1] = C::from_scaled_f32_trunc(pixel[1]);
+    pixels[idx + 2] = C::from_scaled_f32_trunc(pixel[2]);
+    pixels[idx + 3] = C::from_scaled_f32_trunc(pixel[3]);
+}
+
+// ── Adjustment passes ──────────────────────────────────────────────────────────────────────
+
 /// Adjusts Hue, Saturation, and Lightness of pixels in-place
-pub fn adjust_hsl(
-    pixels: &mut [u8],
+pub fn adjust_hsl<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     hue_shift: f32,        // -180.0 to +180.0 degrees
@@ -107,6 +174,7 @@ pub fn adjust_hsl(
     lightness_shift: f32,  // -1.0 to +1.0 (0.0 = normal)
     selection: Option<&SelectionMask>,
 ) {
+    let mx = max_scaled::<C>();
     let total_pixels = (width * height) as usize;
     for i in 0..total_pixels {
         let x = (i as u32) % width;
@@ -119,30 +187,26 @@ pub fn adjust_hsl(
         }
 
         let idx = i * 4;
-        let r = pixels[idx];
-        let g = pixels[idx + 1];
-        let b = pixels[idx + 2];
-        let a = pixels[idx + 3];
-
-        if a == 0 {
+        let px = read_scaled(pixels, idx);
+        if px[3] == 0.0 {
             continue;
         }
 
-        let (h, s, l) = rgb_to_hsl(r, g, b);
+        let (h, s, l) = rgb_to_hsl_f32([px[0] / mx, px[1] / mx, px[2] / mx]);
         let new_h = (h + hue_shift + 360.0) % 360.0;
         let new_s = (s * saturation_scale).clamp(0.0, 1.0);
         let new_l = (l + lightness_shift).clamp(0.0, 1.0);
 
-        let (nr, ng, nb) = hsl_to_rgb(new_h, new_s, new_l);
-        pixels[idx] = nr;
-        pixels[idx + 1] = ng;
-        pixels[idx + 2] = nb;
+        let rgb = hsl_to_rgb_f32(new_h, new_s, new_l);
+        pixels[idx] = C::from_scaled_f32(rgb[0] * mx);
+        pixels[idx + 1] = C::from_scaled_f32(rgb[1] * mx);
+        pixels[idx + 2] = C::from_scaled_f32(rgb[2] * mx);
     }
 }
 
 /// Adjusts Brightness (-100..=100) and Contrast (-100..=100)
-pub fn adjust_brightness_contrast(
-    pixels: &mut [u8],
+pub fn adjust_brightness_contrast<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     brightness: f32, // -100.0 to +100.0
@@ -151,6 +215,9 @@ pub fn adjust_brightness_contrast(
 ) {
     // Contrast factor formula
     let c_factor = (259.0 * (contrast + 255.0)) / (255.0 * (259.0 - contrast));
+    // 128 on the 8-bit scale, not half the maximum: 255/2 is 127.5 and would move every byte.
+    let midpoint = per_255::<C>(128.0);
+    let brightness_bias = per_255::<C>(brightness * 2.55);
     let total_pixels = (width * height) as usize;
 
     for i in 0..total_pixels {
@@ -164,23 +231,22 @@ pub fn adjust_brightness_contrast(
         }
 
         let idx = i * 4;
-        let a = pixels[idx + 3];
-        if a == 0 {
+        let mut px = read_scaled(pixels, idx);
+        if px[3] == 0.0 {
             continue;
         }
 
-        for c in 0..3 {
-            let orig = pixels[idx + c] as f32;
-            let with_brightness = orig + brightness * 2.55;
-            let with_contrast = c_factor * (with_brightness - 128.0) + 128.0;
-            pixels[idx + c] = with_contrast.clamp(0.0, 255.0).round() as u8;
+        for channel in 0..3 {
+            px[channel] = (c_factor * (px[channel] + brightness_bias - midpoint) + midpoint)
+                .clamp(0.0, max_scaled::<C>());
         }
+        store_rounded(pixels, idx, px);
     }
 }
 
 /// Color Balance: adjusts Red, Green, and Blue bias for shadows, midtones, and highlights
-pub fn adjust_color_balance(
-    pixels: &mut [u8],
+pub fn adjust_color_balance<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     cyan_red: f32,      // -100.0 (Cyan) to +100.0 (Red)
@@ -189,9 +255,10 @@ pub fn adjust_color_balance(
     selection: Option<&SelectionMask>,
 ) {
     let total_pixels = (width * height) as usize;
-    let r_bias = cyan_red * 1.28;
-    let g_bias = magenta_green * 1.28;
-    let b_bias = yellow_blue * 1.28;
+    let r_bias = per_255::<C>(cyan_red * 1.28);
+    let g_bias = per_255::<C>(magenta_green * 1.28);
+    let b_bias = per_255::<C>(yellow_blue * 1.28);
+    let mx = max_scaled::<C>();
 
     for i in 0..total_pixels {
         let x = (i as u32) % width;
@@ -204,23 +271,27 @@ pub fn adjust_color_balance(
         }
 
         let idx = i * 4;
-        let a = pixels[idx + 3];
-        if a == 0 {
+        let px = read_scaled(pixels, idx);
+        if px[3] == 0.0 {
             continue;
         }
 
-        let r = (pixels[idx] as f32 + r_bias).clamp(0.0, 255.0).round() as u8;
-        let g = (pixels[idx + 1] as f32 + g_bias).clamp(0.0, 255.0).round() as u8;
-        let b = (pixels[idx + 2] as f32 + b_bias).clamp(0.0, 255.0).round() as u8;
-
-        pixels[idx] = r;
-        pixels[idx + 1] = g;
-        pixels[idx + 2] = b;
+        pixels[idx] = C::from_scaled_f32((px[0] + r_bias).clamp(0.0, mx));
+        pixels[idx + 1] = C::from_scaled_f32((px[1] + g_bias).clamp(0.0, mx));
+        pixels[idx + 2] = C::from_scaled_f32((px[2] + b_bias).clamp(0.0, mx));
     }
 }
 
+// ── Filters ────────────────────────────────────────────────────────────────────────────────
+
 /// Inverts RGB channels
-pub fn filter_invert(pixels: &mut [u8], width: u32, height: u32, selection: Option<&SelectionMask>) {
+pub fn filter_invert<C: Channel>(
+    pixels: &mut [C],
+    width: u32,
+    height: u32,
+    selection: Option<&SelectionMask>,
+) {
+    let mx = max_scaled::<C>();
     let total_pixels = (width * height) as usize;
     for i in 0..total_pixels {
         let x = (i as u32) % width;
@@ -233,27 +304,28 @@ pub fn filter_invert(pixels: &mut [u8], width: u32, height: u32, selection: Opti
         }
 
         let idx = i * 4;
-        let a = pixels[idx + 3];
-        if a == 0 {
+        let px = read_scaled(pixels, idx);
+        if px[3] == 0.0 {
             continue;
         }
 
-        pixels[idx] = 255 - pixels[idx];
-        pixels[idx + 1] = 255 - pixels[idx + 1];
-        pixels[idx + 2] = 255 - pixels[idx + 2];
+        pixels[idx] = C::from_scaled_f32(mx - px[0]);
+        pixels[idx + 1] = C::from_scaled_f32(mx - px[1]);
+        pixels[idx + 2] = C::from_scaled_f32(mx - px[2]);
     }
 }
 
 /// Posterizes color channels to discrete tonal levels (2 to 32)
-pub fn filter_posterize(
-    pixels: &mut [u8],
+pub fn filter_posterize<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     levels: u32,
     selection: Option<&SelectionMask>,
 ) {
+    let mx = max_scaled::<C>();
     let levels = levels.clamp(2, 32) as f32;
-    let step = 255.0 / (levels - 1.0);
+    let step = mx / (levels - 1.0);
     let total_pixels = (width * height) as usize;
 
     for i in 0..total_pixels {
@@ -267,21 +339,26 @@ pub fn filter_posterize(
         }
 
         let idx = i * 4;
-        let a = pixels[idx + 3];
-        if a == 0 {
+        let px = read_scaled(pixels, idx);
+        if px[3] == 0.0 {
             continue;
         }
 
-        for c in 0..3 {
-            let val = pixels[idx + c] as f32;
-            let quantized = ((val / step).round() * step).clamp(0.0, 255.0) as u8;
-            pixels[idx + c] = quantized;
+        // Truncating, as it always was.
+        for channel in 0..3 {
+            let quantized = (px[channel] / step).round() * step;
+            pixels[idx + channel] = C::from_scaled_f32_trunc(quantized.clamp(0.0, mx));
         }
     }
 }
 
 /// Converts layer to perceptual grayscale
-pub fn filter_grayscale(pixels: &mut [u8], width: u32, height: u32, selection: Option<&SelectionMask>) {
+pub fn filter_grayscale<C: Channel>(
+    pixels: &mut [C],
+    width: u32,
+    height: u32,
+    selection: Option<&SelectionMask>,
+) {
     let total_pixels = (width * height) as usize;
     for i in 0..total_pixels {
         let x = (i as u32) % width;
@@ -294,16 +371,12 @@ pub fn filter_grayscale(pixels: &mut [u8], width: u32, height: u32, selection: O
         }
 
         let idx = i * 4;
-        let a = pixels[idx + 3];
-        if a == 0 {
+        let px = read_scaled(pixels, idx);
+        if px[3] == 0.0 {
             continue;
         }
 
-        let r = pixels[idx] as f32;
-        let g = pixels[idx + 1] as f32;
-        let b = pixels[idx + 2] as f32;
-        let lum = (0.2126 * r + 0.7152 * g + 0.0722 * b).round() as u8;
-
+        let lum = C::from_scaled_f32(0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2]);
         pixels[idx] = lum;
         pixels[idx + 1] = lum;
         pixels[idx + 2] = lum;
@@ -311,7 +384,13 @@ pub fn filter_grayscale(pixels: &mut [u8], width: u32, height: u32, selection: O
 }
 
 /// Applies vintage sepia photographic tone
-pub fn filter_sepia(pixels: &mut [u8], width: u32, height: u32, selection: Option<&SelectionMask>) {
+pub fn filter_sepia<C: Channel>(
+    pixels: &mut [C],
+    width: u32,
+    height: u32,
+    selection: Option<&SelectionMask>,
+) {
+    let mx = max_scaled::<C>();
     let total_pixels = (width * height) as usize;
     for i in 0..total_pixels {
         let x = (i as u32) % width;
@@ -324,35 +403,37 @@ pub fn filter_sepia(pixels: &mut [u8], width: u32, height: u32, selection: Optio
         }
 
         let idx = i * 4;
-        let a = pixels[idx + 3];
-        if a == 0 {
+        let px = read_scaled(pixels, idx);
+        if px[3] == 0.0 {
             continue;
         }
 
-        let r = pixels[idx] as f32;
-        let g = pixels[idx + 1] as f32;
-        let b = pixels[idx + 2] as f32;
-
-        let tr = (0.393 * r + 0.769 * g + 0.189 * b).clamp(0.0, 255.0) as u8;
-        let tg = (0.349 * r + 0.686 * g + 0.168 * b).clamp(0.0, 255.0) as u8;
-        let tb = (0.272 * r + 0.534 * g + 0.131 * b).clamp(0.0, 255.0) as u8;
-
-        pixels[idx] = tr;
-        pixels[idx + 1] = tg;
-        pixels[idx + 2] = tb;
+        let (r, g, b) = (px[0], px[1], px[2]);
+        // Truncating, as it always was.
+        pixels[idx] = C::from_scaled_f32_trunc(
+            (0.393 * r + 0.769 * g + 0.189 * b).clamp(0.0, mx),
+        );
+        pixels[idx + 1] = C::from_scaled_f32_trunc(
+            (0.349 * r + 0.686 * g + 0.168 * b).clamp(0.0, mx),
+        );
+        pixels[idx + 2] = C::from_scaled_f32_trunc(
+            (0.272 * r + 0.534 * g + 0.131 * b).clamp(0.0, mx),
+        );
     }
 }
 
 /// Binary Black & White Thresholding
-pub fn filter_threshold(
-    pixels: &mut [u8],
+pub fn filter_threshold<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     threshold: u8,
     selection: Option<&SelectionMask>,
 ) {
     let total_pixels = (width * height) as usize;
-    let thresh_f = threshold as f32;
+    // The cutoff is an 8-bit quantity, so it is lifted into the channel's scale.
+    let thresh_f = per_255::<C>(threshold as f32);
+    let mx = max_scaled::<C>();
 
     for i in 0..total_pixels {
         let x = (i as u32) % width;
@@ -365,26 +446,22 @@ pub fn filter_threshold(
         }
 
         let idx = i * 4;
-        let a = pixels[idx + 3];
-        if a == 0 {
+        let px = read_scaled(pixels, idx);
+        if px[3] == 0.0 {
             continue;
         }
 
-        let r = pixels[idx] as f32;
-        let g = pixels[idx + 1] as f32;
-        let b = pixels[idx + 2] as f32;
-        let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
-        let val = if lum >= thresh_f { 255 } else { 0 };
-        pixels[idx] = val;
-        pixels[idx + 1] = val;
-        pixels[idx + 2] = val;
+        let lum = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
+        let value = C::from_scaled_f32(if lum >= thresh_f { mx } else { 0.0 });
+        pixels[idx] = value;
+        pixels[idx + 1] = value;
+        pixels[idx + 2] = value;
     }
 }
 
 /// High-performance Separable 1D Gaussian Blur with configurable radius (1..=48)
-pub fn filter_gaussian_blur(
-    pixels: &mut [u8],
+pub fn filter_gaussian_blur<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     radius: f32,
@@ -394,6 +471,7 @@ pub fn filter_gaussian_blur(
         return;
     }
 
+    let mx = max_scaled::<C>();
     let r = radius.clamp(1.0, 48.0);
     let kernel_radius = r.ceil() as i32;
     let sigma = r * 0.5;
@@ -418,11 +496,11 @@ pub fn filter_gaussian_blur(
     let mut premul = vec![0.0_f32; total_px * 4];
     for i in 0..total_px {
         let idx = i * 4;
-        let a = pixels[idx + 3] as f32 / 255.0;
-        premul[idx] = pixels[idx] as f32 * a;
-        premul[idx + 1] = pixels[idx + 1] as f32 * a;
-        premul[idx + 2] = pixels[idx + 2] as f32 * a;
-        premul[idx + 3] = pixels[idx + 3] as f32;
+        let a = pixels[idx + 3].to_scaled_f32() / mx;
+        premul[idx] = pixels[idx].to_scaled_f32() * a;
+        premul[idx + 1] = pixels[idx + 1].to_scaled_f32() * a;
+        premul[idx + 2] = pixels[idx + 2].to_scaled_f32() * a;
+        premul[idx + 3] = pixels[idx + 3].to_scaled_f32();
     }
 
     let mut temp_f = vec![0.0_f32; total_px * 4];
@@ -481,26 +559,26 @@ pub fn filter_gaussian_blur(
             }
 
             // Unpremultiply alpha
-            let out_a = acc_a.clamp(0.0, 255.0);
+            let out_a = acc_a.clamp(0.0, mx);
             let dst_idx = ((y * w + x) * 4) as usize;
             if out_a > 0.5 {
-                let inv_a = 255.0 / out_a;
-                pixels[dst_idx] = (acc_r * inv_a).clamp(0.0, 255.0).round() as u8;
-                pixels[dst_idx + 1] = (acc_g * inv_a).clamp(0.0, 255.0).round() as u8;
-                pixels[dst_idx + 2] = (acc_b * inv_a).clamp(0.0, 255.0).round() as u8;
+                let inv_a = mx / out_a;
+                pixels[dst_idx] = C::from_scaled_f32((acc_r * inv_a).clamp(0.0, mx));
+                pixels[dst_idx + 1] = C::from_scaled_f32((acc_g * inv_a).clamp(0.0, mx));
+                pixels[dst_idx + 2] = C::from_scaled_f32((acc_b * inv_a).clamp(0.0, mx));
             } else {
-                pixels[dst_idx] = 0;
-                pixels[dst_idx + 1] = 0;
-                pixels[dst_idx + 2] = 0;
+                pixels[dst_idx] = C::ZERO;
+                pixels[dst_idx + 1] = C::ZERO;
+                pixels[dst_idx + 2] = C::ZERO;
             }
-            pixels[dst_idx + 3] = out_a.round() as u8;
+            pixels[dst_idx + 3] = C::from_scaled_f32(out_a);
         }
     }
 }
 
 /// Sharpens image using a 3x3 convolution kernel
-pub fn filter_sharpen(
-    pixels: &mut [u8],
+pub fn filter_sharpen<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     amount: f32, // 0.1 to 3.0
@@ -510,6 +588,7 @@ pub fn filter_sharpen(
         return;
     }
 
+    let mx = max_scaled::<C>();
     let w = width as i32;
     let h = height as i32;
     let src = pixels.to_vec();
@@ -528,7 +607,7 @@ pub fn filter_sharpen(
             }
 
             let idx = ((y * w + x) * 4) as usize;
-            if src[idx + 3] == 0 {
+            if src[idx + 3].to_scaled_f32() == 0.0 {
                 continue;
             }
 
@@ -537,28 +616,30 @@ pub fn filter_sharpen(
                 let c_idx = idx + c;
 
                 // Center
-                acc += src[c_idx] as f32 * center;
+                acc += src[c_idx].to_scaled_f32() * center;
 
-                // 4-neighbors
-                let top = ((y.saturating_sub(1) * w + x) * 4) as usize + c;
+                // 4-neighbors. `saturating_sub` on a signed integer floors at `i32::MIN`, not
+                // at zero, so it produced a negative index and panicked on the top row and the
+                // left column; `max(0)` is the clamp this always meant.
+                let top = (((y - 1).max(0) * w + x) * 4) as usize + c;
                 let bot = (((y + 1).min(h - 1) * w + x) * 4) as usize + c;
-                let left = ((y * w + x.saturating_sub(1)) * 4) as usize + c;
+                let left = ((y * w + (x - 1).max(0)) * 4) as usize + c;
                 let right = ((y * w + (x + 1).min(w - 1)) * 4) as usize + c;
 
-                acc += src[top] as f32 * neighbor;
-                acc += src[bot] as f32 * neighbor;
-                acc += src[left] as f32 * neighbor;
-                acc += src[right] as f32 * neighbor;
+                acc += src[top].to_scaled_f32() * neighbor;
+                acc += src[bot].to_scaled_f32() * neighbor;
+                acc += src[left].to_scaled_f32() * neighbor;
+                acc += src[right].to_scaled_f32() * neighbor;
 
-                pixels[c_idx] = acc.clamp(0.0, 255.0).round() as u8;
+                pixels[c_idx] = C::from_scaled_f32(acc.clamp(0.0, mx));
             }
         }
     }
 }
 
 /// Unsharp Mask: enhances high-frequency contrast edges with radius and threshold gating
-pub fn filter_unsharp_mask(
-    pixels: &mut [u8],
+pub fn filter_unsharp_mask<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     radius: f32,    // 1.0 to 10.0
@@ -566,6 +647,9 @@ pub fn filter_unsharp_mask(
     threshold: f32, // 0.0 to 30.0
     selection: Option<&SelectionMask>,
 ) {
+    let mx = max_scaled::<C>();
+    let threshold = per_255::<C>(threshold);
+
     let mut blurred = pixels.to_vec();
     filter_gaussian_blur(&mut blurred, width, height, radius, selection);
 
@@ -581,26 +665,26 @@ pub fn filter_unsharp_mask(
         }
 
         let idx = i * 4;
-        if pixels[idx + 3] == 0 {
+        if pixels[idx + 3].to_scaled_f32() == 0.0 {
             continue;
         }
 
         for c in 0..3 {
-            let orig = pixels[idx + c] as f32;
-            let blur = blurred[idx + c] as f32;
+            let orig = pixels[idx + c].to_scaled_f32();
+            let blur = blurred[idx + c].to_scaled_f32();
             let diff = orig - blur;
 
             if diff.abs() >= threshold {
                 let sharpened = orig + diff * amount;
-                pixels[idx + c] = sharpened.clamp(0.0, 255.0).round() as u8;
+                pixels[idx + c] = C::from_scaled_f32(sharpened.clamp(0.0, mx));
             }
         }
     }
 }
 
 /// Procedural Film Grain & Analog Noise Generator
-pub fn filter_film_grain(
-    pixels: &mut [u8],
+pub fn filter_film_grain<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     intensity: f32, // 0.0 to 1.0
@@ -611,8 +695,9 @@ pub fn filter_film_grain(
         return;
     }
 
+    let mx = max_scaled::<C>();
     let total = (width * height) as usize;
-    let max_noise = intensity * 75.0;
+    let max_noise = per_255::<C>(intensity * 75.0);
 
     // Fast Xorshift PRNG for authentic film grain
     let mut seed = 0x193a52f9u32;
@@ -634,30 +719,30 @@ pub fn filter_film_grain(
         }
 
         let idx = i * 4;
-        let a = pixels[idx + 3];
-        if a == 0 {
+        if pixels[idx + 3].to_scaled_f32() == 0.0 {
             continue;
         }
 
+        // Truncating, as it always was.
         if is_colored {
             for c in 0..3 {
                 let n = next_rand() * max_noise;
-                let val = (pixels[idx + c] as f32 + n).clamp(0.0, 255.0) as u8;
-                pixels[idx + c] = val;
+                pixels[idx + c] =
+                    C::from_scaled_f32_trunc((pixels[idx + c].to_scaled_f32() + n).clamp(0.0, mx));
             }
         } else {
             let n = next_rand() * max_noise;
             for c in 0..3 {
-                let val = (pixels[idx + c] as f32 + n).clamp(0.0, 255.0) as u8;
-                pixels[idx + c] = val;
+                pixels[idx + c] =
+                    C::from_scaled_f32_trunc((pixels[idx + c].to_scaled_f32() + n).clamp(0.0, mx));
             }
         }
     }
 }
 
 /// Vignette Filter: Darkens edges radiating outward from image center
-pub fn filter_vignette(
-    pixels: &mut [u8],
+pub fn filter_vignette<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     radius: f32,   // 0.1 to 1.5
@@ -665,6 +750,7 @@ pub fn filter_vignette(
     darkness: f32, // 0.0 to 1.0
     selection: Option<&SelectionMask>,
 ) {
+    let mx = max_scaled::<C>();
     let cx = width as f32 * 0.5;
     let cy = height as f32 * 0.5;
     let max_dist = (cx * cx + cy * cy).sqrt();
@@ -684,8 +770,7 @@ pub fn filter_vignette(
         }
 
         let idx = i * 4;
-        let a = pixels[idx + 3];
-        if a == 0 {
+        if pixels[idx + 3].to_scaled_f32() == 0.0 {
             continue;
         }
 
@@ -697,16 +782,17 @@ pub fn filter_vignette(
             let factor = ((dist - r_inner) / (r_outer - r_inner).max(1.0)).clamp(0.0, 1.0);
             let shade = 1.0 - factor * darkness;
 
-            pixels[idx] = (pixels[idx] as f32 * shade).clamp(0.0, 255.0) as u8;
-            pixels[idx + 1] = (pixels[idx + 1] as f32 * shade).clamp(0.0, 255.0) as u8;
-            pixels[idx + 2] = (pixels[idx + 2] as f32 * shade).clamp(0.0, 255.0) as u8;
+            // Truncating, as it always was.
+            pixels[idx] = C::from_scaled_f32_trunc((pixels[idx].to_scaled_f32() * shade).clamp(0.0, mx));
+            pixels[idx + 1] = C::from_scaled_f32_trunc((pixels[idx + 1].to_scaled_f32() * shade).clamp(0.0, mx));
+            pixels[idx + 2] = C::from_scaled_f32_trunc((pixels[idx + 2].to_scaled_f32() * shade).clamp(0.0, mx));
         }
     }
 }
 
 /// Chromatic Aberration / Lens Prism Split (Red & Blue displacement)
-pub fn filter_chromatic_aberration(
-    pixels: &mut [u8],
+pub fn filter_chromatic_aberration<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     shift_px: f32, // 1.0 to 20.0 px
@@ -751,12 +837,13 @@ pub fn filter_chromatic_aberration(
         }
     }
 }
+
 /// Levels: remaps the black/white input range and applies a midtone gamma.
 ///
 /// `black` and `white` are normalized input levels (0.0..=1.0), `gamma` is the
 /// midtone exponent (1.0 = neutral, <1.0 brightens, >1.0 darkens).
-pub fn filter_levels(
-    pixels: &mut [u8],
+pub fn filter_levels<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     black: f32,
@@ -764,6 +851,7 @@ pub fn filter_levels(
     gamma: f32,
     selection: Option<&SelectionMask>,
 ) {
+    let mx = max_scaled::<C>();
     let black = black.clamp(0.0, 0.99);
     let white = white.clamp(black + 0.01, 1.0);
     let gamma = gamma.clamp(0.05, 10.0);
@@ -782,27 +870,29 @@ pub fn filter_levels(
         }
 
         let idx = i * 4;
-        if pixels[idx + 3] == 0 {
+        let px = read_scaled(pixels, idx);
+        if px[3] == 0.0 {
             continue;
         }
 
         for c in 0..3 {
-            let normalized = (pixels[idx + c] as f32 / 255.0 - black) / range;
+            let normalized = (px[c] / mx - black) / range;
             let shaped = normalized.clamp(0.0, 1.0).powf(inv_gamma);
-            pixels[idx + c] = (shaped * 255.0).round().clamp(0.0, 255.0) as u8;
+            pixels[idx + c] = C::from_scaled_f32((shaped * mx).round().clamp(0.0, mx));
         }
     }
 }
 
 /// Colorize: replaces chroma with a single hue/saturation while preserving luminance.
-pub fn filter_colorize(
-    pixels: &mut [u8],
+pub fn filter_colorize<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     hue: f32,
     saturation: f32,
     selection: Option<&SelectionMask>,
 ) {
+    let mx = max_scaled::<C>();
     let saturation = saturation.clamp(0.0, 1.0);
     let total_pixels = (width * height) as usize;
 
@@ -817,24 +907,22 @@ pub fn filter_colorize(
         }
 
         let idx = i * 4;
-        if pixels[idx + 3] == 0 {
+        let px = read_scaled(pixels, idx);
+        if px[3] == 0.0 {
             continue;
         }
 
-        let r = pixels[idx] as f32;
-        let g = pixels[idx + 1] as f32;
-        let b = pixels[idx + 2] as f32;
-        let lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
-        let (nr, ng, nb) = hsl_to_rgb(hue, saturation, lum);
-        pixels[idx] = nr;
-        pixels[idx + 1] = ng;
-        pixels[idx + 2] = nb;
+        let lum = (0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2]) / mx;
+        let rgb = hsl_to_rgb_f32(hue, saturation, lum);
+        pixels[idx] = C::from_scaled_f32(rgb[0] * mx);
+        pixels[idx + 1] = C::from_scaled_f32(rgb[1] * mx);
+        pixels[idx + 2] = C::from_scaled_f32(rgb[2] * mx);
     }
 }
 
 /// Pixelate: averages each `block`x`block` cell and writes the flat colour back.
-pub fn filter_pixelate(
-    pixels: &mut [u8],
+pub fn filter_pixelate<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     block: u32,
@@ -852,14 +940,15 @@ pub fn filter_pixelate(
         for bx in (0..bw).step_by(block as usize) {
             let x1 = (bx + block as usize).min(bw);
             let y1 = (by + block as usize).min(bh);
-            let mut acc = [0u32; 4];
-            let mut count = 0u32;
+            // u64 so a 16-bit cell (65535 x 65536 samples) cannot overflow.
+            let mut acc = [0u64; 4];
+            let mut count = 0u64;
 
             for y in by..y1 {
                 for x in bx..x1 {
                     let idx = (y * bw + x) * 4;
                     for c in 0..4 {
-                        acc[c] += src[idx + c] as u32;
+                        acc[c] += src[idx + c].to_scaled_f32() as u64;
                     }
                     count += 1;
                 }
@@ -868,11 +957,12 @@ pub fn filter_pixelate(
                 continue;
             }
 
+            // Integer division: truncating, as it always was.
             let avg = [
-                (acc[0] / count) as u8,
-                (acc[1] / count) as u8,
-                (acc[2] / count) as u8,
-                (acc[3] / count) as u8,
+                C::from_scaled_u64(acc[0] / count),
+                C::from_scaled_u64(acc[1] / count),
+                C::from_scaled_u64(acc[2] / count),
+                C::from_scaled_u64(acc[3] / count),
             ];
 
             for y in by..y1 {
@@ -891,8 +981,8 @@ pub fn filter_pixelate(
 }
 
 /// Motion blur: box-averages samples along a line of `distance` pixels at `angle_deg`.
-pub fn filter_motion_blur(
-    pixels: &mut [u8],
+pub fn filter_motion_blur<C: Channel>(
+    pixels: &mut [C],
     width: u32,
     height: u32,
     distance: u32,
@@ -919,24 +1009,94 @@ pub fn filter_motion_blur(
                 }
             }
             let dst_idx = ((y * w + x) * 4) as usize;
-            if src[dst_idx + 3] == 0 {
+            if src[dst_idx + 3].to_scaled_f32() == 0.0 {
                 continue;
             }
 
-            let mut acc = [0u32; 4];
+            let mut acc = [0u64; 4];
             for s in -dist..=dist {
                 let sx = (x + (dx * s as f32).round() as i32).clamp(0, w - 1);
                 let sy = (y + (dy * s as f32).round() as i32).clamp(0, h - 1);
                 let s_idx = ((sy * w + sx) * 4) as usize;
                 for c in 0..4 {
-                    acc[c] += src[s_idx + c] as u32;
+                    acc[c] += src[s_idx + c].to_scaled_f32() as u64;
                 }
             }
             for c in 0..4 {
-                pixels[dst_idx + c] = (acc[c] / samples as u32) as u8;
+                // Integer division: truncating, as it always was.
+                pixels[dst_idx + c] = C::from_scaled_u64(acc[c] / samples as u64);
             }
         }
     }
 }
 
+// ── Layer entry points ─────────────────────────────────────────────────────────────────────
 
+/// Generates a layer-level entry point per filter: it dispatches **once** on the buffer and
+/// calls the generic body, so no call site writes its own `match` and no pixel loop sees a
+/// format.
+macro_rules! layer_entry_points {
+    ($(
+        $(#[$meta:meta])*
+        $entry:ident ( $target:ident ) ( $( $arg:ident : $ty:ty ),* $(,)? );
+    )*) => {
+        $(
+            $(#[$meta])*
+            #[allow(clippy::too_many_arguments)]
+            pub fn $entry(
+                layer: &mut Layer,
+                $($arg: $ty,)*
+                selection: Option<&SelectionMask>,
+            ) {
+                let (width, height) = (layer.width, layer.height);
+                match layer.buffer_mut() {
+                    LayerBuffer::Srgb8(pixels) => {
+                        $target(pixels, width, height, $($arg,)* selection)
+                    }
+                    LayerBuffer::Srgb16(pixels) => {
+                        $target(pixels, width, height, $($arg,)* selection)
+                    }
+                }
+            }
+        )*
+    };
+}
+
+layer_entry_points! {
+    /// Applies invert to a layer, whichever storage format it holds.
+    filter_invert_layer(filter_invert)();
+    /// Applies posterize to a layer.
+    filter_posterize_layer(filter_posterize)(levels: u32);
+    /// Applies grayscale to a layer.
+    filter_grayscale_layer(filter_grayscale)();
+    /// Applies sepia to a layer.
+    filter_sepia_layer(filter_sepia)();
+    /// Applies a binary threshold to a layer.
+    filter_threshold_layer(filter_threshold)(threshold: u8);
+    /// Applies a Gaussian blur to a layer.
+    filter_gaussian_blur_layer(filter_gaussian_blur)(radius: f32);
+    /// Applies sharpen to a layer.
+    filter_sharpen_layer(filter_sharpen)(amount: f32);
+    /// Applies an unsharp mask to a layer.
+    filter_unsharp_mask_layer(filter_unsharp_mask)(radius: f32, amount: f32, threshold: f32);
+    /// Applies film grain to a layer.
+    filter_film_grain_layer(filter_film_grain)(intensity: f32, is_colored: bool);
+    /// Applies a vignette to a layer.
+    filter_vignette_layer(filter_vignette)(radius: f32, softness: f32, darkness: f32);
+    /// Applies chromatic aberration to a layer.
+    filter_chromatic_aberration_layer(filter_chromatic_aberration)(shift_px: f32, angle_deg: f32);
+    /// Applies a levels remap to a layer.
+    filter_levels_layer(filter_levels)(black: f32, white: f32, gamma: f32);
+    /// Applies colorize to a layer.
+    filter_colorize_layer(filter_colorize)(hue: f32, saturation: f32);
+    /// Applies pixelate to a layer.
+    filter_pixelate_layer(filter_pixelate)(block: u32);
+    /// Applies motion blur to a layer.
+    filter_motion_blur_layer(filter_motion_blur)(distance: u32, angle_deg: f32);
+    /// Applies the HSL adjustment to a layer.
+    adjust_hsl_layer(adjust_hsl)(hue_shift: f32, saturation_scale: f32, lightness_shift: f32);
+    /// Applies the brightness/contrast adjustment to a layer.
+    adjust_brightness_contrast_layer(adjust_brightness_contrast)(brightness: f32, contrast: f32);
+    /// Applies the colour-balance adjustment to a layer.
+    adjust_color_balance_layer(adjust_color_balance)(cyan_red: f32, magenta_green: f32, yellow_blue: f32);
+}

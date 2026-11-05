@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_filter_adjust_hsl_and_invert() {
-        let mut pixels = vec![255, 0, 0, 255]; // Pure Red
+        let mut pixels = vec![255u8, 0, 0, 255]; // Pure Red
         crate::filter::adjust_hsl(&mut pixels, 1, 1, 120.0, 1.0, 0.0, None); // Shift +120 deg (Red -> Green)
         assert_eq!(pixels[0], 0);
         assert_eq!(pixels[1], 255);
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_filter_brightness_contrast_and_grayscale() {
-        let mut pixels = vec![100, 150, 200, 255];
+        let mut pixels = vec![100u8, 150, 200, 255];
         crate::filter::filter_grayscale(&mut pixels, 1, 1, None);
         assert_eq!(pixels[0], pixels[1]);
         assert_eq!(pixels[1], pixels[2]);
@@ -3518,5 +3518,298 @@ mod document_format {
         layer.convert_format(PixelFormat::Srgb8);
         assert_eq!(layer.format(), PixelFormat::Srgb8);
         assert_eq!(layer.as_srgb8_exact(), original.as_slice());
+    }
+}
+
+/// Digests of every filter's 8-bit output, printed so they can be pinned before the filters
+/// become storage-generic. Run with `--nocapture` to read them.
+#[cfg(test)]
+mod filter_baseline {
+    use crate::filter::*;
+    use crate::selection::SelectionMask;
+
+    const W: u32 = 16;
+    const H: u32 = 16;
+
+    fn fixture() -> Vec<u8> {
+        let mut pixels = vec![0u8; (W * H * 4) as usize];
+        for (index, px) in pixels.chunks_exact_mut(4).enumerate() {
+            let x = (index as u32) % W;
+            let y = (index as u32) / W;
+            px[0] = ((x * 17 + y * 3) % 256) as u8;
+            px[1] = ((x * 5 + y * 29) % 256) as u8;
+            px[2] = ((x * 11 + y * 7) % 256) as u8;
+            px[3] = if (x + y) % 5 == 0 { 0 } else { 255 - (x * 3 % 64) as u8 };
+        }
+        pixels
+    }
+
+    fn half_selection() -> SelectionMask {
+        SelectionMask::from_mask_vec(
+            W,
+            H,
+            (0..W * H).map(|i| if i % W < W / 2 { 255u8 } else { 0 }).collect(),
+        )
+    }
+
+    fn digest(bytes: &[u8]) -> u64 {
+        let mut hash = 0xcbf29ce484222325u64;
+        for &byte in bytes {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
+    }
+
+    fn cases() -> Vec<(&'static str, Box<dyn Fn(&mut Vec<u8>)>)> {
+        vec![
+            ("adjust_hsl", Box::new(|p| adjust_hsl(p, W, H, 40.0, 1.3, -0.1, None))),
+            ("adjust_brightness_contrast", Box::new(|p| adjust_brightness_contrast(p, W, H, 20.0, 15.0, None))),
+            ("adjust_color_balance", Box::new(|p| adjust_color_balance(p, W, H, 30.0, -20.0, 10.0, None))),
+            ("invert", Box::new(|p| filter_invert(p, W, H, None))),
+            ("invert_masked", Box::new(|p| filter_invert(p, W, H, Some(&half_selection())))),
+            ("posterize", Box::new(|p| filter_posterize(p, W, H, 5, None))),
+            ("grayscale", Box::new(|p| filter_grayscale(p, W, H, None))),
+            ("sepia", Box::new(|p| filter_sepia(p, W, H, None))),
+            ("threshold", Box::new(|p| filter_threshold(p, W, H, 128, None))),
+            ("gaussian_blur", Box::new(|p| filter_gaussian_blur(p, W, H, 2.0, None))),
+            ("gaussian_blur_masked", Box::new(|p| filter_gaussian_blur(p, W, H, 2.0, Some(&half_selection())))),
+            ("sharpen", Box::new(|p| filter_sharpen(p, W, H, 0.6, None))),
+            ("unsharp_mask", Box::new(|p| filter_unsharp_mask(p, W, H, 2.0, 0.8, 4.0, None))),
+            ("film_grain_mono", Box::new(|p| filter_film_grain(p, W, H, 0.4, false, None))),
+            ("film_grain_color", Box::new(|p| filter_film_grain(p, W, H, 0.3, true, None))),
+            ("vignette", Box::new(|p| filter_vignette(p, W, H, 0.9, 0.5, 0.6, None))),
+            ("chromatic_aberration", Box::new(|p| filter_chromatic_aberration(p, W, H, 3.0, 30.0, None))),
+            ("levels", Box::new(|p| filter_levels(p, W, H, 0.1, 0.9, 1.3, None))),
+            ("colorize", Box::new(|p| filter_colorize(p, W, H, 200.0, 0.6, None))),
+            ("pixelate", Box::new(|p| filter_pixelate(p, W, H, 4, None))),
+            ("motion_blur", Box::new(|p| filter_motion_blur(p, W, H, 3, 20.0, None))),
+        ]
+    }
+
+    const EXPECTED: &[(&str, u64)] = &[
+        ("adjust_hsl", 10760832446858165850),
+        ("adjust_brightness_contrast", 9445113945978877559),
+        ("adjust_color_balance", 13744510413082002765),
+        ("invert", 3927823269710674597),
+        ("invert_masked", 8406660380971115137),
+        ("posterize", 9133913637082582011),
+        ("grayscale", 17785329894304394479),
+        ("sepia", 3991839548642866574),
+        ("threshold", 13398940257513858144),
+        ("gaussian_blur", 17770303175522409645),
+        ("gaussian_blur_masked", 10422072700280778485),
+        ("sharpen", 11231089234561614405),
+        ("unsharp_mask", 8097350176102318458),
+        ("film_grain_mono", 10213049159201041479),
+        ("film_grain_color", 2825406824838431283),
+        ("vignette", 17680570955852021183),
+        ("chromatic_aberration", 18394350751082153129),
+        ("levels", 11295343428126902345),
+        ("colorize", 662666236567077697),
+        ("pixelate", 8499930175189816357),
+        ("motion_blur", 9339520916181006568),
+    ];
+
+    /// Pinned before the filters became storage-generic. Every filter must keep producing
+    /// exactly these bytes at 8-bit; each filter's rounding rule (round vs truncate) is part
+    /// of its output and travels with it.
+    #[test]
+    fn eight_bit_filter_output_is_unchanged() {
+        let expected: std::collections::HashMap<&str, u64> = EXPECTED.iter().copied().collect();
+        for (name, apply) in cases() {
+            let mut pixels = fixture();
+            apply(&mut pixels);
+            assert_eq!(
+                digest(&pixels),
+                expected[name],
+                "filter '{name}' changed its 8-bit output"
+            );
+        }
+    }
+}
+
+/// Every filter on native 16-bit storage.
+#[cfg(test)]
+mod filter_sixteen_bit {
+    use crate::document::Document;
+    use crate::filter::*;
+    use crate::layer::{Layer, LayerBuffer, PixelFormat};
+    use crate::pixel::srgb8_to_srgb16;
+    use crate::selection::SelectionMask;
+
+    const SIDE: u32 = 8;
+
+    fn wide_doc(lattice: bool) -> Document {
+        let mut doc = Document::new_with_format(SIDE, SIDE, PixelFormat::Srgb16);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            let channels: Vec<u16> = (0..(SIDE * SIDE * 4) as usize)
+                .map(|index| {
+                    if index % 4 == 3 {
+                        65535
+                    } else {
+                        let value = (index as u16).wrapping_mul(137).wrapping_add(11);
+                        if lattice {
+                            srgb8_to_srgb16((index as u8).wrapping_mul(7))
+                        } else {
+                            value
+                        }
+                    }
+                })
+                .collect();
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+        doc
+    }
+
+    fn cases() -> Vec<(&'static str, Box<dyn Fn(&mut Layer)>)> {
+        vec![
+            ("adjust_hsl", Box::new(|l| adjust_hsl_layer(l, 40.0, 1.3, -0.1, None))),
+            ("brightness_contrast", Box::new(|l| adjust_brightness_contrast_layer(l, 20.0, 15.0, None))),
+            ("color_balance", Box::new(|l| adjust_color_balance_layer(l, 30.0, -20.0, 10.0, None))),
+            ("invert", Box::new(|l| filter_invert_layer(l, None))),
+            ("posterize", Box::new(|l| filter_posterize_layer(l, 5, None))),
+            ("grayscale", Box::new(|l| filter_grayscale_layer(l, None))),
+            ("sepia", Box::new(|l| filter_sepia_layer(l, None))),
+            ("threshold", Box::new(|l| filter_threshold_layer(l, 128, None))),
+            ("gaussian_blur", Box::new(|l| filter_gaussian_blur_layer(l, 2.0, None))),
+            ("sharpen", Box::new(|l| filter_sharpen_layer(l, 0.6, None))),
+            ("unsharp_mask", Box::new(|l| filter_unsharp_mask_layer(l, 2.0, 0.8, 4.0, None))),
+            ("film_grain", Box::new(|l| filter_film_grain_layer(l, 0.4, false, None))),
+            ("vignette", Box::new(|l| filter_vignette_layer(l, 0.9, 0.5, 0.6, None))),
+            ("chromatic_aberration", Box::new(|l| filter_chromatic_aberration_layer(l, 3.0, 30.0, None))),
+            ("levels", Box::new(|l| filter_levels_layer(l, 0.1, 0.9, 1.3, None))),
+            ("colorize", Box::new(|l| filter_colorize_layer(l, 200.0, 0.6, None))),
+            ("pixelate", Box::new(|l| filter_pixelate_layer(l, 4, None))),
+            ("motion_blur", Box::new(|l| filter_motion_blur_layer(l, 3, 20.0, None))),
+        ]
+    }
+
+    /// Each filter must run on 16-bit storage, keep the format, and actually change pixels.
+    /// The panic this replaces was `as_srgb8_exact()` inside the filter's first pixel.
+    #[test]
+    fn every_filter_runs_on_sixteen_bit_storage() {
+        for (name, apply) in cases() {
+            let mut doc = wide_doc(false);
+            let id = doc.active_layer_id;
+            let before = doc.get_layer(id).expect("layer").storage_bytes();
+            apply(doc.get_layer_mut(id).expect("layer"));
+
+            let layer = doc.get_layer(id).expect("layer");
+            assert_eq!(layer.format(), PixelFormat::Srgb16, "{name} changed the storage format");
+            assert_ne!(
+                layer.storage_bytes(),
+                before,
+                "{name} left the 16-bit layer untouched"
+            );
+        }
+    }
+
+    /// The filters that create fractional values must produce them at 16 bits. A filter that
+    /// downconverted, computed, and promoted back would leave every channel a multiple of 257.
+    #[test]
+    fn filters_compute_natively_rather_than_round_tripping_eight_bit() {
+        let native_cases: Vec<(&str, Box<dyn Fn(&mut Layer)>)> = vec![
+            ("gaussian_blur", Box::new(|l| filter_gaussian_blur_layer(l, 2.0, None))),
+            ("levels", Box::new(|l| filter_levels_layer(l, 0.1, 0.9, 1.3, None))),
+            ("colorize", Box::new(|l| filter_colorize_layer(l, 200.0, 0.6, None))),
+            ("unsharp_mask", Box::new(|l| filter_unsharp_mask_layer(l, 2.0, 0.8, 4.0, None))),
+        ];
+
+        for (name, apply) in native_cases {
+            let mut doc = wide_doc(true); // lattice-aligned input: 8-bit cannot tell these apart
+            let id = doc.active_layer_id;
+            apply(doc.get_layer_mut(id).expect("layer"));
+            let layer = doc.get_layer(id).expect("layer");
+            assert!(
+                layer.as_srgb16().expect("16-bit").iter().any(|&c| c % 257 != 0),
+                "{name} produced only lattice values on a 16-bit layer; it was quantised"
+            );
+        }
+    }
+
+    /// For values on the lattice, the 16-bit result must downconvert to the 8-bit result for
+    /// the filters whose arithmetic is exact at both widths.
+    #[test]
+    fn lattice_results_match_the_eight_bit_filters() {
+        type Op = fn(&mut Layer);
+        let exact: Vec<(&str, Op, Op)> = vec![
+            (
+                "invert",
+                |l| filter_invert_layer(l, None),
+                |l| { let (w, h) = (l.width, l.height); filter_invert(l.as_srgb8_exact_mut(), w, h, None) },
+            ),
+            (
+                "grayscale",
+                |l| filter_grayscale_layer(l, None),
+                |l| { let (w, h) = (l.width, l.height); filter_grayscale(l.as_srgb8_exact_mut(), w, h, None) },
+            ),
+            (
+                "threshold",
+                |l| filter_threshold_layer(l, 128, None),
+                |l| { let (w, h) = (l.width, l.height); filter_threshold(l.as_srgb8_exact_mut(), w, h, 128, None) },
+            ),
+        ];
+
+        for (name, wide_op, narrow_op) in exact {
+            let mut wide = wide_doc(true);
+            let wide_id = wide.active_layer_id;
+            wide_op(wide.get_layer_mut(wide_id).expect("layer"));
+
+            // The same lattice values in an 8-bit layer.
+            let mut narrow = Document::new(SIDE, SIDE);
+            narrow.is_transparent = true;
+            let narrow_id = narrow.active_layer_id;
+            if let Some(layer) = narrow.get_layer_mut(narrow_id) {
+                for (index, byte) in layer.as_srgb8_exact_mut().iter_mut().enumerate() {
+                    *byte = if index % 4 == 3 { 255 } else { (index as u8).wrapping_mul(7) };
+                }
+            }
+            narrow_op(narrow.get_layer_mut(narrow_id).expect("layer"));
+
+            let wide_down: Vec<u8> = wide
+                .get_layer(wide_id)
+                .expect("layer")
+                .as_srgb16()
+                .expect("16-bit")
+                .iter()
+                .map(|&c| crate::pixel::srgb16_to_srgb8(c))
+                .collect();
+            assert_eq!(
+                wide_down,
+                narrow.get_layer(narrow_id).expect("layer").as_srgb8_exact(),
+                "{name} differs between 8-bit and downconverted 16-bit on lattice values"
+            );
+        }
+    }
+
+    /// A selection mask must restrict a 16-bit filter exactly as it restricts an 8-bit one.
+    #[test]
+    fn selection_masks_restrict_sixteen_bit_filters() {
+        let mut doc = wide_doc(false);
+        let id = doc.active_layer_id;
+        let before = doc.get_layer(id).expect("layer").storage_bytes();
+        let selection = SelectionMask::from_mask_vec(
+            SIDE,
+            SIDE,
+            (0..SIDE * SIDE).map(|i| if i % SIDE < SIDE / 2 { 255u8 } else { 0 }).collect(),
+        );
+
+        filter_invert_layer(doc.get_layer_mut(id).expect("layer"), Some(&selection));
+
+        let layer = doc.get_layer(id).expect("layer");
+        let values = layer.as_srgb16().expect("16-bit");
+        // Column 0 is inside the selection (so inverted), the last column is outside.
+        assert_eq!(values[0], 65535 - before_u16(&before, 0), "selected pixel must invert");
+        let last = ((SIDE - 1) * 4) as usize;
+        assert_eq!(values[last], before_u16(&before, last), "unselected pixel must not change");
+    }
+
+    fn before_u16(bytes: &[u8], channel_index: usize) -> u16 {
+        let lo = bytes[channel_index * 2] as u16;
+        let hi = bytes[channel_index * 2 + 1] as u16;
+        lo | (hi << 8)
     }
 }

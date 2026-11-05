@@ -31,6 +31,13 @@ pub trait Channel: Copy + PartialEq + Send + Sync + 'static {
     /// Rounds a scaled value back into storage, clamping to the format's range.
     fn from_scaled_f32(value: f32) -> Self;
 
+    /// Rounds a scaled value back into storage by **truncating** toward zero.
+    ///
+    /// Some filters have always written `value.clamp(..) as u8`, which truncates. That rule is
+    /// part of their shipped output, so it is preserved rather than unified with
+    /// `from_scaled_f32` - exactly as the resampling kernels keep their unscaled arithmetic.
+    fn from_scaled_f32_trunc(value: f32) -> Self;
+
     /// Integer back-conversion for maths that stays in the channel's own scale.
     ///
     /// Distinct from `from_scaled_f32` because an integer composer multiplies two channels
@@ -69,6 +76,11 @@ impl Channel for u8 {
     }
 
     #[inline]
+    fn from_scaled_f32_trunc(value: f32) -> Self {
+        value.clamp(0.0, 255.0) as u8
+    }
+
+    #[inline]
     fn from_scaled_u64(value: u64) -> Self {
         value.min(255) as u8
     }
@@ -102,6 +114,11 @@ impl Channel for u16 {
     #[inline]
     fn from_scaled_f32(value: f32) -> Self {
         value.round().clamp(0.0, 65535.0) as u16
+    }
+
+    #[inline]
+    fn from_scaled_f32_trunc(value: f32) -> Self {
+        value.clamp(0.0, 65535.0) as u16
     }
 
     #[inline]
