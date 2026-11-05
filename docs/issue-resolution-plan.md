@@ -8,10 +8,12 @@ pending. Baseline: `main` @ `3ecf8cd` (v3.2.0), 112 tests passing, 1 ignored.
 | WS-1 (#20, export limits) | **done** | `617e374` |
 | WS-2 steps 1–4, 6 (hardening) | **done** | `dad3ed2`, `b590d0e`, `d786079` |
 | WS-2 step 5 (filter guard) | deferred into WS-5, per D2 | — |
-| WS-4 (#15, native 16-bit output) | **done** | see below |
-| WS-3 (#14), WS-5 (#13), WS-6 (D8) | not started | — |
+| WS-4 (#15, native 16-bit output) | **done** | `910d30c` |
+| WS-3 (#14, 16-bit text) | **done** | see below |
+| WS-6 (D8, navigator/viewport) | **done** | see below |
+| WS-5 (#13, UI) | not started | — |
 
-Workspace tests: **147 passing, 1 ignored** (was 112). The 8-bit compositor oracle and the
+Workspace tests: **164 passing, 1 ignored** (was 112). The 8-bit compositor oracle and the
 digest tests are unchanged.
 
 Scope: issues #20, #15, #14, #13, plus one add-on requested by the maintainer (D8,
@@ -374,6 +376,9 @@ Ordered by blast radius, each its own commit:
 
 ### WS-3 — #14: native 16-bit text
 
+**Status: done.** Bundled font + asset seam, six pinned 8-bit digests, both text entry points
+generalised over storage width.
+
 **Goal:** text renders into `Srgb16` without conversion, while 8-bit output stays byte-identical.
 
 1. **Bundle a font and the asset seam** (F5, D5). Two things, deliberately one change:
@@ -551,6 +556,11 @@ so the generic filter work starts immediately after this ships rather than insid
 ---
 
 ### WS-6 — D8: Navigator / viewport
+
+**Status: done.** Geometry unified on `viewport_rect` / `viewport_center`, thumbnail is
+revision-gated and letterboxed, "Fit" targets the viewport, wheel zoom keeps the cursor fixed,
+navigator drag carries the box. The dead `recomposite_canvas` path and the second writer for
+the texture are gone.
 
 **Goal:** the mini-map frames what the renderer is actually showing, updates only when the
 document changes, and the fit/zoom actions target the real viewport. No new dependencies.

@@ -516,7 +516,7 @@ pinned by a test before and after the change.
 | Gradient | generic, interpolation untouched | `gradient_writes_native_sixteen_bit_values` |
 | Flood fill | generic, seed comparison in 8-bit | `flood_fill_writes_native_values_and_respects_barriers` |
 | Magic wand sampling | generic, via the shared snapshot | covered by the fill test |
-| Text | **refused on 16-bit, deliberately** | `text_reports_unsupported_on_sixteen_bit_layers` |
+| Text | generic as of v3.3.0 (#14) - see below | `text_renders_natively_on_sixteen_bit_layers` |
 
 **The text decision.** Text composites glyph coverage through hand-written source-over
 mathematics rather than the shared blend, so converting it means deciding whether its
@@ -542,7 +542,7 @@ reviewable list rather than a warning:
 | 8-bit compositor branch, `document.rs` | 4 | unreachable once a document holds any 16-bit layer: `composite_layers_into` returns through the working-precision path first |
 | `AnimationFrame::composite_layers`, `animation.rs` | 5 | unreachable once a frame holds any 16-bit layer: the method delegates to `Document::composite_layers` first |
 | `history.rs` | 7 | in-file tests and comments; the command paths use storage bytes |
-| Text rasterizer, `rasterizer.rs` | 14 | **the last unguarded core path** - `rasterize_text` and `rasterize_text_layer_config`, which is #14 |
+| Text rasterizer, `rasterizer.rs` | 0 | generalized in v3.3.0 (#14); the loops dispatch once per draw |
 | UI 8-bit-only operations, `ui.rs` and `state.rs` | 51 | **blocked, not implemented**: filters, the filter preview, and 8-bit-only selection edits. Refused with a status message under #13; generalized afterwards |
 | App filter capture, `main.rs` | 3 | the same block, the same follow-up |
 
@@ -587,3 +587,27 @@ Integration requirements, for the follow-up issues:
 | PNG export | `image` can write `ExtendedColorType::Rgba16`, so a native export path is a straight call once the export module accepts 16-bit input. Tracked as a follow-up. |
 | Flipbook / GIF | GIF is 8-bit by definition; frames composite through `Document::composite_layers` and downconvert at the end, which is correct. |
 | AUR save | Already native (v3). |
+
+## Text at 16 bits (#14)
+
+The ordering the earlier decision asked for was followed: a golden baseline first, then the
+generalisation.
+
+1. **Baseline.** Six 8-bit digests - single line, wrapping with centring, alpha plus letter
+   spacing, a glyph clipped at the edge, the tool path, and the tool path under a selection -
+   recorded against the **bundled** DejaVu Sans before any code changed. A system font would
+   have made the digest machine-specific, so the font is compiled in
+   (`crates/aurelia-core/src/assets.rs`, `assets/fonts/`, Bitstream Vera licence alongside it).
+   It is also the runtime's last-resort fallback, so text still renders on a machine with no
+   system font.
+2. **Generalisation.** Both entry points now dispatch once per draw over `LayerBuffer` and run
+   a single body instantiated for `u8` and `u16`: `text_config_impl` and `text_run_impl`. The
+   config path keeps its hand-written source-over formula exactly (only the channel reads and
+   writes became generic); the tool path keeps `composite_working`, which is what
+   `composite_pixel` already wrapped. All six digests are unchanged.
+
+Text is therefore no longer refused on a 16-bit layer, and `rasterize_text` - the tool path,
+which had no format guard at all and would have panicked - works at both widths.
+
+What is *not* claimed: nothing here moves the 8-bit rounding. The difference between the two
+widths is where quantisation happens, not which formula is used.
