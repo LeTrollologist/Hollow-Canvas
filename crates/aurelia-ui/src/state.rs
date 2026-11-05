@@ -1129,7 +1129,7 @@ impl AppState {
     pub fn cancel_filter_modal(&mut self) {
         if let Some(orig) = self.filter_original_pixels.take() {
             if let Some(layer) = self.document.active_layer_mut() {
-                layer.set_pixels(orig);
+                layer.write_storage_bytes(0, &orig);
             }
         }
         self.active_filter_modal = ActiveFilterModal::None;
@@ -2127,7 +2127,7 @@ mod document_format_ui {
         let mut wide = sixteen_bit_state();
         assert_eq!(wide.active_layer_format(), PixelFormat::Srgb16);
 
-        assert!(!wide.require_8bit("Invert Colors"), "the guard must refuse");
+        assert!(!wide.require_8bit("Merge Down"), "the guard must refuse");
         let message = wide.status_message.clone();
         assert!(message.contains("8-bit only"), "status should explain the refusal: {message}");
         assert!(message.contains("16-bit"), "status should name the document format: {message}");

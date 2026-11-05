@@ -635,7 +635,7 @@ What the editor can and cannot do with a 16-bit document today:
 | Text | yes (native) |
 | Flip / rotate / crop / scale | yes (native) |
 | Compositing and merge-visible | yes (native) |
-| Filters (all 15) | **refused with a message** - still 8-bit, next slice |
+| Filters (all 15) and the three adjustment passes | yes (native) as of #28 |
 | Merge down | **refused with a message** - 8-bit by construction |
 | Viewport | shows an 8-bit presentation; egui textures are 8-bit |
 

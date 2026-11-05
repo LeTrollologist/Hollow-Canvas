@@ -13,7 +13,7 @@ pending. Baseline: `main` @ `3ecf8cd` (v3.2.0), 112 tests passing, 1 ignored.
 | WS-6 (D8, navigator/viewport) | **done** | see below |
 | WS-5 (#13, 16-bit documents in the UI) | **done** | see below |
 
-Workspace tests: **174 passing, 1 ignored** (was 112). The 8-bit compositor oracle and the
+Workspace tests: **179 passing, 1 ignored** (was 112). The 8-bit compositor oracle and the
 digest tests are unchanged.
 
 Scope: issues #20, #15, #14, #13, plus one add-on requested by the maintainer (D8,
@@ -724,9 +724,7 @@ ship in v3.3.0; no brush format is parsed in this plan.
 
 ## 8. Follow-ups this plan deliberately does not absorb
 
-- **Generic 16-bit filters** (15 functions + modals) — new issue. Blocked by nothing once #13
-  ships: that is where the destination-write plumbing and the capability guard land (D2). This
-  is the first thing to schedule after v3.4.0.
+- **Generic 16-bit filters** - **done** (#28). All 18 operations in `filter.rs` are generic over the storage channel with layer-level entry points, and the UI guard is gone. 8-bit output is pinned by 21 digests captured first; that gate caught one real discrepancy (brightness/contrast uses 128, not `max/2`) and uncovered a pre-existing panic in `filter_sharpen`.
 - **Brush imports** (`.abr` / `.gbr` stamps) — new issue. The `assets` seam from D5/WS-3 is the
   intended entry point; no brush format is parsed in this plan.
 - 16-bit PNG export via the new composite output — new issue, after #15.

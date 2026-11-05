@@ -1953,13 +1953,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
                 0x49 if is_ctrl => { // Ctrl+I (Invert Colors)
                     if app.state.require_8bit("Invert Colors") {
-                        let w = app.state.document.width;
-                        let h = app.state.document.height;
                         let sel = app.state.selection.clone();
                         if let Some(layer) = app.state.document.active_layer_mut() {
-                            let before = layer.as_srgb8_exact().to_vec();
-                            aurelia_core::filter::filter_invert(layer.as_srgb8_exact_mut(), w, h, sel.as_ref());
-                            let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Invert Colors", before, layer.as_srgb8_exact().to_vec()));
+                            let before = layer.storage_bytes();
+                            aurelia_core::filter::filter_invert_layer(layer, sel.as_ref());
+                            let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Invert Colors", before, layer.storage_bytes()));
                             app.state.history.push(cmd);
                             app.state.set_status("Inverted Colors");
                         }
