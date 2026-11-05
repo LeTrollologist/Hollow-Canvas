@@ -529,3 +529,33 @@ The remaining work, when text is taken up, is to capture a golden baseline from 
 8-bit output first, then route the glyph loop through `read_px`/`store_px` and decide the
 rounding question against that baseline. That ordering is the same one the alpha clamp
 needed, and for the same reason.
+
+## Step 5: audit closure - where `as_srgb8_exact` is still called
+
+`as_srgb8_exact()` panics on a non-8-bit layer by design. After the v3.3.0 hardening every
+remaining call site is in one of five states, so `grep -rn as_srgb8_exact crates` returns a
+reviewable list rather than a warning:
+
+| Area | Sites | State |
+| :--- | ---: | :--- |
+| `layer.rs` - the accessor and its panic | 5 | the definition |
+| 8-bit compositor branch, `document.rs` | 4 | unreachable once a document holds any 16-bit layer: `composite_layers_into` returns through the working-precision path first |
+| `AnimationFrame::composite_layers`, `animation.rs` | 5 | unreachable once a frame holds any 16-bit layer: the method delegates to `Document::composite_layers` first |
+| `history.rs` | 7 | in-file tests and comments; the command paths use storage bytes |
+| Text rasterizer, `rasterizer.rs` | 14 | **the last unguarded core path** - `rasterize_text` and `rasterize_text_layer_config`, which is #14 |
+| UI 8-bit-only operations, `ui.rs` and `state.rs` | 51 | **blocked, not implemented**: filters, the filter preview, and 8-bit-only selection edits. Refused with a status message under #13; generalized afterwards |
+| App filter capture, `main.rs` | 3 | the same block, the same follow-up |
+
+What this changed:
+
+- **Now format-agnostic**: stroke-undo capture (`Layer::storage_bytes`), flip, rotate, canvas
+  crop (`Layer::map_buffer`), both whole-buffer snapshot commands, "select layer alpha"
+  (`SelectionMask::from_layer`), magic-wand sampling (an 8-bit matching view), and
+  animation-frame compositing (delegation, not a second compositor).
+- **Still 8-bit by design, and guarded**: filters. **Still 8-bit and pending**: text (#14).
+- **Not converted, on purpose**: nothing. There is no silent 8-bit fallback anywhere; every
+  remaining path either refuses with a message or is a test.
+
+Two of these were not in the original plan because reading the call sites found them late: the
+magic wand sampled the active layer directly, and flip/rotate/crop rewrote the buffer as
+`Srgb8` through `set_pixels`. Both are covered by tests now.

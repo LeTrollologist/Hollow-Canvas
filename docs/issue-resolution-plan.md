@@ -1,7 +1,17 @@
 # Issue resolution plan
 
-Status: proposal, not approved. Nothing in this document is implemented.
-Baseline: `main` @ `3ecf8cd` (v3.2.0), 112 tests passing, 1 ignored.
+Status: WS-1 (#20) and WS-2 (hardening) are implemented; WS-3, WS-4, WS-5 and WS-6 are
+pending. Baseline: `main` @ `3ecf8cd` (v3.2.0), 112 tests passing, 1 ignored.
+
+| Workstream | State | Commits |
+| :--- | :--- | :--- |
+| WS-1 (#20, export limits) | **done** | `617e374` |
+| WS-2 steps 1–4, 6 (hardening) | **done** | `dad3ed2`, `b590d0e`, `d786079` |
+| WS-2 step 5 (filter guard) | deferred into WS-5, per D2 | — |
+| WS-3 (#14), WS-4 (#15), WS-5 (#13), WS-6 (D8) | not started | — |
+
+Workspace tests: **142 passing, 1 ignored** (was 112). The 8-bit compositor oracle and the
+digest tests are unchanged.
 
 Scope: issues #20, #15, #14, #13, plus one add-on requested by the maintainer (D8,
 navigator/viewport — no issue number exists for it).
@@ -217,9 +227,30 @@ itself, and it is rebuilt every frame.
 
 ---
 
+### F13 — Animation frames composited at 8-bit (found and fixed during WS-2)
+
+`AnimationFrame::composite_layers` walked the layers with `as_srgb8_exact()`, so the flipbook
+export added in WS-1 would abort the moment a 16-bit document tried to export a GIF. A frame
+containing any 16-bit layer now delegates to `Document::composite_layers`, which runs the
+working-precision path; the clone is one frame and is dropped with the composite, so peak
+memory does not grow with the timeline.
+
+### F14 — Magic wand sampled the layer at 8-bit (found and fixed during WS-2)
+
+`rasterize_magic_wand` copied the active or reference layer with
+`as_srgb8_exact().to_vec()`. Colour-select on a 16-bit layer therefore panicked before any
+selection existed — and the docs' claim that wand sampling was already "generic, via the shared
+snapshot" was true of `flood_fill`, not of the wand. Sampling now goes through an 8-bit
+matching view: the comparison stays in 8-bit terms (the tolerance is an 8-bit quantity), while
+the fill still writes native channels.
+
+---
+
 ## 4. Workstreams
 
 ### WS-1 — #20: bounded, structured, streaming animation export
+
+**Status: done** (`617e374`). 13 validation tests plus a peak-heap test in its own binary.
 
 **Goal:** no export can be made to allocate unbounded memory, and every rejection is a
 structured error rather than an OOM or a generic `UnsupportedFormat`.
@@ -301,7 +332,10 @@ structured error rather than an OOM or a generic `UnsupportedFormat`.
 
 ### WS-2 — Hardening: retire the "no 16-bit layer exists" invariant
 
-**Goal:** no user action can panics on a 16-bit document. This is the prerequisite for #13 and
+**Status: steps 1–4 and 6 done** (`dad3ed2`, `b590d0e`, `d786079`). Step 5 (the filter guard)
+moved into WS-5, per D2 — the guard belongs with the UI exposure that makes it reachable.
+
+**Goal:** no user action can panic on a 16-bit document. This is the prerequisite for #13 and
 is reusable by #15/#14.
 
 Ordered by blast radius, each its own commit:
