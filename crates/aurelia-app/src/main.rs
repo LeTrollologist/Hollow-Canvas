@@ -624,9 +624,63 @@ impl AureliaDesktopApp {
         egui::pos2(self.mouse_pos.x / ppp, self.mouse_pos.y / ppp)
     }
 
-    /// Starts a guide or grid-origin drag when the pointer is on an existing guide, the
-    /// origin handle, or a ruler strip. Returns true when the canvas should not receive the
-    /// click.
+    /// Starts a ruler guide drag. Called before egui gets the click so the side-panel resize
+    /// handle cannot swallow the first few pixels of the ruler.
+    ///
+    /// The left edge retains a small resize strip: the vertical ruler starts 6 px inside the
+    /// viewport, leaving the panel's 5 px grab radius usable.
+    fn begin_ruler_guide_drag(&mut self, screen_pos: Vec2) -> bool {
+        if !self.state.show_rulers || self.egui_ctx.is_pointer_over_area() {
+            return false;
+        }
+        let win_w = self.win_w as f32;
+        let win_h = self.win_h as f32;
+        let [vx0, vy0, vx1, vy1] = self.state.viewport_rect(self.win_w, self.win_h);
+        let (vx0, vy0, vx1, vy1) = (vx0 as f32, vy0 as f32, vx1 as f32, vy1 as f32);
+        if screen_pos.x < vx0
+            || screen_pos.x > vx1
+            || screen_pos.y < vy0
+            || screen_pos.y > vy1
+        {
+            return false;
+        }
+
+        let ruler = aurelia_ui::design::RULER_PX;
+        // Keep the panel's resize grab radius (5 points, scaled by DPI) usable.
+        let resize_margin = 6.0 * self.state.ui_ppp.max(1.0);
+        let orientation = if screen_pos.y >= vy0 + 1.0
+            && screen_pos.y <= vy0 + ruler
+            && screen_pos.x <= vx1
+        {
+            Some(aurelia_ui::state::GuideOrientation::Horizontal)
+        } else if screen_pos.x >= vx0 + resize_margin
+            && screen_pos.x <= vx0 + ruler
+            && screen_pos.y <= vy1
+        {
+            Some(aurelia_ui::state::GuideOrientation::Vertical)
+        } else {
+            None
+        };
+        let Some(orientation) = orientation else {
+            return false;
+        };
+
+        let canvas = self.state.screen_to_canvas(screen_pos, win_w, win_h);
+        self.state.add_guide(orientation);
+        let index = self.state.guides.len() - 1;
+        let doc_w = self.state.document.width as f32;
+        let doc_h = self.state.document.height as f32;
+        self.state.guides[index].position = match orientation {
+            aurelia_ui::state::GuideOrientation::Horizontal => canvas.y.clamp(0.0, doc_h),
+            aurelia_ui::state::GuideOrientation::Vertical => canvas.x.clamp(0.0, doc_w),
+        };
+        self.guide_drag = Some(GuideDrag::Existing(index));
+        self.is_drawing_on_canvas = false;
+        true
+    }
+
+    /// Starts a drag when the pointer is on an existing guide or the grid-origin handle.
+    /// Called after the egui hit test so floating panels and HUDs keep their clicks.
     fn begin_guide_drag(&mut self, screen_pos: Vec2) -> bool {
         let win_w = self.win_w as f32;
         let win_h = self.win_h as f32;
@@ -672,34 +726,7 @@ impl AureliaDesktopApp {
             }
         }
 
-        if !self.state.show_rulers {
-            return false;
-        }
-
-        let ruler = aurelia_ui::design::RULER_PX;
-        let canvas = self.state.screen_to_canvas(screen_pos, win_w, win_h);
-        let orientation = if screen_pos.y <= vy0 + ruler && screen_pos.x <= vx1 {
-            Some(aurelia_ui::state::GuideOrientation::Horizontal)
-        } else if screen_pos.x <= vx0 + ruler && screen_pos.y <= vy1 {
-            Some(aurelia_ui::state::GuideOrientation::Vertical)
-        } else {
-            None
-        };
-        let Some(orientation) = orientation else {
-            return false;
-        };
-
-        self.state.add_guide(orientation);
-        let index = self.state.guides.len() - 1;
-        let doc_w = self.state.document.width as f32;
-        let doc_h = self.state.document.height as f32;
-        self.state.guides[index].position = match orientation {
-            aurelia_ui::state::GuideOrientation::Horizontal => canvas.y.clamp(0.0, doc_h),
-            aurelia_ui::state::GuideOrientation::Vertical => canvas.x.clamp(0.0, doc_w),
-        };
-        self.guide_drag = Some(GuideDrag::Existing(index));
-        self.is_drawing_on_canvas = false;
-        true
+        false
     }
 
     pub fn is_over_ui(&self, pos: Vec2) -> bool {
@@ -1400,6 +1427,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
             if app.is_space_down {
                 app.last_pan_screen_pos = Some(screen_pos);
+                return 0;
+            }
+
+            // Rulers sit beside the resizable left dock. Take the ruler drag before egui's
+            // panel resize handle, or the first few pixels of the vertical ruler resize the
+            // dock instead of creating a guide.
+            if app.begin_ruler_guide_drag(screen_pos) {
+                InvalidateRect(hwnd, std::ptr::null(), 0);
                 return 0;
             }
 
