@@ -3,7 +3,8 @@ use crate::fonts;
 
 use crate::icons::draw_tool_icon;
 use crate::state::{
-    ActiveFilterModal, AppState, CanvasPreset, GuideOrientation, PendingFileAction, WindowAction,
+    ActiveFilterModal, AppState, CanvasPreset, GuideOrientation, MoveMode, PendingFileAction,
+    WindowAction,
 };
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Stroke, Vec2};
 use aurelia_core::brush::{EraserMode, GradientType, ShapeFillMode, ToolType};
@@ -1334,6 +1335,30 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             } else {
                                 ui.label(RichText::new("Drag box to crop canvas").size(9.0).color(Color32::from_rgb(172, 161, 130)));
                             }
+                        }
+                        ToolType::Move => {
+                            ui.label(RichText::new("MOVE MODE").size(9.0).strong().color(Color32::from_rgb(158, 146, 110)));
+                            ui.selectable_value(
+                                &mut state.move_mode,
+                                MoveMode::SelectedLayer,
+                                "Selected layer only",
+                            );
+                            ui.selectable_value(
+                                &mut state.move_mode,
+                                MoveMode::FullMove,
+                                "Full move (click a layer)",
+                            );
+                            ui.checkbox(&mut state.guides_locked, "Lock guides");
+                            ui.checkbox(&mut state.snap_enabled, "Snap");
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut state.snap_to_guides, "guides");
+                                ui.checkbox(&mut state.snap_to_layers, "layers");
+                            });
+                            ui.label(
+                                RichText::new("Space or middle-drag pans in both modes.")
+                                    .size(8.5)
+                                    .color(Color32::from_rgb(172, 161, 130)),
+                            );
                         }
                         ToolType::Transform => {
                             if !state.transform_session.is_active {
@@ -4676,7 +4701,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
 /// Session measurement guides and the draggable grid-origin handle.
 fn paint_guides(ctx: &egui::Context, state: &AppState) {
-    if state.guides.is_empty() && !state.show_grid {
+    if state.guides.is_empty() && !state.show_grid && state.snap_markers.is_empty() {
         return;
     }
     let ppp = ctx.pixels_per_point().max(0.01);
@@ -4740,6 +4765,25 @@ fn paint_guides(ctx: &egui::Context, state: &AppState) {
                     format!("y {:.0}", guide.position),
                     egui::FontId::proportional(9.0),
                     text_color,
+                );
+            }
+        }
+    }
+
+    if !state.snap_markers.is_empty() {
+        let snap_color = Color32::from_rgba_unmultiplied(255, 210, 90, 230);
+        for marker in &state.snap_markers {
+            if marker.vertical {
+                let p = state.canvas_to_ui(glam::Vec2::new(marker.position, 0.0), win_w, win_h);
+                painter.line_segment(
+                    [egui::pos2(p.x, clip.top()), egui::pos2(p.x, clip.bottom())],
+                    Stroke::new(1.0, snap_color),
+                );
+            } else {
+                let p = state.canvas_to_ui(glam::Vec2::new(0.0, marker.position), win_w, win_h);
+                painter.line_segment(
+                    [egui::pos2(clip.left(), p.y), egui::pos2(clip.right(), p.y)],
+                    Stroke::new(1.0, snap_color),
                 );
             }
         }

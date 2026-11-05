@@ -1,4 +1,4 @@
-use glam::Vec2;
+﻿use glam::Vec2;
 use aurelia_core::brush::{BrushPoint, ToolType};
 use aurelia_core::history::LayerPixelsDeltaCommand;
 use aurelia_core::rasterizer::StrokeRasterizer;
@@ -359,6 +359,12 @@ struct AureliaDesktopApp {
     is_pointer_down: bool,
     is_drawing_on_canvas: bool,
     guide_drag: Option<GuideDrag>,
+    /// Layer selected when a Move drag began, so a later click cannot retarget the undo step.
+    moving_layer: Option<u64>,
+    moving_bounds: Option<(u32, u32, u32, u32)>,
+    move_start_canvas: Option<Vec2>,
+    snap_x: Vec<f32>,
+    snap_y: Vec<f32>,
     is_space_down: bool,
     is_middle_panning: bool,
     last_canvas_pos: Option<Vec2>,
@@ -630,7 +636,11 @@ impl AureliaDesktopApp {
     /// The left edge retains a small resize strip: the vertical ruler starts 6 px inside the
     /// viewport, leaving the panel's 5 px grab radius usable.
     fn begin_ruler_guide_drag(&mut self, screen_pos: Vec2) -> bool {
-        if !self.state.show_rulers || self.egui_ctx.is_pointer_over_area() {
+        if !self.state.show_rulers
+            || self.state.guides_locked
+            || self.state.brush.tool != ToolType::Move
+            || self.egui_ctx.is_pointer_over_area()
+        {
             return false;
         }
         let win_w = self.win_w as f32;
@@ -676,12 +686,206 @@ impl AureliaDesktopApp {
         };
         self.guide_drag = Some(GuideDrag::Existing(index));
         self.is_drawing_on_canvas = false;
+        self.rebuild_snap_targets(None, Some(index));
         true
+    }
+
+    /// Topmost visible, unlocked raster/text layer whose alpha covers this canvas point.
+    fn layer_at_canvas(&self, pos: Vec2) -> Option<u64> {
+        let x = pos.x.floor() as i32;
+        let y = pos.y.floor() as i32;
+        for layer in self.state.document.layers.iter().rev() {
+            if !self.state.document.is_layer_effective_visible(layer.id) || layer.locked {
+                continue;
+            }
+            if !layer.is_raster() && !layer.is_text() {
+                continue;
+            }
+            let lx = x - layer.offset_x;
+            let ly = y - layer.offset_y;
+            if lx < 0 || ly < 0 || lx >= layer.width as i32 || ly >= layer.height as i32 {
+                continue;
+            }
+            if layer.alpha_at(lx as u32, ly as u32).is_some_and(|alpha| alpha > 0) {
+                return Some(layer.id);
+            }
+        }
+        None
+    }
+
+    fn nearest_snap(value: f32, targets: &[f32], threshold: f32) -> Option<f32> {
+        targets
+            .iter()
+            .copied()
+            .filter(|target| (value - target).abs() <= threshold)
+            .min_by(|a, b| (value - a).abs().total_cmp(&(value - b).abs()))
+    }
+
+    /// Collects guide, canvas and layer-bound targets for the current drag. Called once when
+    /// the drag begins so the pixel scan does not run on every mouse move.
+    fn rebuild_snap_targets(&mut self, exclude_layer: Option<u64>, exclude_guide: Option<usize>) {
+        self.snap_x.clear();
+        self.snap_y.clear();
+        if !self.state.snap_enabled {
+            return;
+        }
+        let w = self.state.document.width as f32;
+        let h = self.state.document.height as f32;
+        self.snap_x.extend([0.0, w * 0.5, w]);
+        self.snap_y.extend([0.0, h * 0.5, h]);
+
+        if self.state.snap_to_guides {
+            for (index, guide) in self.state.guides.iter().enumerate() {
+                if Some(index) == exclude_guide {
+                    continue;
+                }
+                match guide.orientation {
+                    aurelia_ui::state::GuideOrientation::Vertical => self.snap_x.push(guide.position),
+                    aurelia_ui::state::GuideOrientation::Horizontal => self.snap_y.push(guide.position),
+                }
+            }
+        }
+
+        if self.state.snap_to_layers {
+            for layer in &self.state.document.layers {
+                if Some(layer.id) == exclude_layer
+                    || layer.locked
+                    || !self.state.document.is_layer_effective_visible(layer.id)
+                {
+                    continue;
+                }
+                if !layer.is_raster() && !layer.is_text() {
+                    continue;
+                }
+                let Some((min_x, min_y, max_x, max_y)) = layer.content_bounds() else {
+                    continue;
+                };
+                let left = min_x as f32 + layer.offset_x as f32;
+                let right = max_x as f32 + layer.offset_x as f32;
+                let top = min_y as f32 + layer.offset_y as f32;
+                let bottom = max_y as f32 + layer.offset_y as f32;
+                self.snap_x.extend([left, (left + right) * 0.5, right]);
+                self.snap_y.extend([top, (top + bottom) * 0.5, bottom]);
+            }
+        }
+    }
+
+    /// Snaps the moving layer's content bounds to the cached targets and records the indicator.
+    fn apply_layer_snap(&mut self, layer_id: u64) {
+        self.state.snap_markers.clear();
+        let alt = unsafe { (GetKeyState(0x12) as i32 & 0x8000) != 0 };
+        if !self.state.snap_enabled || alt {
+            return;
+        }
+        let Some((min_x, min_y, max_x, max_y)) = self.moving_bounds else {
+            return;
+        };
+        let Some((base_x, base_y)) = self
+            .state
+            .document
+            .get_layer(layer_id)
+            .map(|layer| (layer.offset_x, layer.offset_y))
+        else {
+            return;
+        };
+        let threshold = 6.0 / self.state.zoom.max(0.01);
+        let x0 = min_x as f32 + base_x as f32;
+        let x1 = max_x as f32 + base_x as f32;
+        let y0 = min_y as f32 + base_y as f32;
+        let y1 = max_y as f32 + base_y as f32;
+
+        let mut best_x: Option<(f32, f32)> = None; // delta, target
+        for candidate in [x0, (x0 + x1) * 0.5, x1] {
+            if let Some(target) = Self::nearest_snap(candidate, &self.snap_x, threshold) {
+                let delta = target - candidate;
+                if best_x.is_none_or(|(best, _)| delta.abs() < best.abs()) {
+                    best_x = Some((delta, target));
+                }
+            }
+        }
+        let mut best_y: Option<(f32, f32)> = None;
+        for candidate in [y0, (y0 + y1) * 0.5, y1] {
+            if let Some(target) = Self::nearest_snap(candidate, &self.snap_y, threshold) {
+                let delta = target - candidate;
+                if best_y.is_none_or(|(best, _)| delta.abs() < best.abs()) {
+                    best_y = Some((delta, target));
+                }
+            }
+        }
+        if let Some(layer) = self.state.document.get_layer_mut(layer_id) {
+            if let Some((delta, _)) = best_x {
+                layer.offset_x += delta.round() as i32;
+            }
+            if let Some((delta, _)) = best_y {
+                layer.offset_y += delta.round() as i32;
+            }
+        }
+        if let Some((_, target)) = best_x {
+            self.state.snap_markers.push(aurelia_ui::state::SnapMarker {
+                vertical: true,
+                position: target,
+            });
+        }
+        if let Some((_, target)) = best_y {
+            self.state.snap_markers.push(aurelia_ui::state::SnapMarker {
+                vertical: false,
+                position: target,
+            });
+        }
+    }
+
+    /// Snaps a selection point to the cached guide/layer/canvas targets.
+    fn snap_point(&mut self, point: Vec2) -> Vec2 {
+        self.state.snap_markers.clear();
+        let alt = unsafe { (GetKeyState(0x12) as i32 & 0x8000) != 0 };
+        if !self.state.snap_enabled || alt {
+            return point;
+        }
+        let threshold = 6.0 / self.state.zoom.max(0.01);
+        let mut snapped = point;
+        if let Some(target) = Self::nearest_snap(point.x, &self.snap_x, threshold) {
+            snapped.x = target;
+            self.state.snap_markers.push(aurelia_ui::state::SnapMarker {
+                vertical: true,
+                position: target,
+            });
+        }
+        if let Some(target) = Self::nearest_snap(point.y, &self.snap_y, threshold) {
+            snapped.y = target;
+            self.state.snap_markers.push(aurelia_ui::state::SnapMarker {
+                vertical: false,
+                position: target,
+            });
+        }
+        snapped
+    }
+
+    /// Snaps a guide position to the cached targets and records the indicator.
+    fn snap_guide_value(&mut self, vertical: bool, value: f32) -> f32 {
+        self.state.snap_markers.clear();
+        let alt = unsafe { (GetKeyState(0x12) as i32 & 0x8000) != 0 };
+        if !self.state.snap_enabled || alt {
+            return value;
+        }
+        let targets = if vertical { &self.snap_x } else { &self.snap_y };
+        let threshold = 6.0 / self.state.zoom.max(0.01);
+        if let Some(target) = Self::nearest_snap(value, targets, threshold) {
+            self.state.snap_markers.push(aurelia_ui::state::SnapMarker {
+                vertical,
+                position: target,
+            });
+            target
+        } else {
+            value
+        }
     }
 
     /// Starts a drag when the pointer is on an existing guide or the grid-origin handle.
     /// Called after the egui hit test so floating panels and HUDs keep their clicks.
     fn begin_guide_drag(&mut self, screen_pos: Vec2) -> bool {
+        if self.state.brush.tool != ToolType::Move {
+            return false;
+        }
         let win_w = self.win_w as f32;
         let win_h = self.win_h as f32;
         let [vx0, vy0, vx1, vy1] = self.state.viewport_rect(self.win_w, self.win_h);
@@ -695,23 +899,26 @@ impl AureliaDesktopApp {
         }
 
         // Existing guide takes priority over painting, with a forgiving 5 px hit band.
-        for (index, guide) in self.state.guides.iter().enumerate() {
-            let screen = match guide.orientation {
-                aurelia_ui::state::GuideOrientation::Horizontal => {
-                    self.state.canvas_to_screen(Vec2::new(0.0, guide.position), win_w, win_h).y
+        if !self.state.guides_locked {
+            for (index, guide) in self.state.guides.iter().enumerate() {
+                let screen = match guide.orientation {
+                    aurelia_ui::state::GuideOrientation::Horizontal => {
+                        self.state.canvas_to_screen(Vec2::new(0.0, guide.position), win_w, win_h).y
+                    }
+                    aurelia_ui::state::GuideOrientation::Vertical => {
+                        self.state.canvas_to_screen(Vec2::new(guide.position, 0.0), win_w, win_h).x
+                    }
+                };
+                let distance = match guide.orientation {
+                    aurelia_ui::state::GuideOrientation::Horizontal => (screen_pos.y - screen).abs(),
+                    aurelia_ui::state::GuideOrientation::Vertical => (screen_pos.x - screen).abs(),
+                };
+                if distance <= 5.0 {
+                    self.guide_drag = Some(GuideDrag::Existing(index));
+                    self.is_drawing_on_canvas = false;
+                    self.rebuild_snap_targets(None, Some(index));
+                    return true;
                 }
-                aurelia_ui::state::GuideOrientation::Vertical => {
-                    self.state.canvas_to_screen(Vec2::new(guide.position, 0.0), win_w, win_h).x
-                }
-            };
-            let distance = match guide.orientation {
-                aurelia_ui::state::GuideOrientation::Horizontal => (screen_pos.y - screen).abs(),
-                aurelia_ui::state::GuideOrientation::Vertical => (screen_pos.x - screen).abs(),
-            };
-            if distance <= 5.0 {
-                self.guide_drag = Some(GuideDrag::Existing(index));
-                self.is_drawing_on_canvas = false;
-                return true;
             }
         }
 
@@ -760,6 +967,27 @@ impl AureliaDesktopApp {
         } else {
             // Minimal floating hamburger / header button area
             if pos.x < 260.0 && pos.y < 42.0 {
+                return true;
+            }
+        }
+
+        // Rulers are part of the viewport chrome, not the canvas. A click there must not
+        // start painting or moving the active layer; the ruler guide handler already ran
+        // before this check.
+        if self.state.show_rulers {
+            let [vx0, vy0, vx1, vy1] = self.state.viewport_rect(self.win_w, self.win_h);
+            let (vx0, vy0, vx1, vy1) =
+                (vx0 as f32, vy0 as f32, vx1 as f32, vy1 as f32);
+            let ruler = aurelia_ui::design::RULER_PX;
+            let in_top = pos.y >= vy0
+                && pos.y <= vy0 + ruler
+                && pos.x >= vx0
+                && pos.x <= vx1;
+            let in_left = pos.x >= vx0
+                && pos.x <= vx0 + ruler
+                && pos.y >= vy0
+                && pos.y <= vy1;
+            if in_top || in_left {
                 return true;
             }
         }
@@ -920,7 +1148,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             false
                         };
                         if !saved {
-                            return 0; // cancel dialog or write failure — keep the window open
+                            return 0; // cancel dialog or write failure Ã¢â‚¬â€ keep the window open
                         }
                     }
                     _ => {} // No: discard changes
@@ -1041,15 +1269,20 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 let doc_h = app.state.document.height as f32;
                 match drag {
                     GuideDrag::Existing(index) => {
-                        if let Some(guide) = app.state.guides.get_mut(index) {
-                            guide.position = match guide.orientation {
-                                aurelia_ui::state::GuideOrientation::Horizontal => {
-                                    canvas_pos.y.clamp(0.0, doc_h)
-                                }
-                                aurelia_ui::state::GuideOrientation::Vertical => {
-                                    canvas_pos.x.clamp(0.0, doc_w)
-                                }
+                        if let Some(orientation) =
+                            app.state.guides.get(index).map(|guide| guide.orientation)
+                        {
+                            let vertical = orientation
+                                == aurelia_ui::state::GuideOrientation::Vertical;
+                            let raw = if vertical {
+                                canvas_pos.x.clamp(0.0, doc_w)
+                            } else {
+                                canvas_pos.y.clamp(0.0, doc_h)
                             };
+                            let snapped = app.snap_guide_value(vertical, raw);
+                            if let Some(guide) = app.state.guides.get_mut(index) {
+                                guide.position = snapped;
+                            }
                         }
                     }
                     GuideDrag::GridOrigin => {
@@ -1177,21 +1410,17 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             if app.is_drawing_on_canvas && !app.is_space_down && !app.is_middle_panning {
                 let tool = app.state.brush.tool;
                 if tool == ToolType::Move {
-                    let is_ctrl = (GetKeyState(0x11) as i32 & 0x8000) != 0;
-                    if is_ctrl {
-                        if let Some(prev) = app.last_canvas_pos {
-                            let delta = canvas_pos - prev;
-                            if let Some(layer) = app.state.document.active_layer_mut() {
-                                layer.offset_x += delta.x.round() as i32;
-                                layer.offset_y += delta.y.round() as i32;
-                            }
+                    if let (Some(id), Some(start)) = (app.moving_layer, app.move_start_canvas) {
+                        let total = canvas_pos - start;
+                        if let Some(layer) = app.state.document.get_layer_mut(id) {
+                            layer.offset_x = app.before_move_offset.0 + total.x.round() as i32;
+                            layer.offset_y = app.before_move_offset.1 + total.y.round() as i32;
                         }
+                        app.apply_layer_snap(id);
                         app.last_canvas_pos = Some(canvas_pos);
-                    } else {
-                        if let Some(prev) = app.last_pan_screen_pos {
-                            let delta = screen_pos - prev;
-                            app.state.pan += delta;
-                        }
+                    } else if let Some(prev) = app.last_pan_screen_pos {
+                        let delta = screen_pos - prev;
+                        app.state.pan += delta;
                         app.last_pan_screen_pos = Some(screen_pos);
                     }
                 } else if tool == ToolType::Lasso {
@@ -1200,7 +1429,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         None => true,
                     };
                     if should_add {
-                        app.state.lasso_points.push(canvas_pos);
+                        let point = app.snap_point(canvas_pos);
+                        app.state.lasso_points.push(point);
                     }
                 } else if tool == ToolType::Text {
                     if let Some(drag_start) = app.state.text_drag_start {
@@ -1412,6 +1642,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
         }
         WM_LBUTTONDOWN => {
             app.is_pointer_down = true;
+            app.moving_layer = None;
+            app.state.snap_markers.clear();
 
             let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
             let raw_y = ((lparam as u32 >> 16) & 0xFFFF) as i16 as f32;
@@ -1638,18 +1870,33 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.state.set_status(format!("Polygon: {} points", app.state.polygon_points.len()));
                 }
             } else if tool == ToolType::Lasso {
+                app.rebuild_snap_targets(None, None);
+                let point = app.snap_point(canvas_pos);
                 app.state.lasso_points.clear();
-                app.state.lasso_points.push(canvas_pos);
+                app.state.lasso_points.push(point);
                 app.state.set_status("Drawing Lasso selection loop...");
             } else if tool == ToolType::Move {
-                let is_ctrl = (GetKeyState(0x11) as i32 & 0x8000) != 0;
-                if is_ctrl {
-                    if let Some(layer) = app.state.document.active_layer() {
-                        app.before_move_offset = (layer.offset_x, layer.offset_y);
+                let target = match app.state.move_mode {
+                    aurelia_ui::state::MoveMode::SelectedLayer => {
+                        app.state.document.active_layer().map(|layer| layer.id)
                     }
+                    aurelia_ui::state::MoveMode::FullMove => app.layer_at_canvas(canvas_pos),
+                };
+                if let Some(id) = target {
+                    app.state.document.active_layer_id = id;
+                    if let Some(layer) = app.state.document.get_layer(id) {
+                        app.before_move_offset = (layer.offset_x, layer.offset_y);
+                        app.moving_bounds = layer.content_bounds();
+                    }
+                    app.moving_layer = Some(id);
+                    app.move_start_canvas = Some(canvas_pos);
                     app.last_canvas_pos = Some(canvas_pos);
                     app.last_pan_screen_pos = None;
+                    app.rebuild_snap_targets(Some(id), None);
                 } else {
+                    app.moving_layer = None;
+                    app.moving_bounds = None;
+                    app.move_start_canvas = None;
                     app.last_pan_screen_pos = Some(screen_pos);
                     app.last_canvas_pos = None;
                 }
@@ -1660,7 +1907,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.active_snapshot_taken = true;
                     }
                 }
-                app.state.drag_start_canvas_pos = Some(canvas_pos);
+                let start = if tool == ToolType::Marquee {
+                    app.rebuild_snap_targets(None, None);
+                    app.snap_point(canvas_pos)
+                } else {
+                    canvas_pos
+                };
+                app.state.drag_start_canvas_pos = Some(start);
             } else if tool.is_freehand_stroke_tool() {
                 if tool.is_selection_stroke_tool() {
                     if app.state.selection.is_none() {
@@ -1698,6 +1951,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.last_canvas_pos = None;
             app.last_pan_screen_pos = None;
             if app.guide_drag.take().is_some() {
+                app.state.snap_markers.clear();
                 InvalidateRect(hwnd, std::ptr::null(), 0);
                 return 0;
             }
@@ -1787,8 +2041,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     ToolType::Marquee => {
                         let is_shift = (GetKeyState(0x10) as i32 & 0x8000) != 0;
                         let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0;
-                        if start.distance(canvas_pos) >= 3.0 {
-                            let mask = SelectionMask::from_rect(app.state.document.width, app.state.document.height, start, canvas_pos);
+                        let end = app.snap_point(canvas_pos);
+                        if start.distance(end) >= 3.0 {
+                            let mask = SelectionMask::from_rect(app.state.document.width, app.state.document.height, start, end);
                             if is_shift {
                                 if let Some(existing) = &mut app.state.selection {
                                     existing.union(&mask);
@@ -1819,15 +2074,20 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             }
 
             if tool == ToolType::Move {
-                if let Some(layer) = app.state.document.active_layer() {
-                    let current_offset = (layer.offset_x, layer.offset_y);
-                    if current_offset != app.before_move_offset {
-                        let cmd = Box::new(aurelia_core::history::TranslateLayerCommand {
-                            layer_id: layer.id,
-                            before_offset: app.before_move_offset,
-                            after_offset: current_offset,
-                        });
-                        app.state.history.push(cmd);
+                app.moving_bounds = None;
+                app.move_start_canvas = None;
+                app.state.snap_markers.clear();
+                if let Some(id) = app.moving_layer.take() {
+                    if let Some(layer) = app.state.document.get_layer(id) {
+                        let current_offset = (layer.offset_x, layer.offset_y);
+                        if current_offset != app.before_move_offset {
+                            let cmd = Box::new(aurelia_core::history::TranslateLayerCommand {
+                                layer_id: layer.id,
+                                before_offset: app.before_move_offset,
+                                after_offset: current_offset,
+                            });
+                            app.state.history.push(cmd);
+                        }
                     }
                 }
             } else if tool.is_freehand_stroke_tool() {
@@ -2228,7 +2488,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             app.state.document.resize_canvas(w, h, -(min_x as i32), -(min_y as i32));
                             app.state.crop_box = None;
                             app.state.brush.tool = ToolType::Brush;
-                            app.state.set_status(format!("Cropped canvas to {}×{}", w, h));
+                            app.state.set_status(format!("Cropped canvas to {}Ãƒâ€”{}", w, h));
                         }
                     }
                 }
@@ -2645,7 +2905,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.state.mark_saved();
                         app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
                         app.state.set_status(format!(
-                            "New canvas created: {} × {} px ({})",
+                            "New canvas created: {} Ãƒâ€” {} px ({})",
                             spec.width,
                             spec.height,
                             app.state.document_format_label()
@@ -2769,7 +3029,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.state.document_path = None;
                     app.state.mark_saved();
                     app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
-                    app.state.set_status(format!("Opened image: {} ({} × {} px)", path.display(), w, h));
+                    app.state.set_status(format!("Opened image: {} ({} Ãƒâ€” {} px)", path.display(), w, h));
                 }
             }
             DragFinish(hdrop);
@@ -2927,7 +3187,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("==========================================");
             return Ok(());
         } else if args[1] == "--help" || args[1] == "-h" {
-            println!("Aurelia · Native Windows Graphics Application");
+            println!("Aurelia Ã‚Â· Native Windows Graphics Application");
             println!();
             println!("Usage: aurelia [FILE]");
             println!("       aurelia --register-shell     (Register Windows Explorer context menu)");
@@ -2938,7 +3198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("=== AURELIA · ILLUSTRATION & ANIMATION STUDIO ===");
+    println!("=== AURELIA Ã‚Â· ILLUSTRATION & ANIMATION STUDIO ===");
 
     // Opt into per-monitor V2 DPI awareness before any window exists, so GDI
     // surfaces are not bitmap-stretched on scaled displays. Failure is harmless
@@ -2981,7 +3241,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         layer.set_pixels(rgba.into_raw());
                     }
                     let mut s = AppState::from_document(doc);
-                    s.set_status(format!("Opened image: {} ({} × {} px)", initial_file.display(), w, h));
+                    s.set_status(format!("Opened image: {} ({} Ãƒâ€” {} px)", initial_file.display(), w, h));
                     s
                 }
                 Err(img_err) => {
@@ -3014,7 +3274,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "A crash-recovery snapshot was found:\n{}\n\nRestore it?\n\nYes = open the snapshot\nNo = discard it and keep the saved file",
                 recovery_path.display()
             ));
-            let caption = to_wide("Aurelia · Recover artwork");
+            let caption = to_wide("Aurelia Ã‚Â· Recover artwork");
             let answer = unsafe {
                 MessageBoxW(
                     std::ptr::null_mut(),
@@ -3031,7 +3291,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         app_state.mark_dirty();
                         app_state.note_recent_file(&recovery_path);
                         app_state
-                            .set_status("Recovered autosave snapshot — use Save As to keep it");
+                            .set_status("Recovered autosave snapshot Ã¢â‚¬â€ use Save As to keep it");
                     }
                     Err(e) => eprintln!("Failed to restore autosave snapshot: {}", e),
                 }
@@ -3065,6 +3325,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         is_pointer_down: false,
         is_drawing_on_canvas: false,
         guide_drag: None,
+        moving_layer: None,
+        moving_bounds: None,
+        move_start_canvas: None,
+        snap_x: Vec::new(),
+        snap_y: Vec::new(),
         is_space_down: false,
         is_middle_panning: false,
         last_canvas_pos: None,
@@ -3094,7 +3359,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let h_instance = GetModuleHandleW(std::ptr::null());
         let class_name = to_wide("AureliaStudio");
-        let title = to_wide("Aurelia · Illustration & Animation Studio");
+        let title = to_wide("Aurelia Ã‚Â· Illustration & Animation Studio");
 
         let idc_arrow = 32512 as usize as *const u16;
         let h_cursor = LoadCursorW(std::ptr::null_mut(), idc_arrow);
@@ -3180,7 +3445,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let app_ptr = GLOBAL_APP_PTR;
             if !app_ptr.is_null() {
                 let app = &mut *app_ptr;
-                let title = format!("Aurelia · {}", app.state.document_title());
+                let title = format!("Aurelia Ã‚Â· {}", app.state.document_title());
                 if title != app.last_window_title {
                     app.last_window_title = title.clone();
                     let wide = to_wide(&title);
@@ -3213,3 +3478,5 @@ impl AureliaDesktopApp {
         brush
     }
 }
+
+

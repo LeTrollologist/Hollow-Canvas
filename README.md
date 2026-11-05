@@ -111,7 +111,7 @@
 - 🎨 **Live Interactive Viewport with Real-Time Direct Drawing**:
   - **Direct Viewport Interaction**: Drawing, brushing, and erasing happen directly on the canvas, which is composited and drawn by the CPU software renderer (`aurelia-render`) into the window framebuffer every frame, with the `egui` panels rasterised on top. All view geometry (`pan`, `zoom`, viewport clip) is in physical pixels; `egui` layout and pointer input are converted to and from points at the `pixels_per_point` boundary.
   - **Live Navigator Thumbnail**: The Navigator shows a downscaled copy of the same composite (`SoftwareRenderer::navigator_thumbnail`) as an `egui` texture, so it follows your strokes without a second full-document composite.
-  - **Dynamic Viewport Rulers & Overlays**: Real-time pixel rulers with tracking cursor ticks, configurable canvas grid with a movable origin, draggable horizontal/vertical measurement guides, and symmetry guide axes.
+  - **Dynamic Viewport Rulers & Overlays**: Real-time pixel rulers with tracking cursor ticks, configurable canvas grid with a movable origin, draggable horizontal/vertical measurement guides, Move-tool Selected/Full modes, guide and layer snapping, and symmetry guide axes.
   - **Perspective Snapping Engine (<kbd>Ctrl+Shift+P</kbd>)**: 1, 2, and 3-point vanishing point rays and constraint projection.
 - ⛶ **Free Transform & Mesh Warp (<kbd>Ctrl+T</kbd>)**: Studio-grade non-destructive pixel deformation supporting 4 operational modes:
   - **Affine 2D**: Scale, rotate, skew, translate, flip, custom pivot with interactive bounding box and rotation stalk.

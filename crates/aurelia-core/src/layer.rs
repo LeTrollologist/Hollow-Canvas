@@ -761,6 +761,49 @@ impl Layer {
         self.kind == LayerKind::Text
     }
 
+    /// Tight alpha-content bounds in layer-local coordinates: `(min_x, min_y, max_x, max_y)`,
+    /// inclusive. `None` for a fully transparent layer. Used by the Move tool's snapping
+    /// targets; callers should cache the result for the duration of a drag.
+    pub fn content_bounds(&self) -> Option<(u32, u32, u32, u32)> {
+        if self.width == 0 || self.height == 0 {
+            return None;
+        }
+        let (mut min_x, mut min_y) = (self.width, self.height);
+        let (mut max_x, mut max_y) = (0u32, 0u32);
+        let mut found = false;
+        let mut visit = |x: u32, y: u32, alpha: u16| {
+            if alpha > 0 {
+                found = true;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        };
+        for y in 0..self.height {
+            let row = y as usize * self.width as usize;
+            match &self.buffer {
+                LayerBuffer::Srgb8(bytes) => {
+                    for x in 0..self.width {
+                        let alpha = bytes[(row + x as usize) * 4 + 3];
+                        if alpha > 0 {
+                            visit(x, y, alpha as u16);
+                        }
+                    }
+                }
+                LayerBuffer::Srgb16(channels) => {
+                    for x in 0..self.width {
+                        let alpha = channels[(row + x as usize) * 4 + 3];
+                        if alpha > 0 {
+                            visit(x, y, alpha);
+                        }
+                    }
+                }
+            }
+        }
+        found.then_some((min_x, min_y, max_x, max_y))
+    }
+
     /// Converts a Text layer into a standard Raster pixel layer, discarding editable text metadata
     pub fn rasterize_text(&mut self) {
         if self.is_text() {
@@ -828,6 +871,16 @@ impl Layer {
             bytes[2],
             bytes[3],
         ])
+    }
+
+    /// Alpha at a layer-local coordinate, in the layer's native channel width.
+    #[inline]
+    pub fn alpha_at(&self, x: u32, y: u32) -> Option<u16> {
+        let index = self.pixel_index(x, y)?;
+        match &self.buffer {
+            LayerBuffer::Srgb8(bytes) => bytes.get(index + 3).map(|&alpha| alpha as u16),
+            LayerBuffer::Srgb16(channels) => channels.get(index + 3).copied(),
+        }
     }
 
     #[inline]

@@ -199,6 +199,22 @@ pub enum GuideOrientation {
     Vertical,
 }
 
+/// What the Move tool acts on when the user starts a drag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoveMode {
+    /// Move only the active layer, even if another layer is under the cursor.
+    SelectedLayer,
+    /// Select and move the topmost visible layer under the cursor.
+    FullMove,
+}
+
+/// A guide line currently being used as a snap target, for the overlay indicator.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SnapMarker {
+    pub vertical: bool,
+    pub position: f32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Guide {
     pub orientation: GuideOrientation,
@@ -231,6 +247,12 @@ pub struct AppState {
     pub grid_origin: Vec2,
     /// Session-only horizontal/vertical measurement guides.
     pub guides: Vec<Guide>,
+    pub guides_locked: bool,
+    pub move_mode: MoveMode,
+    pub snap_enabled: bool,
+    pub snap_to_guides: bool,
+    pub snap_to_layers: bool,
+    pub snap_markers: Vec<SnapMarker>,
     pub show_rulers: bool,
     pub show_navigator: bool,
     pub flip_view_horizontal: bool,
@@ -475,6 +497,12 @@ impl AppState {
             grid_opacity: 0.25,
             grid_origin: Vec2::ZERO,
             guides: Vec::new(),
+            guides_locked: false,
+            move_mode: MoveMode::SelectedLayer,
+            snap_enabled: true,
+            snap_to_guides: true,
+            snap_to_layers: true,
+            snap_markers: Vec::new(),
             show_rulers: true,
             show_navigator: true,
             flip_view_horizontal: false,
@@ -1900,7 +1928,7 @@ impl Default for AppState {
 
 #[cfg(test)]
 mod viewport_geometry {
-    use super::{AppState, GuideOrientation};
+    use super::{AppState, GuideOrientation, MoveMode};
 
     /// Panel-free window so the viewport is the whole window, which makes the numbers
     /// checkable by hand.
@@ -2012,6 +2040,10 @@ mod viewport_geometry {
         state.grid_origin = glam::Vec2::new(17.0, 9.0);
         state.reset_grid_origin();
         assert_eq!(state.grid_origin, glam::Vec2::ZERO);
+
+        assert_eq!(state.move_mode, MoveMode::SelectedLayer);
+        assert!(!state.guides_locked);
+        assert!(state.snap_enabled && state.snap_to_guides && state.snap_to_layers);
 
         state.clear_guides();
         assert!(state.guides.is_empty());

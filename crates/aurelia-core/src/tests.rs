@@ -4422,3 +4422,34 @@ mod transform_matrix {
         assert!(red as u32 + blue as u32 > 60000, "the two channels should roughly sum to white");
     }
 }
+
+/// Alpha-content bounds and native-alpha lookup are the Move tool's hit-testing and snapping
+/// primitives. They must not go through an 8-bit accessor on a 16-bit layer.
+#[test]
+fn layer_content_bounds_and_alpha_follow_native_storage() {
+    use crate::layer::{Layer, LayerBuffer};
+
+    let mut eight = Layer::new(1, "eight", 8, 8);
+    {
+        let pixels = eight.as_srgb8_exact_mut();
+        for (x, y) in [(2u32, 3u32), (6, 5)] {
+            let index = ((y * 8 + x) * 4) as usize;
+            pixels[index + 3] = 255;
+        }
+    }
+    assert_eq!(eight.content_bounds(), Some((2, 3, 6, 5)));
+    assert_eq!(eight.alpha_at(2, 3), Some(255));
+    assert_eq!(eight.alpha_at(0, 0), Some(0));
+
+    let mut wide = Layer::new(2, "wide", 8, 8);
+    *wide.buffer_mut() = LayerBuffer::Srgb16(vec![0u16; 8 * 8 * 4]);
+    {
+        let LayerBuffer::Srgb16(channels) = wide.buffer_mut() else {
+            unreachable!()
+        };
+        let index = ((4 * 8 + 1) * 4) as usize;
+        channels[index + 3] = 1024; // low 8-bit byte is zero; native alpha is not
+    }
+    assert_eq!(wide.content_bounds(), Some((1, 4, 1, 4)));
+    assert_eq!(wide.alpha_at(1, 4), Some(1024));
+}
