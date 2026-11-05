@@ -4240,3 +4240,72 @@ mod transform_precision {
         }
     }
 }
+
+/// Commit C, part 1: the patch type that will replace `Vec<u8>` in the session.
+#[cfg(test)]
+mod transform_patch {
+    use crate::document::Document;
+    use crate::layer::{LayerBuffer, PixelFormat};
+    use crate::transform::TransformPatch;
+
+    fn wide_doc() -> Document {
+        let mut doc = Document::new_with_format(6, 4, PixelFormat::Srgb16);
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            let channels: Vec<u16> = (0..(6 * 4 * 4))
+                .map(|index| (index as u16).wrapping_mul(997).wrapping_add(13))
+                .collect();
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+        doc
+    }
+
+    #[test]
+    fn a_patch_takes_the_layers_format_and_keeps_off_lattice_values() {
+        let doc = wide_doc();
+        let layer = doc.active_layer().expect("layer");
+        let patch = TransformPatch::extract_from_layer(layer, 1, 1, 3, 2, &|_, _| true);
+
+        assert_eq!(patch.format(), PixelFormat::Srgb16, "the patch carries the format itself");
+        assert_eq!(patch.pixels(), 6);
+        let TransformPatch::Srgb16(channels) = &patch else {
+            panic!("expected 16-bit patch");
+        };
+        let source = layer.as_srgb16().expect("16-bit");
+        let source_index = (1 * 6 + 1) * 4;
+        assert_eq!(&channels[0..4], &source[source_index..source_index + 4]);
+        assert!(channels.iter().any(|&c| c % 257 != 0), "off-lattice values must survive");
+    }
+
+    /// Pixels the predicate rejects stay zeroed, which is how a selection-shaped patch keeps
+    /// its shape, and a rectangle running past the layer reads as zero instead of panicking.
+    #[test]
+    fn rejected_and_out_of_bounds_pixels_read_as_zero() {
+        let doc = wide_doc();
+        let layer = doc.active_layer().expect("layer");
+        let patch = TransformPatch::extract_from_layer(layer, 4, 2, 4, 4, &|x, y| x == 4 && y == 2);
+        let TransformPatch::Srgb16(channels) = &patch else {
+            panic!("expected 16-bit patch");
+        };
+        let source_index = (2 * 6 + 4) * 4;
+        assert_eq!(&channels[0..4], &layer.as_srgb16().unwrap()[source_index..source_index + 4]);
+        assert!(channels[4..].iter().all(|&c| c == 0), "rejected and out-of-bounds pixels are zero");
+    }
+
+    #[test]
+    fn an_eight_bit_patch_stays_eight_bit() {
+        let mut doc = Document::new(4, 4);
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            layer.as_srgb8_exact_mut().copy_from_slice(&[7u8; 4 * 4 * 4]);
+        }
+        let layer = doc.get_layer(id).expect("layer");
+        let patch = TransformPatch::extract_from_layer(layer, 0, 0, 2, 2, &|_, _| true);
+        assert_eq!(patch.format(), PixelFormat::Srgb8);
+        let TransformPatch::Srgb8(bytes) = &patch else {
+            panic!("expected 8-bit patch");
+        };
+        assert_eq!(bytes.len(), 16);
+        assert!(bytes.iter().all(|&b| b == 7));
+    }
+}

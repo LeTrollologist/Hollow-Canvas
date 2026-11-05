@@ -1335,3 +1335,100 @@ pub fn sample_interpolated_scaled<T: crate::pixel::Channel>(
         InterpolationMode::Bicubic => sample_bicubic_scaled(src, w, h, x, y),
     }
 }
+
+// ── Transform patch (Commit C, part 1) ──────────────────────────────────────────────────────
+//
+// The source pixels of a free-transform session, kept in the document's own storage width.
+//
+// Deliberately **not** `Vec<f32>`: Aurelia's 16-bit pipeline is integer storage, and a float
+// patch would add a representation conversion and blur the line between stored channels and
+// working precision. The renderers already take a generic source slice, so a typed enum is all
+// the session needs - and it carries the format itself, so no second `src_format` field is
+// needed to describe the same fact twice.
+
+/// The source pixels of a transform session, in their native storage width.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TransformPatch {
+    Srgb8(Vec<u8>),
+    Srgb16(Vec<u16>),
+}
+
+impl TransformPatch {
+    /// An empty patch in the given format.
+    pub fn empty(format: crate::layer::PixelFormat, pixels: usize) -> Self {
+        let channels = pixels * 4;
+        match format {
+            crate::layer::PixelFormat::Srgb8 => TransformPatch::Srgb8(vec![0u8; channels]),
+            crate::layer::PixelFormat::Srgb16 => TransformPatch::Srgb16(vec![0u16; channels]),
+        }
+    }
+
+    /// The format this patch holds. The single source of truth for the session: there is no
+    /// parallel `src_format` field to fall out of step with the data.
+    pub fn format(&self) -> crate::layer::PixelFormat {
+        match self {
+            TransformPatch::Srgb8(_) => crate::layer::PixelFormat::Srgb8,
+            TransformPatch::Srgb16(_) => crate::layer::PixelFormat::Srgb16,
+        }
+    }
+
+    /// Number of RGBA pixels held.
+    pub fn pixels(&self) -> usize {
+        match self {
+            TransformPatch::Srgb8(bytes) => bytes.len() / 4,
+            TransformPatch::Srgb16(channels) => channels.len() / 4,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pixels() == 0
+    }
+
+    /// Copies a rectangle out of a layer, preserving its storage width.
+    ///
+    /// `keep` decides whether a source pixel is extracted; anything it rejects stays zeroed, so
+    /// a selection-shaped patch has the same shape it always had. Pixels outside the layer, and
+    /// a rectangle that runs past the layer's buffer, read as zero rather than panicking.
+    pub fn extract_from_layer(
+        layer: &crate::layer::Layer,
+        origin_x: u32,
+        origin_y: u32,
+        width: u32,
+        height: u32,
+        keep: &dyn Fn(u32, u32) -> bool,
+    ) -> Self {
+        let mut patch = Self::empty(layer.format(), (width as usize) * (height as usize));
+        for py in 0..height {
+            for px in 0..width {
+                let sx = origin_x + px;
+                let sy = origin_y + py;
+                if !keep(sx, sy) {
+                    continue;
+                }
+                let Some(source) = layer.pixel_index(sx, sy) else {
+                    continue;
+                };
+                let destination = ((py as usize) * width as usize + px as usize) * 4;
+                match &mut patch {
+                    TransformPatch::Srgb8(bytes) => {
+                        let Some(pixel) = layer.as_srgb8().and_then(|view| view.get(source..source + 4)) else {
+                            continue;
+                        };
+                        if destination + 4 <= bytes.len() {
+                            bytes[destination..destination + 4].copy_from_slice(pixel);
+                        }
+                    }
+                    TransformPatch::Srgb16(channels) => {
+                        let Some(pixel) = layer.as_srgb16().and_then(|view| view.get(source..source + 4)) else {
+                            continue;
+                        };
+                        if destination + 4 <= channels.len() {
+                            channels[destination..destination + 4].copy_from_slice(pixel);
+                        }
+                    }
+                }
+            }
+        }
+        patch
+    }
+}
