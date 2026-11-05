@@ -361,8 +361,8 @@ orchestrator in [`tools/release`](tools/release), not `scripts/pipeline.py`:
 cargo test --workspace
 
 $env:PYTHONPATH = "tools/release"
-python -m aurelia_release --repo . plan v3.1.0   # read-only preview
-python -m aurelia_release --repo . run  v3.1.0   # build, test, package, sign, tag, publish
+python -m aurelia_release --repo . plan v3.2.0   # read-only preview
+python -m aurelia_release --repo . run  v3.2.0   # build, test, package, sign, tag, publish
 ```
 
 The `full` profile requires a `release.toml` with build/package commands, a GitHub token, and
