@@ -4,7 +4,7 @@
 
 <img src="assets/banner.svg" alt="Aurelia Banner" width="100%" />
 
-**A modern, high-performance, local-first digital illustration and animation studio built with 100% pure Rust.**
+**A modern, high-performance, local-first digital illustration and animation studio built in Rust with a thin Win32 FFI layer.**
 
 <br />
 
@@ -14,10 +14,10 @@
     <img src="https://img.shields.io/badge/Release-v3.1.0-F6C45A?style=for-the-badge&logo=github&logoColor=1A120B&labelColor=1A120B" alt="Release" />
   </a>
   <a href="crates/">
-    <img src="https://img.shields.io/badge/Engine-100%25_Pure_Rust-E8963F?style=for-the-badge&logo=rust&logoColor=1A120B&labelColor=1A120B" alt="Engine" />
+    <img src="https://img.shields.io/badge/Engine-Rust_%2B_Win32_FFI-E8963F?style=for-the-badge&logo=rust&logoColor=1A120B&labelColor=1A120B" alt="Engine: Rust with Win32 FFI" />
   </a>
   <a href="crates/aurelia-render/">
-    <img src="https://img.shields.io/badge/Renderer-Zero--Allocation_60%2B_FPS-E4705F?style=for-the-badge&logo=opengl&logoColor=1A120B&labelColor=1A120B" alt="Renderer" />
+    <img src="https://img.shields.io/badge/Renderer-CPU_Software-E4705F?style=for-the-badge&logo=opengl&logoColor=1A120B&labelColor=1A120B" alt="Renderer: CPU software" />
   </a>
   <a href="PRIVACY.md">
     <img src="https://img.shields.io/badge/Privacy-Offline_%26_Zero_Telemetry-3FA796?style=for-the-badge&labelColor=1A120B" alt="Privacy" />
@@ -29,7 +29,7 @@
     <img src="https://img.shields.io/badge/License-GPL--3.0-C9527F?style=for-the-badge&logo=opensourceinitiative&logoColor=1A120B&labelColor=1A120B" alt="License" />
   </a>
   <a href="crates/aurelia-core/src/tests.rs">
-    <img src="https://img.shields.io/badge/Tests-51_Passing-F7E08A?style=for-the-badge&labelColor=1A120B" alt="Tests" />
+    <img src="https://img.shields.io/badge/Tests-Workspace_Suite-F7E08A?style=for-the-badge&labelColor=1A120B" alt="Workspace test suite" />
   </a>
 </p>
 
@@ -52,11 +52,11 @@
   </a>
   &nbsp;
   <a href="RELEASE_PROCESS.md">
-    <img src="https://img.shields.io/badge/Integrity-SHA--256_%2B_Ledger-F3E7D6?style=flat-square&labelColor=1A120B" alt="Integrity" />
+    <img src="https://img.shields.io/badge/Integrity-Ed25519_%2B_SHA--256-F3E7D6?style=flat-square&labelColor=1A120B" alt="Integrity" />
   </a>
   &nbsp;
   <a href="SECURITY.md">
-    <img src="https://img.shields.io/badge/VirusTotal-Scanned_via_API_v3-3FA796?style=flat-square&labelColor=1A120B" alt="VirusTotal" />
+    <img src="https://img.shields.io/badge/VirusTotal-Advisory_Policy-3FA796?style=flat-square&labelColor=1A120B" alt="VirusTotal advisory policy" />
   </a>
 </p>
 
@@ -93,7 +93,7 @@
 ### Key Highlights
 
 - **Layer Raster Masks**: per-layer 8-bit masks created from the selection, with invert /
-  enable / remove and AUR v2 persistence. Non-destructive - a mask only scales alpha while
+  enable / remove and persisted in AUR v2/v3. Non-destructive - a mask only scales alpha while
   compositing, and a masked 4-layer 1080p composite still runs at 92 MPix/s.
 - **Tilt-Aware Strokes**: `WM_POINTER` tilt now widens freehand strokes (0 = off), so laying
   the pen flatter behaves like a real brush instead of a constant-width line.
@@ -101,10 +101,10 @@
   reports composite throughput (113 MPix/s plain, 92 MPix/s masked here) against targets in
   ROADMAP.md.
  
-- 🖥 **Windows-Native Architecture (Win32 + GDI, pure Rust)**: A hand-rolled `GetMessageW` message loop and `SetDIBitsToDevice` blit feed a software framebuffer; `egui` 0.28 supplies widgets and layout on top. No C++ runtime, no GPU driver dependency, no external UI framework.
-  - **Zero C++ Dependencies**: 100% memory-safe Rust with instant compilation and zero OS-specific C runtime bottlenecks.
+- 🖥 **Windows-Native Architecture (Win32 + GDI, thin FFI)**: A hand-rolled `GetMessageW` message loop and `SetDIBitsToDevice` blit feed a software framebuffer; `egui` 0.28 supplies widgets and layout on top. No C++ UI framework and no GPU driver dependency.
+  - **Safety boundary**: application logic and the renderer are safe Rust. The Win32/GDI/COM calls in `aurelia-app` and `rfd` are `unsafe` FFI, and the official Windows build links the MSVC C runtime; those layers are outside Rust's memory-safety guarantees. See [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md).
   - **Per-Monitor V2 DPI Awareness**: `SetProcessDpiAwarenessContext` plus `egui` pixels-per-point, so the interface is crisp at 125–200 % scaling instead of bitmap-stretched.
-  - **Portability-Ready Crate Split**: Windowing lives only in `aurelia-app`; `aurelia-core`, `aurelia-render`, `aurelia-io` and `aurelia-ui` are platform-agnostic, so the `eframe`/`winit` port in `ROADMAP.md` is a front-end swap rather than a rewrite.
+  - **Portability-Ready Crate Split**: Windowing lives only in `aurelia-app`; `aurelia-core`, `aurelia-render`, `aurelia-io`, `aurelia-presence` and `aurelia-ui` are platform-agnostic, so the `eframe`/`winit` port in `ROADMAP.md` is a front-end swap rather than a rewrite.
 - 🎨 **Live Interactive Viewport with Real-Time Direct Drawing**:
   - **Direct Viewport Interaction**: Drawing, brushing, and erasing happen directly on the canvas, which is composited and drawn by the CPU software renderer (`aurelia-render`) into the window framebuffer every frame, with the `egui` panels rasterised on top. All view geometry (`pan`, `zoom`, viewport clip) is in physical pixels; `egui` layout and pointer input are converted to and from points at the `pixels_per_point` boundary.
   - **Live Navigator Thumbnail**: The Navigator shows a downscaled copy of the same composite (`SoftwareRenderer::navigator_thumbnail`) as an `egui` texture, so it follows your strokes without a second full-document composite.
@@ -152,8 +152,23 @@ Aurelia/
 │   ├── aurelia-render/ # Software renderer, perspective guides, texture caching, grid/ruler overlays, and UI primitives
 │   ├── aurelia-io/    # Binary AUR v3 project serialization, image export, and file parsing
 │   ├── aurelia-ui/    # Modern egui-based dock panels, studio viewport, tools shelf, transform studio, perspective dock, and palettes
+│   ├── aurelia-presence/ # Optional Discord Rich Presence over local IPC
 │   └── aurelia-app/   # Win32 + GDI host: message loop, stylus sampling, autosave ticker, CLI
 ```
+
+## Compatibility at a glance
+
+| Area | Supported | Limits |
+| :--- | :--- | :--- |
+| OS | Windows 10/11 x86-64 | No Linux/macOS build yet |
+| Project files | AUR v3 (`.aur`), legacy HCV v2–v5 (`.hcv`) | AUR v1/v2 are read-only compatibility formats; saves always write v3 |
+| Pixel formats | 8-bit sRGB and 16-bit sRGB layers | Mixed-format documents round-trip; 16-bit compositing is not yet native (see #15) |
+| Layer features | Raster, groups, masks, adjustment layers, text, clipping | Animation is timeline-only; no video export |
+| Exports | PNG, JPEG, WebP, GIF, sprite sheets, frame sequences | Color profiles are not embedded yet; no ICC/Display P3 workflow |
+| Rich Presence | Optional Discord IPC | Off by default; no artwork previews; Windows Discord desktop only |
+| Distribution | Portable zip + per-user Inno installer | Installer is unsigned; artifacts are Ed25519-signed |
+
+Authoritative details: [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) and [`docs/PROJECT_FORMAT.md`](docs/PROJECT_FORMAT.md).
 
 ---
 
@@ -191,9 +206,36 @@ No installer and no registry writes of its own:
 Both distributions keep settings in `%LOCALAPPDATA%\Aurelia` (theme, recent projects, autosave),
 and every release publishes a `SHA256SUMS.txt` for verification.
 
+### Verifying a download
+
+Each release publishes `SHA256SUMS.txt`, a detached `.sig` for it and for every binary, and
+`aurelia-publisher-2026.pub`. The `.sig` files are raw 64-byte Ed25519 signatures — not hashes.
+
+```powershell
+Get-FileHash .\Aurelia-v3.1.0-win64.zip -Algorithm SHA256
+Get-Content .\SHA256SUMS.txt        # compare the digest
+```
+
+Verify the signature with Python and the included public key:
+
+```python
+from pathlib import Path
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(Path("aurelia-publisher-2026.pub").read_text().strip()))
+for name in ("Aurelia-v3.1.0-win64.zip", "Aurelia-Setup-3.1.0.exe", "SHA256SUMS.txt"):
+    pub.verify(Path(name + ".sig").read_bytes(), Path(name).read_bytes())
+print("signatures verified")
+```
+
+The installer is **not Authenticode-signed**, so Windows SmartScreen may still warn. VirusTotal
+results are advisory: unsigned software often trips heuristic/ML engines. A clean scan is not a
+proof of safety; a matching Ed25519 signature is the integrity boundary. See
+[`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md).
+
 ---
 
-### Option 3: Compile from Source (Pure Rust)
+### Option 3: Compile from Source (Rust + Win32 FFI)
 
 If you prefer building from source with full compiler optimizations:
 
@@ -310,15 +352,22 @@ Contributions are welcome! Please feel free to submit issues, feature requests, 
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-### Local verification (no GitHub Actions)
+### Local verification and releases (no GitHub Actions)
 
-Releases are verified entirely on the developer machine — there is no CI
-workflow by design (see [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md)):
+There is no CI workflow by design. Releases are cut locally with the journal-backed
+orchestrator in [`tools/release`](tools/release), not `scripts/pipeline.py`:
 
-```bash
-make check                                            # cargo check --all-targets + workspace tests
-python scripts/pipeline.py v2.4.0 --no-publish  # build, test, audit, package, scan (no upload)
+```powershell
+cargo test --workspace
+
+$env:PYTHONPATH = "tools/release"
+python -m aurelia_release --repo . plan v3.1.0   # read-only preview
+python -m aurelia_release --repo . run  v3.1.0   # build, test, package, sign, tag, publish
 ```
+
+The `full` profile requires a `release.toml` with build/package commands, a GitHub token, and
+the private signing key. See [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md) and
+[`tools/release/README.md`](tools/release/README.md).
 
 ---
 

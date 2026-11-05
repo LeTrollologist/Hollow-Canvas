@@ -1,226 +1,154 @@
-# Aurelia: Local Release & Packaging Process
+# Aurelia Release Process
 
-Aurelia releases are cut on a developer machine, never in CI. The pipeline is
-`scripts/pipeline.py`, whose stage model is adopted from the Morrow release
-pipeline; the Windows installer stage is adapted from Inkwell's Inno Setup flow.
-VPack packaging and ed25519 signing are retired for now — releases ship a portable
-zip, an Inno Setup installer and a SHA-256 manifest.
+Aurelia releases are cut on a developer machine, never in CI. The release system is the
+journal-backed orchestrator in [`tools/release`](tools/release), configured by
+[`release.toml`](release.toml). `scripts/pipeline.py` is retired and kept only for historical
+reference; do not use it for new releases.
 
 ---
 
 ## 1. Principles
 
-1. **No hosted CI.** Nothing builds on GitHub. A release is reproducible from a
-   checkout plus `python scripts/pipeline.py <tag>`.
-2. **Staged and resumable.** Every stage can be re-entered with `--from` or skipped
-   with `--skip`; facts (test counts, binary hash, asset digests) are parked in
-   `target/pipeline-state.json` so a resumed run reports them correctly.
-3. **The release *is* the git tag.** `publish` commits only pipeline-owned files,
-   creates an annotated tag, pushes, and then proves the tag object on `origin`
-   matches the local one. GitHub is a file host, never a builder.
-4. **Verified before shipped.** `verify` hashes every asset, tests the archive,
-   sanity-checks the installer PE image and refuses to upload bytes that disagree
-   with `SHA256SUMS.txt`.
-5. **Recorded locally.** Each publication writes `releases/<tag>.json` (assets,
-   hashes, test summary, republish count), so a `--clobber` rebuild can prove it
-   reproduced the published bytes.
+1. **Local-first.** Nothing builds on GitHub. A release runs from a clean checkout with the
+   signing key and tokens available on that machine.
+2. **Git is the record.** A release is an annotated tag on a verified commit. The journal,
+   release page and assets are derived from it.
+3. **Write-ahead journal.** Every mutation records an intent, then a result and an independent
+   verification in `.release/journal/<tag>.jsonl`. Failed runs are resumed or compensated,
+   never guessed.
+4. **Artifacts are signed.** Ed25519 detached signatures cover every binary and
+   `SHA256SUMS.txt`; the tag itself is annotated but not GPG/SSH-signed.
+5. **No incomplete publication.** Assets upload to a GitHub draft, are verified by digest, and
+   only then is the release published.
 
 ---
 
-## 2. Tooling
+## 2. One-time setup
 
-| Tool | Needed for | Notes |
-| :--- | :--- | :--- |
-| Rust (`cargo`, `rustc`) | build, test | 1.80+ recommended |
-| **Inno Setup 6** (`ISCC.exe`) | installer | `winget install JRSoftware.InnoSetup`; skip with `--skip-installer` |
-| git + `origin` | publish | the HTTPS credential is reused for uploads |
-| **VirusTotal API key** | virustotal | environment variable `VIRUSTOTAL_API_KEY` (never a file); skip with `--skip virustotal` |
-| Python 3.10+ | the pipeline itself | no third-party packages |
-
-`preflight` locates `ISCC.exe` in `%ProgramFiles(x86)%`, `%ProgramFiles%`,
-`%LOCALAPPDATA%\Programs\Inno*`, `PATH` or `%ISCC%`, and fails with the install hint
-above if it cannot find it.
-
----
-
-## 3. Stages
-
-| Stage | Operation | Detail |
-| :--- | :--- | :--- |
-| **`preflight`** | Environment | Toolchain versions, Inno Setup discovery, git branch/remote, dirty-tree policy |
-| **`version`** | Version bump | Rewrites the tag into every declaration (5 crates, README, INSTALL, Makefile, banner, installer), *proves* no stale version survives, and rejects hardcoded version literals in Rust sources (the UI must read `APP_VERSION`) |
-| **`build`** | Compile | `cargo build --release -p aurelia-app`; records the binary hash |
-| **`test`** | Verify | `cargo test --workspace`; records `N tests passed` |
-| **`package`** | Bundle | Portable zip + `Aurelia-Setup-<ver>.exe` + release notes in `dist/<tag>/` |
-| **`virustotal`** | Scan | Submits the zip **and** the installer to the VirusTotal API v3, writes the verdict into the release notes and `virustotal-summary.txt`, and aborts on detections unless `--max-detections`/`--force` allow them |
-| **`verify`** | Integrity | `SHA256SUMS.txt`, zip member/licensing checks, installer `MZ`/size check, ledger drift detection |
-| **`publish`** | Git | Commits pipeline-owned changes only, annotated tag, push branch + tag, verifies `origin` |
-| **`ship`** | Upload | `scripts/release_page.py` attaches the verified bytes to the GitHub release page over the REST API |
-
----
-
-## 4. Cutting a release
-
-```bash
-# Full release (bump, build, test, package, verify, publish, ship)
-make release TAG=v2.1.0
-
-# Equivalent
-python scripts/pipeline.py v2.2.1
-```
-
-Common variants:
-
-```bash
-python scripts/pipeline.py v2.2.1 --dry-run        # print the plan, touch nothing
-python scripts/pipeline.py v2.2.1 --no-publish     # build/package/verify only
-python scripts/pipeline.py v2.2.1 --skip-installer # portable zip only (no Inno Setup)
-python scripts/pipeline.py v2.2.1 --from package   # resume after a failed stage
-python scripts/pipeline.py v2.2.1 --skip test      # skip a stage
-python scripts/pipeline.py v2.2.1 --no-bump        # declarations already correct
-python scripts/pipeline.py v2.2.1 --clobber        # republish an existing tag
-python scripts/pipeline.py v2.2.1 --force          # publish a dirty tree / move a tag
-python scripts/pipeline.py v2.2.1 --max-detections 4  # tolerate known VirusTotal false positives
-python scripts/pipeline.py v2.2.1 --from ship      # retry just the upload
-```
-
-Makefile shortcuts: `release`, `check`, `version`, `build`, `test`, `package`,
-`portable`, `verify`, `ship`, `republish`, `dry-run`, `clean`.
-
-
----
-
-## 5. Output layout (`dist/<tag>/`)
-
-```text
-dist/<tag>/
-├── Aurelia-<tag>-win64.zip      # Portable distribution (exe + docs)
-├── Aurelia-Setup-<ver>.exe      # Per-user Inno Setup installer
-├── RELEASE_NOTES.md             # release-notes/<tag>.md + the VirusTotal block
-├── virustotal-summary.txt       # Engine verdicts for both artifacts (hashed + uploaded)
-├── audit/
-│   ├── virustotal-summary.txt
-│   └── virustotal-<artifact>.json
-├── SHA256SUMS.txt               # Written by the verify stage
-└── PUBLISH.txt                  # Written by the publish stage (commit, remote, asset list)
-```
-
-Plus, in the repository: `release-notes/<tag>.md` (authored) and
-`releases/<tag>.json` (pipeline record).
-
----
-
-## 6. The installer
-
-`installer/aurelia.iss` is a per-user Inno Setup script (adapted from Inkwell's):
-
-- installs to `%LOCALAPPDATA%\Programs\Aurelia` with `PrivilegesRequired=lowest`
-  (no UAC prompt);
-- optional `.aur` / `.hcv` associations using the same `Aurelia.Project` ProgID the
-  app's `--register-shell` writes, so both mechanisms agree;
-- Start-menu entries plus an optional desktop shortcut, uninstall entry with the app icon;
-- uninstall clears an extension association **only if it still points at Aurelia**;
-- `CloseApplications=yes`, so upgrading replaces a running binary safely.
-
-The pipeline passes `MyAppVersion`, `MyAppVersionNumeric`, `MySourceDir` (the staging
-folder) and `MyOutputDir` (the tag's `dist/` folder) as `/D` defines, then verifies the
-produced `Setup` file is a real PE image above a size floor.
-
----
-
-## 7. VirusTotal scanning (API v3)
-
-The `virustotal` stage scans **both shipped binaries** — `Aurelia-v<ver>-win64.zip`
-and `Aurelia-Setup-<ver>.exe` — and refuses to publish if any engine reports a
-detection unless `--max-detections N` tolerates a known count or `--force` overrides.
-
-**Key handling.** The API key is read from the environment only:
-
-```powershell
-$env:VIRUSTOTAL_API_KEY = "<your key>"   # current session
-python scripts/pipeline.py v2.2.1
-```
-
-Nothing reads `.env` and nothing is written to the repository. Without the variable the
-stage fails with instructions; pass `--skip virustotal` to ship without a scan.
-
-**API contract** (`scripts/virustotal.py`, verified against the official docs):
-
-| Call | Purpose |
+| Requirement | Purpose |
 | :--- | :--- |
-| `GET /files/{sha256}` | Reuse an existing report; a record with all-zero `last_analysis_stats` means "submitted but never analysed" |
-| `POST /files` | Multipart upload of one file (≤ 32 MB) → analysis id |
-| `POST /files/{sha256}/analyse` | Re-analyse a sample VT already holds (used for known hashes and `409 AlreadyExistsError`) |
-| `GET /analyses/{id}` | Poll until `status == completed` **and** engines actually reported |
+| Rust toolchain + MSVC linker | build `aurelia-app` |
+| Inno Setup 6 (`ISCC.exe`) | installer; discovered from `%LOCALAPPDATA%\Programs\Inno`, Program Files, PATH or `ISCC`/`INNO_ISCC` |
+| `GITHUB_TOKEN` | create/upload/publish the GitHub release (`repo` scope) |
+| `keys/aurelia-publisher-2026.priv` | Ed25519 artifact signing (local only, gitignored) |
+| `keys/aurelia-publisher-2026.pub` | public verification key (committed) |
+| `VIRUSTOTAL_API_KEY` | optional; `scan.mode = "threshold"` or `"strict"` |
 
-Errors follow `{"error": {"code", "message"}}`; the client retries `429 QuotaExceededError`,
-`503 TransientError` and `504 DeadlineExceededError`, and treats `404 NotFoundError` as
-"not visible yet" while polling.
-
-**Quota.** The public API allows **4 requests/minute and 500/day** (daily reset 00:00 UTC),
-so every request goes through a single pacer (`PUBLIC_MIN_INTERVAL = 15 s`). A full
-two-artifact scan typically uses 6–12 requests.
-
-**Outputs.** `dist/<tag>/virustotal-summary.txt` (hashed and uploaded like any asset),
-`dist/<tag>/audit/virustotal-*.json` (per-artifact record) and a fenced
-`<!-- virustotal:begin --> … <!-- virustotal:end -->` block appended to
-`release-notes/<tag>.md`, which becomes the release body.
-
-**The detections gate.** Any detection blocks the release by default. Unsigned Windows
-installers routinely trip a handful of generic ML heuristics (no named family), so the
-gate is tunable per release:
-
-```powershell
-python scripts/pipeline.py v2.2.1 --max-detections 4
-```
-
-Whatever is tolerated still appears in the notes, and the default stays `0`.
+`release.toml` selects the `full` profile, the version files, the Windows package command,
+signing key, scan policy and GitHub repository. The private key must **never** be committed;
+`keys/*.priv` is ignored and verified absent from git history before a release.
 
 ---
 
-## 8. Uploading artifacts
+## 3. Cut a release
 
-`ship` runs `scripts/release_page.py <tag>`:
+```powershell
+$env:PYTHONPATH = "tools/release"
 
-- resolves a token from `AURELIA_GITHUB_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN`, falling back
-  to the credential `git push` already uses (`git credential fill`);
-- creates the release page from `release-notes/<tag>.md` if it does not exist;
-- **refuses to upload** any file whose hash disagrees with `SHA256SUMS.txt`;
-- replaces existing assets rather than duplicating them.
+python -m aurelia_release --repo . doctor
+python -m aurelia_release --repo . plan v3.1.0
+python -m aurelia_release --repo . run  v3.1.0
+```
 
-`python scripts/release_page.py --all-missing` attaches artifacts for every local tag
-that lacks a release page.
+`run` is resumable: repeat the same command after fixing a failure. Journaled, verified
+operations are skipped; an interrupted operation requires `status`/`recover` first.
+
+Inspect or recover:
+
+```powershell
+python -m aurelia_release --repo . status v3.1.0
+python -m aurelia_release --repo . verify v3.1.0
+python -m aurelia_release --repo . recover v3.1.0            # dry run
+python -m aurelia_release --repo . recover v3.1.0 --apply --yes
+python -m aurelia_release --repo . rollback v3.1.0           # local, unpublished only
+python -m aurelia_release --repo . yank v3.1.0 --reason "…"  # withdrawn published release
+```
 
 ---
 
-## 9. Verification & integrity
+## 4. Stages
 
-```powershell
-# 1. Checksums shipped with the release
-Get-FileHash .\Aurelia-Setup-2.1.0.exe -Algorithm SHA256
+| Stage | Operations | Notes |
+| :--- | :--- | :--- |
+| `preflight` | clean tree, branch, remote, tag, signing key, version consistency | no mutations |
+| `version` | rewrite declarations, commit `chore(release): vX.Y.Z` | includes every crate and docs |
+| `quality` | `cargo test --release --workspace` | configurable command |
+| `build` | `cargo build --release -p aurelia-app` | configurable command |
+| `package` | portable zip + Inno installer | `scripts/package_aurelia.py` |
+| `sign` | Ed25519-sign assets and `SHA256SUMS.txt`, verify locally | no changelog generation |
+| `scan` | VirusTotal policy (`off`/`advisory`/`threshold`/`strict`) | advisory tolerates no key |
+| `tag` | annotated tag, signature optional | `sign_tags = false` in current config |
+| `publish` | atomic push of branch + tag | verifies remote refs |
+| `release` | draft → upload → digest verify → publish | assets never go straight to a published release |
+| `verify` | re-read refs, download assets, verify hashes/signatures | independent of `dist/` |
 
-# 2. Local re-verification of an existing build
-make verify TAG=v2.1.0
-
-# 3. Confirm the tag matches origin
-git ls-remote --tags origin v2.1.0
-```
-
-A `--clobber` republish re-runs every stage and compares the new asset hashes against
-`releases/<tag>.json`; a mismatch is reported unless `--clobber` is passed, in which case
-the new bytes are recorded as the next publication.
+Profiles are configuration, not separate code: `git` runs preflight → version → tag → publish →
+verify; `full` adds build, package, sign, scan and the GitHub release stages.
 
 ---
 
-## 10. Installation
+## 5. Signing keys
 
-See [`INSTALL.md`](INSTALL.md). Short version:
+### Current key
 
-```powershell
-# Installer (recommended)
-.\Aurelia-Setup-2.1.0.exe
+- Public: `keys/aurelia-publisher-2026.pub` (32-byte raw Ed25519, hex)
+- Private: `keys/aurelia-publisher-2026.priv` (local, gitignored)
+- Fingerprint: SHA-256 of the public key file
+  `d5183063edb79a1d584bbbbd67488e5cd97c7069e4b0d88c431d478c9d216717`
 
-# Portable
-Expand-Archive .\Aurelia-v2.1.0-win64.zip -DestinationPath .\Aurelia
-.\Aurelia\aurelia.exe
-```
+The previous `keys/aurelia-publisher.pub` has no known private key and must not be used for new
+signatures.
+
+### Rotation
+
+1. Generate a new Ed25519 keypair offline.
+2. Sign a rotation statement with the old key (if available) and the new key.
+3. Commit the new public key as `keys/aurelia-publisher-<year>.pub`.
+4. Update `[sign].private_key`/`public_key` in `release.toml`.
+5. Publish the rotation statement with the next release; keep old public keys in the repo for
+   verifying historical releases.
+6. Never reuse a key after its private half is suspected compromised.
+
+### Lost key
+
+If the private key is lost, do **not** fabricate signatures. Publish a key-rotation notice, sign
+the next release with the new key, and document that older artifacts remain verifiable only
+against the old public key. A release whose private key is unavailable cannot be re-signed
+retroactively without changing its published bytes.
+
+---
+
+## 6. Failure, rollback and withdrawal
+
+- **Resume** is the first response to a failure. The journal shows the last verified operation.
+- **Compensation** (`recover`) undoes completed mutations of an incomplete release; remote
+  compensation is opt-in and only deletes refs this run created.
+- **Rollback** is local-only: unpublished commits, tags and drafts.
+- **Yank** marks a published release withdrawn without rewriting history; assets remain
+  available unless separately removed.
+- `auto_compensate = "local"` cleans local partial state automatically; remote changes still
+  require an explicit `recover --include-remote`.
+
+A published release is never treated as atomic with its GitHub page: if the tag is pushed and
+the release upload fails, the journal records a partial state and the release must be resumed or
+yanked.
+
+---
+
+## 7. Clean-machine rehearsal
+
+Before trusting a release run:
+
+1. Clone the repository into a fresh directory.
+2. Provide only the private key, `release.toml` and a GitHub token.
+3. Run `doctor`, `plan` and `run` against a test tag.
+4. Verify the downloaded assets independently.
+5. Confirm `git log --all -- keys/*.priv` is empty and `git check-ignore` covers the key.
+
+## 8. Failure-injection coverage still needed
+
+The journal is designed for crashes and partial remotes, but the test suite does not yet inject
+them. Add tests for: killed upload mid-asset, tag push succeeding while release creation fails,
+draft upload digest mismatch, interrupted version commit, remote tag drift, compensation failure,
+and a clean-checkout release rehearsal. Until then, treat the orchestrator as verified for the
+happy path and for the draft-verification fix in `get_release()`, not as fully failure-proof.

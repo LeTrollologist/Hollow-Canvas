@@ -1,9 +1,22 @@
 # Aurelia · Roadmap
 
-Tracks what shipped in `v2.0.0`, what is deliberately next, and what is
+Tracks what shipped through `v3.1.0`, what is deliberately next, and what is
 explicitly out of scope for the Windows-native build.
 
 Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs design work)
+
+---
+
+## Shipped in v3.1.0
+
+| Item | Status | Notes |
+| :--- | :--- | :--- |
+| Optional Discord Rich Presence | ✅ | `aurelia-presence`; local IPC only, off by default, project name opt-in |
+| Presence privacy tests | ✅ | Default payload contains no document name or path |
+| Journal-backed release orchestrator | ✅ | `tools/release`, `git`/`full` profiles, write-ahead journal, compensation/yank |
+| Ed25519 artifact signing | ✅ | Detached signatures for binaries and `SHA256SUMS.txt` |
+| GitHub draft → verify → publish | ✅ | Assets verified by digest before publication |
+| Documentation baseline | ✅ | Architecture, format, security, compatibility and troubleshooting docs |
 
 ---
 
@@ -13,7 +26,7 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
 
 | Item | Status | Notes |
 | :--- | :--- | :--- |
-| Morrow-style staged pipeline | ✅ | `scripts/pipeline.py`: preflight → version → build → test → package → verify → publish → ship, resumable with `--from`/`--skip` |
+| Morrow-style staged pipeline | ♻️ | Historical; superseded in 3.1.0 by `tools/release` and `release.toml` |
 | Per-tag release records | ✅ | `releases/<tag>.json` (assets, hashes, tests, republish count) + `release-notes/<tag>.md` |
 | Git-only publishing | ✅ | Commit pipeline-owned files, annotated tag, push, verify the remote tag object |
 | REST artifact upload | ✅ | `scripts/release_page.py` (no forge CLI), refuses to upload bytes that disagree with `SHA256SUMS.txt` |
@@ -88,7 +101,7 @@ Legend: ✅ shipped · 🚧 in progress · ⏳ planned · 💤 deferred (needs d
 | Per-monitor V2 DPI awareness | ✅ | `SetProcessDpiAwarenessContext` + `egui` pixels-per-point |
 | Undo memory budget | ✅ | 512 MiB default; oldest steps evicted, newest kept |
 | Theme persistence | ✅ | Saved with preferences |
-| CI | ✅ | Local only — `make check` / `python scripts/pipeline.py <tag> --no-publish` (no GitHub Actions by design) |
+| CI | ✅ | Local only — `cargo test --workspace` + `aurelia-release` (no GitHub Actions by design) |
 
 ---
 

@@ -1,7 +1,7 @@
 [release]
 profile = "full"
 tag_prefix = "v"
-auto_compensate = "none"
+auto_compensate = "local"
 version_files = [
     "Cargo.toml",
     "crates/aurelia-core/Cargo.toml",
