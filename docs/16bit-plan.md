@@ -635,13 +635,13 @@ What the editor can and cannot do with a 16-bit document today:
 | Compositing and merge-visible | yes (native) |
 | Filters (all 15) and the three adjustment passes | yes (native) as of #28 |
 | Merge down | yes (native; writes into the lower layer's format) |
-| Free transform | **refused with a message** - the session stores an 8-bit source patch (see F11) |
+| Free transform (affine, quad, mesh, TPS) | yes (native) |
 | Selection fill / stroke, scratchpad | yes (native) as of this change |
 | Viewport | shows an 8-bit presentation; egui textures are 8-bit |
 
-The refusal message names the operation and the document format, and mutates nothing. That is
-the whole point of the hardening pass in v3.3.0: every remaining 8-bit-only path fails loudly
-instead of panicking.
+There are no 8-bit-only editing paths left. `require_8bit` remains as a guard for any future
+operation that cannot work at 16 bits, so the loud-refusal behaviour from v3.3.0 is still
+available rather than removed with its last caller.
 
 ## Audit: where 8-bit assumptions remain (post-selection work)
 
@@ -651,7 +651,7 @@ reason:
 | Location | Sites | State |
 | :--- | ---: | :--- |
 | `aurelia-ui/src/ui.rs` | **0** | clean |
-| `aurelia-ui/src/state.rs` | 17 | **all** inside `begin_transform_session` (8) and `update_transform_preview` (9); the session cannot start on a 16-bit document |
+| `aurelia-ui/src/state.rs` | **0** | clean: free transform reads native storage and restores through `write_storage_bytes` |
 | `aurelia-core/src/document.rs` | 4 | the 8-bit compositor branch, unreachable once a layer is 16-bit (format check returns earlier) |
 | `aurelia-core/src/animation.rs` | 5 | the 8-bit frame path, unreachable once a frame holds a 16-bit layer (delegation runs first) |
 | `aurelia-core/src/layer.rs` | 11 | the accessor, its documented panic, and inline tests |
@@ -662,22 +662,25 @@ The scratchpad is **not** on that list: it owns `scratchpad_pixels: Vec<u8>`, bu
 is a dock-local mixing surface, never a document layer and never composited into one. Its
 document-touching path (clearing a selection) now uses the native fill.
 
-One refusal therefore remains, and it is the only unimplemented 16-bit operation: free
-transform. Its session holds an 8-bit source patch and 8-bit original pixels, and the
-transform renderers sample a `&[u8]` source. Genericising it is a change to `transform.rs`
-itself:
+No refusal remains. Free transform now uses the same split as every other native operation:
+the renderers and the patch type live in `aurelia-core`, and the session is assembled from
+them in `state.rs`:
 
-1. `TransformSession::extracted_patch` becomes a channel-generic patch (`Vec<u8>` or
-   `Vec<u16>`, or a small enum) and `original_layer_pixels` becomes storage bytes restored
-   through `write_storage_bytes`.
-2. `sample_nearest` / `sample_bilinear` / `sample_bicubic` / `sample_interpolated` become
-   generic over the source channel and return working-precision pixels, the same shape as the
-   filters' read helpers.
-3. `render_transformed_patch` and its quad/mesh/TPS siblings take a generic source alongside
-   the generic destination they already have, and `composite_pixel_in_place` takes the sampled
-   working-precision pixel instead of four `u8`s.
-4. The 8-bit path must stay byte-identical; the transform tests and a pinned digest are the
-   gate, as they were for filters and text.
+1. `TransformSession::extracted_patch` is a `TransformPatch`, so the session carries the
+   layer's storage width instead of assuming 8 bits. `original_layer_pixels` is storage
+   bytes: preview and cancel restore through `write_storage_bytes`, never `set_pixels`, so
+   the allocation and format cannot change mid-session.
+2. Begin extracts with `TransformPatch::extract_from_layer` and clears with
+   `TransformPatch::clear_region`, sharing one selection predicate so the patch and the hole
+   it leaves agree.
+3. Preview restores the snapshot, clears, and calls one `TransformPatch::render_into` with a
+   `RenderMode` selected from the session. The four `render_*` call sites and the inline
+   clear loops are gone.
+4. Commit compares storage bytes, so an unchanged 16-bit transform does not push a history
+   entry; cancel restores bytes without touching history or the dirty flag.
+
+The 8-bit path is still byte-identical: the digest gate and the renderer tests were the
+acceptance condition for the core commits, and this session change does not alter a renderer.
 
 ## Status: three tiers of "16-bit", kept distinct
 
@@ -686,12 +689,17 @@ or the issue tracker.
 
 | Claim | State |
 | :--- | :--- |
-| **16-bit editing** | **Substantially implemented.** Create/open/save, paint, erase, fill, gradient, shapes, text, flip/rotate/crop/scale, compositing, adjustments, merge-visible, merge-down, filters, selection fill/stroke, navigator. |
-| **16-bit feature completeness** | **Pending free transform.** It is the single operation that still refuses a 16-bit document, for a concrete reason: the session and the renderers sample an 8-bit source patch. |
+| **16-bit editing** | **Implemented.** Create/open/save, paint, erase, fill, gradient, shapes, text, flip/rotate/crop/scale, compositing, adjustments, merge-visible, merge-down, filters, selection fill/stroke, navigator, and free transform all edit native storage. |
+| **16-bit feature completeness** | **Complete.** No editor operation refuses a 16-bit document. The session patch, preview snapshot and commit history are all storage-width aware. |
 | **32-bit floating-point editing** | **Future architecture.** A different proposal: it changes how values *combine* (linear light, working precision), not just how many levels are stored. The `v * 257` lattice argument and the byte-identical 8-bit oracle do not carry over, so it needs its own re-baselining, its own performance gate, and its own kill criterion - exactly as the 16-bit plan did. |
 
-Free transform's gate is now in place: `eight_bit_transform_output_is_unchanged` pins the
-affine, bicubic, quad, mesh and TPS renderers before their source sampling becomes generic.
+Free transform's 8-bit gate is `eight_bit_transform_output_is_unchanged`, which pins the
+affine, bicubic, quad, mesh and TPS renderers. The session-side conditions are pinned by
+`free_transform_is_native_on_a_sixteen_bit_document`,
+`cancelling_a_sixteen_bit_transform_leaves_observationally_identical_state`,
+`repeated_sixteen_bit_previews_are_idempotent`,
+`sixteen_bit_transparent_patch_edges_do_not_darken_the_destination`, and
+`every_transform_preview_mode_stays_native_at_sixteen_bits`.
 
 ## Free transform: acceptance conditions
 
@@ -732,3 +740,24 @@ Additional coverage required beyond the five digests:
 Order of work, per the milestone: **correctness first, then measure, then optimise.** No
 throughput change is made in the refactor commit; if genericising the source sampling costs
 performance, that is measured in milestone 4 and addressed in milestone 5, not hidden here.
+
+### Implementation results
+
+All of the conditions above are green in the assembled editor - `cargo test --workspace`,
+debug and release - with the 8-bit digest gate unchanged.
+
+| Condition | Pinned by |
+| :--- | :--- |
+| Five 8-bit digests unchanged | `transform_baseline::eight_bit_transform_output_is_unchanged` |
+| No 8-bit intermediate for a 16-bit sample | `free_transform_is_native_on_a_sixteen_bit_document` (patch is `Srgb16`, off-lattice detail survives) |
+| Format preserved through begin / preview / commit | same test, asserted at each step |
+| Cancel restores all five observational invariants | `cancelling_a_sixteen_bit_transform_leaves_observationally_identical_state` |
+| Repeated previews are idempotent | `repeated_sixteen_bit_previews_are_idempotent` |
+| Fractional-coordinate sampling | the same test previews at a half-pixel translation |
+| Transparent edges | `sixteen_bit_transparent_patch_edges_do_not_darken_the_destination` |
+| Every deformation / interpolation mode stays native | `every_transform_preview_mode_stays_native_at_sixteen_bits` |
+
+The transparent-edge test is nearest-sampled on purpose: it isolates the coverage check (a
+zero-alpha border carrying colour must paint nothing) from interpolation quality. Bilinear
+source interpolation still averages colour and alpha independently, the same as it does at
+8 bits; changing that would move 8-bit output and belongs in its own baseline-first change.

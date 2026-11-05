@@ -6,13 +6,12 @@ use aurelia_core::brush::BrushSettings;
 use aurelia_core::color::{Color, DEFAULT_PALETTE};
 use aurelia_core::document::Document;
 use aurelia_core::history::HistoryStack;
-use aurelia_core::layer::PixelFormat;
+use aurelia_core::layer::{Layer, LayerBuffer, PixelFormat};
 use aurelia_core::selection::{SelectionMask, StrokePosition};
 use aurelia_core::symmetry::SymmetryConfig;
 use aurelia_core::transform::{
-    render_mesh_warped_patch, render_quad_transformed_patch, render_tps_warped_patch,
-    render_transformed_patch, AffineTransform2D, InterpolationMode, MeshWarpGrid,
-    PerspectiveQuadTransform, ThinPlateSpline2D, TransformMode,
+    AffineTransform2D, InterpolationMode, MeshWarpGrid, PerspectiveQuadTransform, RenderMode,
+    ThinPlateSpline2D, TransformMode, TransformPatch,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +44,7 @@ pub struct TransformSession {
     pub is_active: bool,
     pub mode: TransformMode,
     pub original_layer_pixels: Vec<u8>,
-    pub extracted_patch: Vec<u8>,
+    pub extracted_patch: TransformPatch,
     pub patch_w: u32,
     pub patch_h: u32,
     pub patch_origin: Vec2,
@@ -70,7 +69,7 @@ impl Default for TransformSession {
             is_active: false,
             mode: TransformMode::Affine,
             original_layer_pixels: Vec::new(),
-            extracted_patch: Vec::new(),
+            extracted_patch: TransformPatch::Srgb8(Vec::new()),
             patch_w: 0,
             patch_h: 0,
             patch_origin: Vec2::ZERO,
@@ -88,6 +87,21 @@ impl Default for TransformSession {
             grid_rows: 4,
             grid_cols: 4,
         }
+    }
+}
+
+/// Whether a layer has a non-zero alpha channel at a canvas coordinate.
+///
+/// The transform session bounds its source rectangle by content alpha. Reading the native
+/// buffer keeps that scan working at both storage widths; the patch extraction and rendering
+/// that follow are what carry the pixels themselves.
+fn layer_has_alpha(layer: &Layer, x: u32, y: u32) -> bool {
+    let Some(index) = layer.pixel_index(x, y) else {
+        return false;
+    };
+    match layer.buffer() {
+        LayerBuffer::Srgb8(bytes) => bytes.get(index + 3).is_some_and(|&alpha| alpha > 0),
+        LayerBuffer::Srgb16(channels) => channels.get(index + 3).is_some_and(|&alpha| alpha > 0),
     }
 }
 
@@ -1136,9 +1150,6 @@ impl AppState {
 
     /// Starts a Free Transform session on the active layer (or active selection mask)
     pub fn begin_transform_session(&mut self) {
-        if !self.require_8bit("Free Transform") {
-            return;
-        }
         if let Some(layer) = self.document.active_layer() {
             let doc_w = self.document.width;
             let doc_h = self.document.height;
@@ -1152,22 +1163,18 @@ impl AppState {
             if let Some(sel) = &self.selection {
                 for y in 0..doc_h {
                     for x in 0..doc_w {
-                        if sel.is_selected(x, y) {
-                            let idx = (y * doc_w + x) as usize * 4;
-                            if layer.as_srgb8_exact()[idx + 3] > 0 {
-                                min_x = min_x.min(x);
-                                max_x = max_x.max(x);
-                                min_y = min_y.min(y);
-                                max_y = max_y.max(y);
-                            }
+                        if sel.is_selected(x, y) && layer_has_alpha(layer, x, y) {
+                            min_x = min_x.min(x);
+                            max_x = max_x.max(x);
+                            min_y = min_y.min(y);
+                            max_y = max_y.max(y);
                         }
                     }
                 }
             } else {
                 for y in 0..doc_h {
                     for x in 0..doc_w {
-                        let idx = (y * doc_w + x) as usize * 4;
-                        if layer.as_srgb8_exact()[idx + 3] > 0 {
+                        if layer_has_alpha(layer, x, y) {
                             min_x = min_x.min(x);
                             max_x = max_x.max(x);
                             min_y = min_y.min(y);
@@ -1187,21 +1194,15 @@ impl AppState {
 
             let patch_w = (max_x - min_x + 1).max(1);
             let patch_h = (max_y - min_y + 1).max(1);
-            let mut patch = vec![0u8; (patch_w * patch_h * 4) as usize];
 
+            // One predicate for extraction and clearing, so a selection-shaped patch and the
+            // hole it leaves behind always agree.
             let sel_opt = self.selection.as_ref();
-            for py in 0..patch_h {
-                let sy = min_y + py;
-                for px in 0..patch_w {
-                    let sx = min_x + px;
-                    let should_extract = sel_opt.map_or(true, |s| s.is_selected(sx, sy));
-                    if should_extract {
-                        let src_idx = (sy * doc_w + sx) as usize * 4;
-                        let dst_idx = (py * patch_w + px) as usize * 4;
-                        patch[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8_exact()[src_idx..src_idx + 4]);
-                    }
-                }
-            }
+            let keep = |x: u32, y: u32| sel_opt.is_none_or(|s| s.is_selected(x, y));
+            let patch = TransformPatch::extract_from_layer(
+                layer, min_x, min_y, patch_w, patch_h, &keep,
+            );
+            let original_layer_pixels = layer.storage_bytes();
 
             let patch_origin = Vec2::new(min_x as f32, min_y as f32);
             let center = patch_origin + Vec2::new(patch_w as f32 * 0.5, patch_h as f32 * 0.5);
@@ -1234,7 +1235,7 @@ impl AppState {
             self.transform_session = TransformSession {
                 is_active: true,
                 mode: TransformMode::Affine,
-                original_layer_pixels: layer.as_srgb8_exact().to_vec(),
+                original_layer_pixels,
                 extracted_patch: patch,
                 patch_w,
                 patch_h,
@@ -1256,20 +1257,9 @@ impl AppState {
 
             // Clear extracted pixels from active layer so transformed patch replaces them cleanly during preview
             if let Some(layer_mut) = self.document.active_layer_mut() {
-                for py in 0..patch_h {
-                    let sy = min_y + py;
-                    for px in 0..patch_w {
-                        let sx = min_x + px;
-                        let should_clear = sel_opt.map_or(true, |s| s.is_selected(sx, sy));
-                        if should_clear {
-                            let idx = (sy * doc_w + sx) as usize * 4;
-                            layer_mut.as_srgb8_exact_mut()[idx] = 0;
-                            layer_mut.as_srgb8_exact_mut()[idx + 1] = 0;
-                            layer_mut.as_srgb8_exact_mut()[idx + 2] = 0;
-                            layer_mut.as_srgb8_exact_mut()[idx + 3] = 0;
-                        }
-                    }
-                }
+                TransformPatch::clear_region(
+                    layer_mut, min_x, min_y, patch_w, patch_h, &keep,
+                );
             }
 
             self.update_transform_preview();
@@ -1282,8 +1272,6 @@ impl AppState {
         if !self.transform_session.is_active {
             return;
         }
-        let doc_w = self.document.width;
-        let doc_h = self.document.height;
         let session = &self.transform_session;
         let orig = &session.original_layer_pixels;
         let patch = &session.extracted_patch;
@@ -1297,79 +1285,32 @@ impl AppState {
         let tps = &session.tps;
         let interp = session.interpolation;
         let sel_opt = self.selection.as_ref();
+        let keep = |x: u32, y: u32| sel_opt.is_none_or(|s| s.is_selected(x, y));
 
         if let Some(layer) = self.document.active_layer_mut() {
-            // Start from original pixels with source patch cleared
-            layer.as_srgb8_exact_mut().copy_from_slice(orig);
-            for py in 0..ph {
-                let sy = origin.y as u32 + py;
-                for px in 0..pw {
-                    let sx = origin.x as u32 + px;
-                    if sx < doc_w && sy < doc_h {
-                        let should_clear = sel_opt.map_or(true, |s| s.is_selected(sx, sy));
-                        if should_clear {
-                            let idx = (sy * doc_w + sx) as usize * 4;
-                            layer.as_srgb8_exact_mut()[idx] = 0;
-                            layer.as_srgb8_exact_mut()[idx + 1] = 0;
-                            layer.as_srgb8_exact_mut()[idx + 2] = 0;
-                            layer.as_srgb8_exact_mut()[idx + 3] = 0;
-                        }
-                    }
-                }
+            // Restore the exact pre-session storage, then clear the source region and draw one
+            // transformed patch over it. Restoring first is what makes repeated previews
+            // idempotent rather than compositing each preview over the previous one.
+            if orig.len() != layer.storage_len() {
+                return;
             }
+            layer.write_storage_bytes(0, orig);
+            TransformPatch::clear_region(
+                layer,
+                origin.x as u32,
+                origin.y as u32,
+                pw,
+                ph,
+                &keep,
+            );
 
-            match mode {
-                TransformMode::Affine => {
-                    render_transformed_patch(
-                        patch,
-                        pw,
-                        ph,
-                        origin,
-                        &transform,
-                        interp,
-                        layer.as_srgb8_exact_mut(),
-                        doc_w,
-                        doc_h,
-                    );
-                }
-                TransformMode::PerspectiveQuad => {
-                    render_quad_transformed_patch(
-                        patch,
-                        pw,
-                        ph,
-                        &quad,
-                        interp,
-                        layer.as_srgb8_exact_mut(),
-                        doc_w,
-                        doc_h,
-                    );
-                }
-                TransformMode::MeshGrid => {
-                    render_mesh_warped_patch(
-                        patch,
-                        pw,
-                        ph,
-                        mesh_grid,
-                        interp,
-                        layer.as_srgb8_exact_mut(),
-                        doc_w,
-                        doc_h,
-                    );
-                }
-                TransformMode::ThinPlateSpline => {
-                    render_tps_warped_patch(
-                        patch,
-                        pw,
-                        ph,
-                        origin,
-                        tps,
-                        interp,
-                        layer.as_srgb8_exact_mut(),
-                        doc_w,
-                        doc_h,
-                    );
-                }
-            }
+            let render_mode = match mode {
+                TransformMode::Affine => RenderMode::Affine(&transform),
+                TransformMode::PerspectiveQuad => RenderMode::Quad(&quad),
+                TransformMode::MeshGrid => RenderMode::Mesh(mesh_grid),
+                TransformMode::ThinPlateSpline => RenderMode::Tps(tps),
+            };
+            patch.render_into(layer, pw, ph, origin, interp, render_mode);
         }
     }
 
@@ -1478,7 +1419,7 @@ impl AppState {
         }
         self.transform_session.is_active = false;
         self.transform_session.original_layer_pixels.clear();
-        self.transform_session.extracted_patch.clear();
+        self.transform_session.extracted_patch = TransformPatch::Srgb8(Vec::new());
     }
 
     /// Cancels transformation and restores original layer pixels
@@ -1487,10 +1428,15 @@ impl AppState {
             return;
         }
         if let Some(layer) = self.document.active_layer_mut() {
-            layer.set_pixels(std::mem::take(&mut self.transform_session.original_layer_pixels));
+            // Storage bytes, not an 8-bit reconstruction: this restores a 16-bit layer exactly
+            // and never changes its format or allocation.
+            let original = &self.transform_session.original_layer_pixels;
+            if original.len() == layer.storage_len() {
+                layer.write_storage_bytes(0, original);
+            }
         }
         self.transform_session.is_active = false;
-        self.transform_session.extracted_patch.clear();
+        self.transform_session.extracted_patch = TransformPatch::Srgb8(Vec::new());
         self.set_status("Canceled Transform");
     }
 
@@ -1517,8 +1463,6 @@ impl AppState {
 
     pub fn fill_selection_active_layer(&mut self) {
         if let Some(mask) = &self.selection {
-            let doc_w = self.document.width;
-            let doc_h = self.document.height;
             let color = self.brush.primary_color.to_rgba8();
             if let Some(layer) = self.document.active_layer_mut() {
                 let before = layer.storage_bytes();
@@ -1535,8 +1479,6 @@ impl AppState {
 
     pub fn clear_selection_active_layer(&mut self) {
         if let Some(mask) = &self.selection {
-            let doc_w = self.document.width;
-            let doc_h = self.document.height;
             let color = [0, 0, 0, 0];
             if let Some(layer) = self.document.active_layer_mut() {
                 let before = layer.storage_bytes();
@@ -1554,8 +1496,6 @@ impl AppState {
 
     pub fn stroke_selection_active_layer(&mut self, width: u32, position: u8) {
         if let Some(mask) = &self.selection {
-            let doc_w = self.document.width;
-            let doc_h = self.document.height;
             let color = self.brush.primary_color.to_rgba8();
             let pos = match position {
                 1 => StrokePosition::Inside,
@@ -2171,15 +2111,248 @@ mod document_format_ui {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
-    /// Free transform is the last operation that refuses a 16-bit document: its session stores
-    /// an 8-bit source patch. Selection fill/stroke are native now and must not be refused.
-    #[test]
-    fn free_transform_refuses_a_sixteen_bit_document_and_selection_fill_does_not() {
-        let mut wide = sixteen_bit_state();
-        wide.begin_transform_session();
-        assert!(!wide.transform_session.is_active, "free transform must not start");
-        assert!(wide.status_message.contains("8-bit only"), "{}", wide.status_message);
+    /// An 8x8 16-bit layer with an opaque, off-lattice 4x4 block inside a transparent border.
+    /// The border makes the session's content bounds deterministic.
+    fn sixteen_bit_transform_state() -> AppState {
+        use aurelia_core::layer::LayerBuffer;
+        use aurelia_core::pixel::srgb8_to_srgb16;
 
+        let mut state = AppState::new(8, 8);
+        state.document = Document::new_with_format(8, 8, PixelFormat::Srgb16);
+        let id = state.document.active_layer_id;
+        let layer = state.document.get_layer_mut(id).expect("layer");
+        let mut channels = vec![0u16; 8 * 8 * 4];
+        for (index, pixel) in channels.chunks_exact_mut(4).enumerate() {
+            let x = index as u32 % 8;
+            let y = index as u32 / 8;
+            if (2..6).contains(&x) && (2..6).contains(&y) {
+                pixel[0] = srgb8_to_srgb16(40) + 128; // off-lattice
+                pixel[1] = srgb8_to_srgb16(90) + 64;
+                pixel[2] = srgb8_to_srgb16(200) + 255;
+                pixel[3] = 65535;
+            }
+        }
+        *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        state
+    }
+
+    /// The session now carries the layer's own storage width: begin, preview and commit must
+    /// never go through an 8-bit patch or reconstruct the layer.
+    #[test]
+    fn free_transform_is_native_on_a_sixteen_bit_document() {
+        use aurelia_core::transform::TransformPatch;
+
+        let mut wide = sixteen_bit_transform_state();
+        wide.begin_transform_session();
+        assert!(wide.transform_session.is_active, "{}", wide.status_message);
+        assert!(
+            matches!(wide.transform_session.extracted_patch, TransformPatch::Srgb16(_)),
+            "a 16-bit layer must produce a 16-bit patch"
+        );
+        assert_eq!(wide.transform_session.extracted_patch.pixels(), 16);
+        assert_eq!(wide.active_layer_format(), PixelFormat::Srgb16, "begin must not convert");
+        assert!(!wide.status_message.contains("8-bit only"), "{}", wide.status_message);
+
+        wide.transform_session.interpolation = InterpolationMode::Nearest;
+        wide.update_transform_preview();
+        assert_eq!(wide.active_layer_format(), PixelFormat::Srgb16, "preview must not convert");
+
+        wide.commit_transform_session();
+        assert_eq!(wide.active_layer_format(), PixelFormat::Srgb16, "commit must not convert");
+        assert!(!wide.transform_session.is_active);
+        assert!(
+            wide.document
+                .active_layer()
+                .and_then(|layer| layer.as_srgb16())
+                .is_some_and(|channels| channels.iter().any(|&c| c % 257 != 0)),
+            "off-lattice detail must survive the session"
+        );
+    }
+
+    /// Cancel restores the exact bytes without changing the format, the active layer, either
+    /// history stack, or the dirty flag - the five observational invariants.
+    #[test]
+    fn cancelling_a_sixteen_bit_transform_leaves_observationally_identical_state() {
+        use aurelia_core::history::LayerPixelsDeltaCommand;
+
+        let mut wide = sixteen_bit_transform_state();
+        let id = wide.document.active_layer_id;
+
+        // Two edits, then undo one, so both stack directions are non-empty and have
+        // something to lose if cancel pushes or clears anything.
+        let base = wide.document.active_layer().expect("layer").storage_bytes();
+        let mut first = base.clone();
+        first[0] ^= 0xFF;
+        let mut second = first.clone();
+        second[1] ^= 0xFF;
+        if let Some(layer) = wide.document.get_layer_mut(id) {
+            layer.write_storage_bytes(0, &first);
+        }
+        wide.history.push(Box::new(LayerPixelsDeltaCommand::new(id, "seed one", base, first.clone())));
+        if let Some(layer) = wide.document.get_layer_mut(id) {
+            layer.write_storage_bytes(0, &second);
+        }
+        wide.history.push(Box::new(LayerPixelsDeltaCommand::new(id, "seed two", first.clone(), second)));
+        wide.history.undo(&mut wide.document);
+
+        let bytes = wide.document.get_layer(id).expect("layer").storage_bytes();
+        let format = wide.document.pixel_format;
+        let active = wide.document.active_layer_id;
+        let history_len = wide.history.len();
+        let can_undo = wide.history.can_undo();
+        let can_redo = wide.history.can_redo();
+        let generation = wide.history.generation();
+        let dirty = wide.is_dirty();
+        assert!(can_undo && can_redo, "the fixture must populate both stacks");
+
+        wide.begin_transform_session();
+        assert!(wide.transform_session.is_active);
+        wide.transform_session.interpolation = InterpolationMode::Nearest;
+        wide.transform_session.transform.translation = Vec2::new(1.5, 0.5);
+        wide.update_transform_preview();
+        assert_ne!(
+            wide.document.get_layer(id).expect("layer").storage_bytes(),
+            bytes,
+            "the preview must actually alter the layer, or this test proves nothing"
+        );
+
+        wide.cancel_transform_session();
+
+        assert_eq!(
+            wide.document.get_layer(id).expect("layer").storage_bytes(),
+            bytes,
+            "cancel must restore the layer's storage bytes exactly"
+        );
+        assert_eq!(wide.document.pixel_format, format, "cancel must preserve the document format");
+        assert_eq!(wide.document.active_layer_id, active, "cancel must preserve the active layer");
+        assert_eq!(wide.history.len(), history_len, "cancel must not push or drop history");
+        assert_eq!(wide.history.can_undo(), can_undo, "the undo stack must be untouched");
+        assert_eq!(wide.history.can_redo(), can_redo, "the redo stack must be untouched");
+        assert_eq!(wide.history.generation(), generation, "the history generation must not move");
+        assert_eq!(wide.is_dirty(), dirty, "a cancelled transform must not imply unsaved work");
+        assert!(!wide.transform_session.is_active);
+    }
+
+    /// Restoring from the session snapshot, rather than compositing over the previous preview,
+    /// makes N previews identical to one. Fractional translation exercises the interpolator.
+    #[test]
+    fn repeated_sixteen_bit_previews_are_idempotent() {
+        let mut wide = sixteen_bit_transform_state();
+        wide.begin_transform_session();
+        assert!(wide.transform_session.is_active);
+
+        wide.transform_session.interpolation = InterpolationMode::Bilinear;
+        wide.transform_session.transform.translation = Vec2::new(1.5, 0.5);
+        wide.update_transform_preview();
+        let once = wide.document.active_layer().expect("layer").storage_bytes();
+
+        for _ in 0..4 {
+            wide.update_transform_preview();
+        }
+        let many = wide.document.active_layer().expect("layer").storage_bytes();
+
+        assert_eq!(once, many, "preview must be idempotent, not cumulative");
+    }
+
+    /// A 16-bit patch whose border is fully transparent must leave the opaque destination
+    /// beneath that border untouched. The border deliberately carries red under zero alpha:
+    /// a renderer that reads colour without checking coverage would blacken the edge.
+    #[test]
+    fn sixteen_bit_transparent_patch_edges_do_not_darken_the_destination() {
+        use aurelia_core::layer::LayerBuffer;
+        use aurelia_core::transform::{AffineTransform2D, RenderMode, TransformPatch};
+
+        let mut doc = Document::new_with_format(6, 6, PixelFormat::Srgb16);
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            let mut blue = vec![0u16; 6 * 6 * 4];
+            for pixel in blue.chunks_exact_mut(4) {
+                pixel[2] = 65535;
+                pixel[3] = 65535;
+            }
+            *layer.buffer_mut() = LayerBuffer::Srgb16(blue);
+        }
+
+        // Opaque red centre; the border is red with zero alpha, so only coverage decides.
+        let mut patch = vec![0u16; 4 * 4 * 4];
+        for (index, pixel) in patch.chunks_exact_mut(4).enumerate() {
+            let x = index % 4;
+            let y = index / 4;
+            pixel[0] = 65535;
+            if (1..3).contains(&x) && (1..3).contains(&y) {
+                pixel[3] = 65535;
+            }
+        }
+
+        let transform = AffineTransform2D::default();
+        if let Some(layer) = doc.get_layer_mut(id) {
+            TransformPatch::Srgb16(patch).render_into(
+                layer,
+                4,
+                4,
+                Vec2::new(1.0, 1.0),
+                InterpolationMode::Nearest,
+                RenderMode::Affine(&transform),
+            );
+        }
+
+        let layer = doc.get_layer(id).expect("layer");
+        for (index, pixel) in layer.as_srgb16().expect("16-bit").chunks_exact(4).enumerate() {
+            let x = index % 6;
+            let y = index / 6;
+            if (1..5).contains(&x) && (1..5).contains(&y) {
+                // The patch covers this pixel exactly; its opaque centre is red.
+                let centre = (2..4).contains(&x) && (2..4).contains(&y);
+                if centre {
+                    assert_eq!(pixel[0], 65535, "opaque centre must stay red");
+                    assert_eq!(pixel[2], 0, "opaque centre must not keep blue");
+                } else {
+                    assert_eq!(
+                        (pixel[0], pixel[2]),
+                        (0, 65535),
+                        "the zero-alpha border must not paint pixel ({x}, {y})"
+                    );
+                }
+            } else {
+                assert_eq!((pixel[0], pixel[2]), (0, 65535), "outside the patch stays blue");
+            }
+        }
+    }
+
+    /// Every deformation mode and interpolation mode previews through the native patch
+    /// without converting the document.
+    #[test]
+    fn every_transform_preview_mode_stays_native_at_sixteen_bits() {
+        let mut wide = sixteen_bit_transform_state();
+        wide.begin_transform_session();
+        assert!(wide.transform_session.is_active);
+
+        for mode in [
+            TransformMode::Affine,
+            TransformMode::PerspectiveQuad,
+            TransformMode::MeshGrid,
+            TransformMode::ThinPlateSpline,
+        ] {
+            wide.set_transform_mode(mode);
+            for interpolation in [
+                InterpolationMode::Nearest,
+                InterpolationMode::Bilinear,
+                InterpolationMode::Bicubic,
+            ] {
+                wide.transform_session.interpolation = interpolation;
+                wide.update_transform_preview();
+                assert_eq!(
+                    wide.active_layer_format(),
+                    PixelFormat::Srgb16,
+                    "{mode:?} with {interpolation:?} must not convert the document"
+                );
+            }
+        }
+    }
+
+    /// Selection fill/stroke remain native and must not be refused on a 16-bit document.
+    #[test]
+    fn selection_fill_works_on_a_sixteen_bit_document() {
         let mut wide = sixteen_bit_state();
         wide.selection = Some(aurelia_core::selection::SelectionMask::from_mask_vec(4, 4, vec![255u8; 16]));
         wide.fill_selection_active_layer();
@@ -2190,9 +2363,5 @@ mod document_format_ui {
         );
         let layer = wide.document.active_layer().expect("layer");
         assert_eq!(layer.format(), PixelFormat::Srgb16, "format preserved by fill");
-
-        let mut eight = AppState::new(4, 4);
-        eight.begin_transform_session();
-        assert!(!eight.status_message.contains("8-bit only"));
     }
 }
