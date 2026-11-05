@@ -153,15 +153,6 @@ fn store_rounded<C: Channel>(pixels: &mut [C], idx: usize, pixel: [f32; 4]) {
     pixels[idx + 3] = C::from_scaled_f32(pixel[3]);
 }
 
-/// Writes a pixel with the truncation rule (sepia, posterize, grain, vignette).
-#[inline]
-fn store_truncated<C: Channel>(pixels: &mut [C], idx: usize, pixel: [f32; 4]) {
-    pixels[idx] = C::from_scaled_f32_trunc(pixel[0]);
-    pixels[idx + 1] = C::from_scaled_f32_trunc(pixel[1]);
-    pixels[idx + 2] = C::from_scaled_f32_trunc(pixel[2]);
-    pixels[idx + 3] = C::from_scaled_f32_trunc(pixel[3]);
-}
-
 // ── Adjustment passes ──────────────────────────────────────────────────────────────────────
 
 /// Adjusts Hue, Saturation, and Lightness of pixels in-place
@@ -236,8 +227,8 @@ pub fn adjust_brightness_contrast<C: Channel>(
             continue;
         }
 
-        for channel in 0..3 {
-            px[channel] = (c_factor * (px[channel] + brightness_bias - midpoint) + midpoint)
+        for value in px.iter_mut().take(3) {
+            *value = (c_factor * (*value + brightness_bias - midpoint) + midpoint)
                 .clamp(0.0, max_scaled::<C>());
         }
         store_rounded(pixels, idx, px);
