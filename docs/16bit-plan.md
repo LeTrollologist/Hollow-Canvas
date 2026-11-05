@@ -678,3 +678,17 @@ itself:
    working-precision pixel instead of four `u8`s.
 4. The 8-bit path must stay byte-identical; the transform tests and a pinned digest are the
    gate, as they were for filters and text.
+
+## Status: three tiers of "16-bit", kept distinct
+
+These are different claims and should not be collapsed in the documentation, the release notes,
+or the issue tracker.
+
+| Claim | State |
+| :--- | :--- |
+| **16-bit editing** | **Substantially implemented.** Create/open/save, paint, erase, fill, gradient, shapes, text, flip/rotate/crop/scale, compositing, adjustments, merge-visible, merge-down, filters, selection fill/stroke, navigator. |
+| **16-bit feature completeness** | **Pending free transform.** It is the single operation that still refuses a 16-bit document, for a concrete reason: the session and the renderers sample an 8-bit source patch. |
+| **32-bit floating-point editing** | **Future architecture.** A different proposal: it changes how values *combine* (linear light, working precision), not just how many levels are stored. The `v * 257` lattice argument and the byte-identical 8-bit oracle do not carry over, so it needs its own re-baselining, its own performance gate, and its own kill criterion - exactly as the 16-bit plan did. |
+
+Free transform's gate is now in place: `eight_bit_transform_output_is_unchanged` pins the
+affine, bicubic, quad, mesh and TPS renderers before their source sampling becomes generic.

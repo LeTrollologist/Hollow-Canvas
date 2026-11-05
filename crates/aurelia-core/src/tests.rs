@@ -3952,3 +3952,86 @@ mod selection_coverage {
         );
     }
 }
+
+/// Byte-identity gate for the free-transform refactor: the renderers must produce exactly these
+/// outputs before their source sampling becomes channel-generic.
+#[cfg(test)]
+mod transform_baseline {
+    use crate::transform::{
+        render_mesh_warped_patch, render_quad_transformed_patch,
+        render_transformed_patch, AffineTransform2D, InterpolationMode, MeshWarpGrid,
+        PerspectiveQuadTransform, ThinPlateSpline2D,
+    };
+    use glam::Vec2;
+
+    const SIDE: i32 = 16;
+
+    fn patch() -> Vec<u8> {
+        let mut bytes = vec![0u8; (8 * 8 * 4) as usize];
+        for (index, px) in bytes.chunks_exact_mut(4).enumerate() {
+            px[0] = ((index * 13) % 256) as u8;
+            px[1] = ((index * 29 + 7) % 256) as u8;
+            px[2] = ((index * 47 + 11) % 256) as u8;
+            px[3] = if index % 7 == 0 { 0 } else { 255 - (index % 96) as u8 };
+        }
+        bytes
+    }
+
+    fn digest(bytes: &[u8]) -> u64 {
+        let mut hash = 0xcbf29ce484222325u64;
+        for &byte in bytes {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
+    }
+
+    #[test]
+    fn eight_bit_transform_output_is_unchanged() {
+        let source = patch();
+        let origin = Vec2::new(2.0, 3.0);
+
+        let mut affine = AffineTransform2D::new(Vec2::new(6.0, 7.0));
+        affine.pivot = Vec2::new(6.0, 7.0);
+        let mut affine_out = vec![0u8; (SIDE * SIDE * 4) as usize];
+        render_transformed_patch(
+            &source, 8, 8, origin, &affine, InterpolationMode::Bilinear, &mut affine_out, SIDE as u32, SIDE as u32,
+        );
+        assert_eq!(digest(&affine_out), 2403627809797626894u64, "transform_affine");
+
+        let mut bicubic_out = vec![0u8; (SIDE * SIDE * 4) as usize];
+        render_transformed_patch(
+            &source, 8, 8, origin, &affine, InterpolationMode::Bicubic, &mut bicubic_out, SIDE as u32, SIDE as u32,
+        );
+        assert_eq!(digest(&bicubic_out), 15576127485438065549u64, "transform_affine_bicubic");
+
+        let quad_src = [
+            origin,
+            origin + Vec2::new(8.0, 0.0),
+            origin + Vec2::new(8.0, 8.0),
+            origin + Vec2::new(0.0, 8.0),
+        ];
+        let quad = PerspectiveQuadTransform::new(quad_src, quad_src);
+        let mut quad_out = vec![0u8; (SIDE * SIDE * 4) as usize];
+        render_quad_transformed_patch(&source, 8, 8, &quad, InterpolationMode::Bilinear, &mut quad_out, SIDE as u32, SIDE as u32);
+        assert_eq!(digest(&quad_out), 2403627809797626894u64, "transform_quad");
+
+        let mesh = MeshWarpGrid::new(3, 3, origin, 8.0, 8.0);
+        let mut mesh_out = vec![0u8; (SIDE * SIDE * 4) as usize];
+        render_mesh_warped_patch(&source, 8, 8, &mesh, InterpolationMode::Bilinear, &mut mesh_out, SIDE as u32, SIDE as u32);
+        assert_eq!(digest(&mesh_out), 2403627809797626894u64, "transform_mesh");
+
+        let pins = vec![
+            origin,
+            origin + Vec2::new(8.0, 0.0),
+            origin + Vec2::new(8.0, 8.0),
+            origin + Vec2::new(0.0, 8.0),
+            Vec2::new(6.0, 7.0),
+        ];
+        let tps = ThinPlateSpline2D::solve(&pins, &pins);
+        let mut tps_out = vec![0u8; (SIDE * SIDE * 4) as usize];
+        crate::transform::render_tps_warped_patch(&source, 8, 8, origin, &tps, InterpolationMode::Bilinear, &mut tps_out, SIDE as u32, SIDE as u32);
+        assert_eq!(digest(&tps_out), 2403627809797626894u64, "transform_tps");
+
+    }
+}
