@@ -118,6 +118,10 @@ def test_release_stage_creates_uploads_and_publishes(tmp_path, monkeypatch):
     # The independent verification downloads the bytes again.
     stages._release_verify_check(ctx, {})
 
+    # Re-verifying the draft operation after publication must accept the
+    # published state: the initial draft check happened before release.publish.
+    stages._release_draft_verify(ctx, ctx.journal.state()["release.draft"].outputs)
+
     # A second run must not re-upload or duplicate assets.
     before = len(fake.assets)
     Engine(ctx, build_operations(ctx)).run()

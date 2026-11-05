@@ -493,7 +493,14 @@ def _release_draft_verify(ctx: Context, outputs: dict[str, Any]) -> dict[str, An
             f"release points at {release.get('tag_name')!r}, expected {ctx.tag!r}"
         )
     meta = outputs.get("meta", {})
-    if meta.get("created") and ctx.cfg.publish.draft and not release.get("draft"):
+    published = ctx.journal.state().get("release.publish")
+    verified_publish = bool(published and published.status == "ok" and published.verified)
+    if (
+        meta.get("created")
+        and ctx.cfg.publish.draft
+        and not release.get("draft")
+        and not verified_publish
+    ):
         raise VerificationError("a new release must start as a draft")
     return {"release_id": release["id"], "draft": bool(release.get("draft"))}
 
