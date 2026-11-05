@@ -1783,7 +1783,9 @@ mod tests {
                     std::hint::black_box(doc.composite_layers(false));
                 });
                 let t16 = time_one(|| {
-                    std::hint::black_box(crate::document::compose_u16_prepared(doc, promoted, false));
+                    let mut out = vec![0u16; (doc.width as usize) * (doc.height as usize) * 4];
+                    crate::document::compose_u16_prepared(doc, promoted, &mut out, false);
+                    std::hint::black_box(out);
                 });
                 abs8[ci].push(t8);
                 abs16[ci].push(t16);
@@ -1910,7 +1912,8 @@ mod tests {
             *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
         }
         let native = crate::document::promote_layers(&doc);
-        let composed = crate::document::compose_u16_prepared(&doc, &native, false);
+        let mut composed = vec![0u16; 16];
+        crate::document::compose_u16_prepared(&doc, &native, &mut composed, false);
         assert_ne!(composed[0], composed[4], "16-bit compositing collapsed two values");
         assert_eq!(composed[0], low);
         assert_eq!(composed[4], high);
@@ -2996,5 +2999,180 @@ mod tests {
             assert_eq!(sample(values, 1, 2, 6), sample(&original, 0, 0, 4));
             assert_eq!(sample(values, 0, 0, 6), vec![0u16; 4], "new space must be zero-filled");
         }
+    }
+
+    // ── Native 16-bit composite output (#15) ────────────────────────────────────────────────
+
+    /// The public 16-bit API must return real channels, not a widened 8-bit result.
+    #[test]
+    fn native_sixteen_bit_output_keeps_sub_lattice_values() {
+        use crate::layer::LayerBuffer;
+        use crate::pixel::Channel;
+
+        let mut doc = Document::new(1, 1);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        let low = crate::pixel::srgb8_to_srgb16(100);
+        let high = low + 128; // not on the 8-bit lattice
+        assert_ne!(high % 257, 0, "the fixture must be off-lattice");
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(vec![high, high, high, 65535]);
+        }
+
+        let native = doc.composite_layers_srgb16(false);
+        assert_eq!(native.len(), 4);
+        assert_eq!(native[0], high, "native output must carry the exact channel");
+        assert_eq!(native[3], 65535);
+
+        // The 8-bit API is unchanged and does collapse it - that is the difference the
+        // native entry point exists for.
+        let eight_bit = doc.composite_layers(false);
+        assert_eq!(eight_bit[0], 100, "an 8-bit result cannot carry it");
+        assert_eq!(crate::pixel::srgb16_to_srgb8(native[0]), eight_bit[0]);
+        let _ = u16::from_f32(0.5);
+    }
+
+    /// Mixed documents: native output, downconverted, must equal the 8-bit result byte for
+    /// byte - the 8-bit path is the same compositor followed by a downconversion.
+    #[test]
+    fn mixed_format_output_downconverts_to_the_eight_bit_result() {
+        use crate::layer::LayerBuffer;
+
+        let mut doc = Document::new(4, 4);
+        doc.is_transparent = false;
+        doc.background_value = 40;
+        let first = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(first) {
+            for (index, byte) in layer.as_srgb8_exact_mut().iter_mut().enumerate() {
+                *byte = (index * 13 % 251) as u8;
+            }
+        }
+        let second = doc.add_layer(None);
+        if let Some(layer) = doc.get_layer_mut(second) {
+            let channels: Vec<u16> = (0..(4 * 4 * 4))
+                .map(|index| crate::pixel::srgb8_to_srgb16((index * 7 % 251) as u8))
+                .collect();
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        let native = doc.composite_layers_srgb16(true);
+        let downconverted: Vec<u8> = native
+            .iter()
+            .map(|&channel| crate::pixel::srgb16_to_srgb8(channel))
+            .collect();
+        assert_eq!(
+            downconverted,
+            doc.composite_layers(true),
+            "native output must downconvert to the 8-bit result for a mixed document"
+        );
+
+        // Two runs agree exactly, including whenever the parallel path is taken.
+        assert_eq!(
+            doc.composite_layers_srgb16(true),
+            native,
+            "native output must be deterministic"
+        );
+    }
+
+    /// The 16-bit compositor used to skip adjustment layers entirely, so a 16-bit document
+    /// rendered *differently* rather than merely at lower precision. Invert is the cheapest
+    /// case to assert an exact value for.
+    #[test]
+    fn adjustment_layers_apply_in_sixteen_bit_documents() {
+        use crate::layer::{AdjustmentType, LayerBuffer};
+        use crate::pixel::Channel;
+
+        let mut doc = Document::new(2, 1);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        let base = 30_000u16;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            let mut channels = vec![base; 8];
+            for pixel in channels.chunks_exact_mut(4) {
+                pixel[3] = 65535;
+            }
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        let before = doc.composite_layers_srgb16(false);
+        assert_eq!(before[0], base, "the base layer composites unchanged");
+
+        doc.add_adjustment_layer(AdjustmentType::Invert, None);
+        let after = doc.composite_layers_srgb16(false);
+
+        assert_ne!(after[0], before[0], "the adjustment must reach the composite");
+        assert_eq!(
+            after[0],
+            u16::from_f32(1.0 - base.to_f32()),
+            "invert must be exact in working precision"
+        );
+        assert_eq!(after[3], 65535, "the adjustment must not disturb alpha");
+    }
+
+    #[test]
+    fn composite_into_srgb16_rejects_short_buffers() {
+        use crate::document::CompositeError;
+
+        let doc = Document::new(4, 4);
+        let mut short = vec![0u16; 63];
+
+        match doc.composite_layers_into_srgb16(&mut short, false) {
+            Err(CompositeError::BufferTooSmall { expected, actual }) => {
+                assert_eq!((expected, actual), (64, 63));
+            }
+            other => panic!("expected BufferTooSmall, got {other:?}"),
+        }
+        assert!(short.iter().all(|&channel| channel == 0), "a rejected write must not touch the buffer");
+
+        let mut exact = vec![0u16; 64];
+        assert!(doc.composite_layers_into_srgb16(&mut exact, false).is_ok());
+    }
+
+    /// `apply_to_rgb_working` is the same formulas as the shipped 8-bit adjustment, expressed
+    /// on normalised channels. The two can differ by one 8-bit step where a result sits on a
+    /// rounding boundary; anything larger means the formulas have diverged.
+    #[test]
+    fn adjustment_working_matches_eight_bit() {
+        use crate::layer::AdjustmentType;
+        use crate::pixel::Channel;
+
+        let cases = [
+            AdjustmentType::BrightnessContrast { brightness: 20.0, contrast: 30.0 },
+            AdjustmentType::BrightnessContrast { brightness: -40.0, contrast: -25.0 },
+            AdjustmentType::Hsl { hue_shift: 40.0, saturation: 1.4, lightness: -0.1 },
+            AdjustmentType::Hsl { hue_shift: -120.0, saturation: 0.6, lightness: 0.2 },
+            AdjustmentType::ColorBalance { cyan_red: 30.0, magenta_green: -20.0, yellow_blue: 10.0 },
+            AdjustmentType::Invert,
+            AdjustmentType::Posterize { levels: 5 },
+            AdjustmentType::Threshold { cutoff: 128 },
+            AdjustmentType::Sepia { strength: 0.75 },
+        ];
+        let values = [0u8, 1, 17, 63, 64, 127, 128, 129, 191, 254, 255];
+
+        let mut worst = 0i32;
+        for adjustment in &cases {
+            for &r in &values {
+                for &g in &values {
+                    for &b in &values {
+                        let (er, eg, eb) = adjustment.apply_to_rgb(r, g, b);
+                        let working = adjustment
+                            .apply_to_rgb_working([r.to_f32(), g.to_f32(), b.to_f32()]);
+                        let quantised = [
+                            u8::from_f32(working[0]),
+                            u8::from_f32(working[1]),
+                            u8::from_f32(working[2]),
+                        ];
+                        for (expected, actual) in [(er, quantised[0]), (eg, quantised[1]), (eb, quantised[2])] {
+                            worst = worst.max((expected as i32 - actual as i32).abs());
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            worst <= 1,
+            "working-precision adjustments drifted {worst} steps from the 8-bit result"
+        );
     }
 }

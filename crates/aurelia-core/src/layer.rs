@@ -157,6 +157,73 @@ impl AdjustmentType {
             }
         }
     }
+
+    /// Computes the adjusted (R, G, B) value for a single pixel in working precision.
+    ///
+    /// This is the 16-bit counterpart of [`AdjustmentType::apply_to_rgb`]. That function is
+    /// deliberately **not** rewritten in terms of this one: it is the definition of the eight-bit
+    /// output that has already shipped, and moving its arithmetic would move bytes. Instead the
+    /// same formulas are expressed on normalised channels, so a 16-bit document can run an
+    /// adjustment without first quantising the pixel to 8 bits.
+    ///
+    /// They are the same function of the same real numbers, but not bit-identical at the 8-bit
+    /// boundary: the 8-bit version rounds after scaling to `0..=255`, so a result sitting on a
+    /// rounding boundary can land one 8-bit step away. `adjustment_working_matches_eight_bit`
+    /// pins the difference to at most one step across a swept grid.
+    #[inline]
+    pub fn apply_to_rgb_working(&self, rgb: [f32; 3]) -> [f32; 3] {
+        let [r, g, b] = rgb;
+        match self {
+            Self::BrightnessContrast { brightness, contrast } => {
+                let c_factor = (259.0 * (*contrast + 255.0)) / (255.0 * (259.0 - *contrast));
+                // 2.55 / 255, the 8-bit offset expressed per unit channel.
+                let offset = *brightness * (2.55 / 255.0);
+                let apply = |c: f32| (c_factor * (c + offset - 0.5) + 0.5).clamp(0.0, 1.0);
+                [apply(r), apply(g), apply(b)]
+            }
+            Self::Hsl { hue_shift, saturation, lightness } => {
+                let (h, s, l) = crate::filter::rgb_to_hsl_f32([r, g, b]);
+                let new_h = (h + *hue_shift + 360.0) % 360.0;
+                let new_s = (s * *saturation).clamp(0.0, 1.0);
+                let new_l = (l + *lightness).clamp(0.0, 1.0);
+                crate::filter::hsl_to_rgb_f32(new_h, new_s, new_l)
+            }
+            Self::ColorBalance { cyan_red, magenta_green, yellow_blue } => {
+                // 1.28 / 255, the 8-bit offset expressed per unit channel.
+                let scale = 1.28 / 255.0;
+                [
+                    (r + *cyan_red * scale).clamp(0.0, 1.0),
+                    (g + *magenta_green * scale).clamp(0.0, 1.0),
+                    (b + *yellow_blue * scale).clamp(0.0, 1.0),
+                ]
+            }
+            Self::Invert => [1.0 - r, 1.0 - g, 1.0 - b],
+            Self::Posterize { levels } => {
+                let levels = (*levels).clamp(2, 32) as f32;
+                let step = 1.0 / (levels - 1.0);
+                let apply = |c: f32| ((c / step).round() * step).clamp(0.0, 1.0);
+                [apply(r), apply(g), apply(b)]
+            }
+            Self::Threshold { cutoff } => {
+                // The cutoff is an 8-bit quantity, so the luminance it is compared against is
+                // rounded to the same scale before the comparison.
+                let gray = (0.299 * r * 255.0 + 0.587 * g * 255.0 + 0.114 * b * 255.0).round();
+                let value = if gray >= *cutoff as f32 { 1.0 } else { 0.0 };
+                [value, value, value]
+            }
+            Self::Sepia { strength } => {
+                let sr = (r * 0.393 + g * 0.769 + b * 0.189).min(1.0);
+                let sg = (r * 0.349 + g * 0.686 + b * 0.168).min(1.0);
+                let sb = (r * 0.272 + g * 0.534 + b * 0.131).min(1.0);
+                let st = strength.clamp(0.0, 1.0);
+                [
+                    (r * (1.0 - st) + sr * st).clamp(0.0, 1.0),
+                    (g * (1.0 - st) + sg * st).clamp(0.0, 1.0),
+                    (b * (1.0 - st) + sb * st).clamp(0.0, 1.0),
+                ]
+            }
+        }
+    }
 }
 
 /// Container for adjustment layer parameters

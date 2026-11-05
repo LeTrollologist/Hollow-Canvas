@@ -1,7 +1,8 @@
 //! Composite throughput benchmark — dependency-free so it can run anywhere.
 //!
 //! Run with:
-//!   cargo run --release -p aurelia-render --example bench_composite
+//!   cargo run --release -p aurelia-render --example bench_composite             # RGBA8 out
+//!   cargo run --release -p aurelia-render --example bench_composite -- srgb16   # RGBA16 out
 //!
 //! It reports megapixels composited per second for the shapes of work the compositor
 //! actually does: a plain stack, a masked stack, the general (offset + blend) path at
@@ -9,13 +10,19 @@
 //! printed alongside the numbers, because a throughput figure without the CPU, core count
 //! and compiler version cannot be compared with anything.
 //!
+//! Both output widths go through the same cases and the same harness. `srgb16` builds each
+//! case as a genuine 16-bit document - every layer promoted once, at build time - so it
+//! measures the compositor rather than `promote_layers`, which a mixed document pays on every
+//! composite. It is a relative figure, because the T-tiers were defined for RGBA8.
+//!
 //! Every case is measured `REPEATS` times and the best run is reported: on a laptop a
 //! single measurement moves by 10% or more with thermal and turbo state, which is larger
 //! than the differences this benchmark exists to detect.
 
 use aurelia_core::blend::BlendMode;
 use aurelia_core::document::Document;
-use aurelia_core::layer::LayerMask;
+use aurelia_core::layer::{LayerBuffer, LayerMask};
+use aurelia_core::pixel::srgb8_to_srgb16;
 use std::time::Instant;
 
 const W: u32 = 1920;
@@ -114,6 +121,57 @@ fn tier(rate: f64) -> &'static str {
     }
 }
 
+/// Which width the compositor writes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Output {
+    /// `composite_layers` - allocates a fresh RGBA8 buffer per call.
+    Srgb8,
+    /// `composite_layers_into_srgb16` - native RGBA16 into a reused buffer.
+    Srgb16,
+}
+
+impl Output {
+    fn label(self) -> &'static str {
+        match self {
+            Output::Srgb8 => "RGBA8",
+            Output::Srgb16 => "RGBA16 (native)",
+        }
+    }
+}
+
+/// Converts every layer to `Srgb16` storage, once, so a 16-bit measurement does not include
+/// the promotion a mixed document would pay per composite.
+fn widen(doc: &mut Document) {
+    for layer in &mut doc.layers {
+        let channels: Vec<u16> = match layer.buffer() {
+            LayerBuffer::Srgb8(bytes) => bytes
+                .iter()
+                .map(|&value| srgb8_to_srgb16(value))
+                .collect(),
+            LayerBuffer::Srgb16(channels) => channels.clone(),
+        };
+        *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+    }
+}
+
+/// Composites once into `scratch`, which the 16-bit path reuses across iterations.
+fn composite_once(doc: &Document, output: Output, scratch: &mut Vec<u16>) {
+    match output {
+        Output::Srgb8 => {
+            std::hint::black_box(doc.composite_layers(true));
+        }
+        Output::Srgb16 => {
+            let needed = (W as usize) * (H as usize) * 4;
+            if scratch.len() != needed {
+                scratch.resize(needed, 0);
+            }
+            doc.composite_layers_into_srgb16(scratch, true)
+                .expect("scratch is sized for the document");
+            std::hint::black_box(&scratch);
+        }
+    }
+}
+
 /// Times every case once per round, then reports the median round for each case.
 ///
 /// Cases are interleaved rather than measured one after another: a laptop that throttles
@@ -121,17 +179,21 @@ fn tier(rate: f64) -> &'static str {
 /// The median is reported rather than the minimum so the number is reproducible on a
 /// machine that is doing other things; the best round is shown alongside it so the spread
 /// is visible instead of hidden.
-fn run(cases: &[Case]) -> Vec<(f64, f64)> {
+fn run(cases: &[Case], output: Output) -> Vec<(f64, f64)> {
     let megapixels = (W as f64 * H as f64 * ITERS as f64) / 1_000_000.0;
     let mut samples: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+    let mut scratch: Vec<u16> = Vec::new();
     for _ in 0..REPEATS {
         for (idx, case) in cases.iter().enumerate() {
-            let doc = (case.make)();
+            let mut doc = (case.make)();
+            if output == Output::Srgb16 {
+                widen(&mut doc);
+            }
             // Warm up, so first-touch page faults do not land in the measurement.
-            let _ = doc.composite_layers(true);
+            composite_once(&doc, output, &mut scratch);
             let start = Instant::now();
             for _ in 0..ITERS {
-                std::hint::black_box(doc.composite_layers(true));
+                composite_once(&doc, output, &mut scratch);
             }
             samples[idx].push(start.elapsed().as_secs_f64());
         }
@@ -170,9 +232,19 @@ fn print_machine() {
 }
 
 fn main() {
+    let output = if std::env::args().any(|argument| argument == "srgb16") {
+        Output::Srgb16
+    } else {
+        Output::Srgb8
+    };
+
     print_machine();
     println!(
-        "\nAurelia composite benchmark - {W}x{H}, {LAYERS} layers,          {ITERS} iterations x {REPEATS} interleaved rounds (median of)"
+        "\nAurelia composite benchmark - {W}x{H}, {LAYERS} layers, {} output,",
+        output.label()
+    );
+    println!(
+        "  {ITERS} iterations x {REPEATS} interleaved rounds (median of)"
     );
 
     let mut cases = vec![
@@ -196,7 +268,7 @@ fn main() {
         });
     }
 
-    let rates = run(&cases);
+    let rates = run(&cases, output);
     let mode_count = BlendMode::ALL.len();
     let split = cases.len() - mode_count;
 
@@ -219,7 +291,14 @@ fn main() {
 
     println!("\nRelease tiers - general (offset+blend) path, opaque:");
     println!("  T1 30   T2 40   T3 50   T4 60 MPix/s");
-    println!("  opaque {opaque:.1} MPix/s -> {}", tier(opaque));
+    if output == Output::Srgb8 {
+        println!("  opaque {opaque:.1} MPix/s -> {}", tier(opaque));
+    } else {
+        println!(
+            "  opaque {opaque:.1} MPix/s (tiers are defined for RGBA8; this run is {})",
+            output.label()
+        );
+    }
     println!("  slowest mode: {} at {:.1} MPix/s", slowest.0, slowest.1);
     println!(
         "  plain {:.1} MPix/s (floor 40), masked {:.1} MPix/s (floor 30)",

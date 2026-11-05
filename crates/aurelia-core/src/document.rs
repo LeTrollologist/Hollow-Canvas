@@ -5,6 +5,15 @@ use crate::pixel::Channel;
 use crate::selection::SelectionMask;
 use serde::{Deserialize, Serialize};
 
+/// Why a composite could not be written into a caller-provided buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CompositeError {
+    #[error("composite output needs {expected} channels, but the buffer holds {actual}")]
+    BufferTooSmall { expected: usize, actual: usize },
+    #[error("the document's composite size cannot be represented on this platform")]
+    Unrepresentable,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     pub width: u32,
@@ -494,6 +503,54 @@ impl Document {
         out
     }
 
+    /// Composite visible layers into a flat RGBA16 pixel buffer, without downconversion.
+    ///
+    /// The result is native storage for a 16-bit document and `v * 257` for 8-bit layers, so a
+    /// mixed document composites correctly and nothing below the 8-bit lattice is thrown away.
+    /// The channel order and row layout are the same as [`Document::composite_layers`]; the
+    /// buffer is owned by the caller.
+    ///
+    /// An unrepresentable size (width * height * 4 overflowing `usize`) yields an empty buffer
+    /// rather than panicking; the project loader rejects such documents long before this.
+    pub fn composite_layers_srgb16(&self, include_background: bool) -> Vec<u16> {
+        let Some(len) = self.srgb16_len() else {
+            return Vec::new();
+        };
+        let mut out = vec![0u16; len];
+        // The length comes from the same expression, so this cannot be short.
+        let _ = self.composite_layers_into_srgb16(&mut out, include_background);
+        out
+    }
+
+    /// Composite visible layers into an existing RGBA16 buffer.
+    ///
+    /// Reuses the caller's allocation: unlike the 8-bit entry point there is no scratch buffer,
+    /// because the working-precision compositor writes straight into `out`.
+    pub fn composite_layers_into_srgb16(
+        &self,
+        out: &mut [u16],
+        include_background: bool,
+    ) -> Result<(), CompositeError> {
+        let expected = self.srgb16_len().ok_or(CompositeError::Unrepresentable)?;
+        if out.len() < expected {
+            return Err(CompositeError::BufferTooSmall {
+                expected,
+                actual: out.len(),
+            });
+        }
+
+        let native = promote_layers(self);
+        compose_u16_prepared(self, &native, &mut out[..expected], include_background);
+        Ok(())
+    }
+
+    /// Channels needed for a native RGBA16 composite, or `None` if the size is unrepresentable.
+    fn srgb16_len(&self) -> Option<usize> {
+        (self.width as usize)
+            .checked_mul(self.height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+    }
+
     /// Composite visible layers directly into an existing buffer without allocations
     pub fn composite_layers_into(&self, out: &mut [u8], include_background: bool) {
         let total_bytes = (self.width * self.height * 4) as usize;
@@ -516,15 +573,16 @@ impl Document {
         // through the generic working-precision path: real `u16` channels for 16-bit
         // layers, exact `v * 257` promotion for 8-bit ones, one dispatch per layer and no
         // conversion inside any pixel loop. Only the *result* is downconverted, because this
-        // function's contract returns an 8-bit buffer - a 16-bit output API arrives with
-        // AUR v3.
+        // function's contract returns an 8-bit buffer; callers that can consume native output
+        // use [`Document::composite_layers_srgb16`] instead.
         if self
             .layers
             .iter()
             .any(|layer| layer.format() != PixelFormat::Srgb8)
         {
             let native = promote_layers(self);
-            let composed = compose_u16_prepared(self, &native, include_background);
+            let mut composed = vec![0u16; self.srgb16_len().unwrap_or_default()];
+            compose_u16_prepared(self, &native, &mut composed, include_background);
             for (index, value) in composed.iter().enumerate() {
                 out[index] = crate::pixel::srgb16_to_srgb8(*value);
             }
@@ -1139,43 +1197,66 @@ pub(crate) fn promote_layers(doc: &Document) -> PromotedLayers<'_> {
 
 #[allow(dead_code)]
 pub(crate) fn compose_u16(doc: &Document, include_background: bool) -> Vec<u16> {
+    let mut out = vec![0u16; doc.srgb16_len().unwrap_or_default()];
     let promoted = promote_layers(doc);
-    compose_u16_prepared(doc, &promoted, include_background)
+    compose_u16_prepared(doc, &promoted, &mut out, include_background);
+    out
 }
 
-#[allow(dead_code)]
+/// Composites a document into a caller-provided `Srgb16` buffer.
+///
+/// This is the single working-precision compositor: both the 8-bit downconverting entry point
+/// and [`Document::composite_layers_into_srgb16`] route through it, so there is no second
+/// implementation of the blend maths and no intermediate buffer when the caller wants native
+/// output.
 pub(crate) fn compose_u16_prepared(
     doc: &Document,
     promoted: &PromotedLayers<'_>,
+    out: &mut [u16],
     include_background: bool,
-) -> Vec<u16> {
+) {
     let (w, h) = (doc.width, doc.height);
-    let mut out = vec![0u16; (w as usize) * (h as usize) * 4];
+    let total = (w as usize) * (h as usize) * 4;
+    if out.len() < total {
+        return;
+    }
 
     if include_background && !doc.is_transparent {
         let bg = doc.background_color().to_rgba8();
-        let promoted = [
+        let promoted_bg = [
             crate::pixel::srgb8_to_srgb16(bg[0]),
             crate::pixel::srgb8_to_srgb16(bg[1]),
             crate::pixel::srgb8_to_srgb16(bg[2]),
             crate::pixel::srgb8_to_srgb16(bg[3]),
         ];
-        for chunk in out.chunks_exact_mut(4) {
-            chunk.copy_from_slice(&promoted);
+        for chunk in out[..total].chunks_exact_mut(4) {
+            chunk.copy_from_slice(&promoted_bg);
         }
+    } else {
+        out[..total].fill(0);
     }
 
     for (index, layer) in doc.layers.iter().enumerate() {
-        if layer.is_group()
-            || layer.is_adjustment()
-            || !doc.is_layer_effective_visible(layer.id)
-        {
+        if layer.is_group() || !doc.is_layer_effective_visible(layer.id) {
             continue;
         }
         let opacity = doc.effective_opacity(layer.id);
         if opacity <= 0.001 {
             continue;
         }
+
+        // ── Non-Destructive Adjustment Layer Pass ──
+        //
+        // The 8-bit path has always applied these; the 16-bit path used to skip them, which
+        // changed what a document *looked like* rather than just its precision. They are
+        // applied here with the same structure and the working-precision maths.
+        if layer.is_adjustment() {
+            if let Some(config) = &layer.adjustment {
+                apply_adjustment_u16(out, doc, layer, index, promoted, &config.adjustment_type);
+            }
+            continue;
+        }
+
         let base = if layer.clipping_mask && index > 0 {
             let b = &doc.layers[index - 1];
             if !doc.is_layer_effective_visible(b.id) {
@@ -1202,7 +1283,7 @@ pub(crate) fn compose_u16_prepared(
         macro_rules! run {
             ($compose:path) => {
                 compose_layer(
-                    &mut out, layer, w, h, opacity, mask, base, &promoted.0[index], $compose,
+                    &mut out[..total], layer, w, h, opacity, mask, base, &promoted.0[index], $compose,
                 )
             };
         }
@@ -1222,5 +1303,93 @@ pub(crate) fn compose_u16_prepared(
             BlendMode::Luminosity => run!(crate::blend::compose_luminosity),
         }
     }
-    out
+}
+
+/// Applies one adjustment layer to an RGBA16 composite in place.
+///
+/// Mirrors the 8-bit adjustment pass (`composite_layers_into`) stage for stage - skip
+/// transparent destinations, scale opacity by the layer mask, then by the clipping base's
+/// alpha and effective opacity, then blend the adjusted colour back with the layer's own blend
+/// mode. The only difference is that the adjustment itself is computed in working precision,
+/// so a 16-bit document does not have to quantise to 8 bits to run one.
+fn apply_adjustment_u16(
+    out: &mut [u16],
+    doc: &Document,
+    layer: &Layer,
+    index: usize,
+    promoted: &PromotedLayers<'_>,
+    adjustment: &crate::layer::AdjustmentType,
+) {
+    let w = doc.width as i32;
+    let h = doc.height as i32;
+    let layer_opacity = doc.effective_opacity(layer.id);
+
+    let clip_layer = if layer.clipping_mask && index > 0 {
+        let base = &doc.layers[index - 1];
+        // The 8-bit pass skips a clipped adjustment whose base is hidden; so does this one.
+        if !doc.is_layer_effective_visible(base.id) {
+            return;
+        }
+        Some(base)
+    } else {
+        None
+    };
+    let clip_pixels = clip_layer.map(|_| {
+        let previous = index - 1;
+        &promoted.0[previous]
+    });
+    let clip_opacity = clip_layer
+        .map(|base| doc.effective_opacity(base.id))
+        .unwrap_or(1.0);
+
+    for y in 0..h {
+        for x in 0..w {
+            let pixel = ((y * w + x) * 4) as usize;
+            if pixel + 3 >= out.len() {
+                break;
+            }
+
+            let dst = [
+                out[pixel].to_f32(),
+                out[pixel + 1].to_f32(),
+                out[pixel + 2].to_f32(),
+                out[pixel + 3].to_f32(),
+            ];
+            if dst[3] <= 0.0 {
+                continue;
+            }
+
+            let mut opacity = layer_opacity;
+            if let Some(mask) = layer.mask.as_ref().filter(|m| m.enabled) {
+                opacity *= mask.alpha_at(x as u32, y as u32) as f32 / 255.0;
+            }
+            if let (Some(base), Some(pixels)) = (clip_layer, clip_pixels) {
+                let bx = x - base.offset_x;
+                let by = y - base.offset_y;
+                let base_alpha = if bx >= 0 && bx < w && by >= 0 && by < h {
+                    pixels
+                        .get(((by * w + bx) * 4) as usize + 3)
+                        .map(|channel| channel.to_f32())
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                };
+                opacity *= base_alpha * clip_opacity;
+            }
+            if opacity <= 0.001 {
+                continue;
+            }
+
+            let adjusted = adjustment.apply_to_rgb_working([dst[0], dst[1], dst[2]]);
+            let blended = layer.blend_mode.composite_working(
+                dst,
+                [adjusted[0], adjusted[1], adjusted[2], dst[3]],
+                opacity,
+            );
+            out[pixel] = u16::from_f32(blended[0]);
+            out[pixel + 1] = u16::from_f32(blended[1]);
+            out[pixel + 2] = u16::from_f32(blended[2]);
+            out[pixel + 3] = u16::from_f32(blended[3]);
+        }
+    }
 }

@@ -2,9 +2,16 @@ use crate::selection::SelectionMask;
 
 /// Converts RGB (0..255) to HSL (H: 0..360, S: 0..1, L: 0..1)
 pub fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
-    let rf = r as f32 / 255.0;
-    let gf = g as f32 / 255.0;
-    let bf = b as f32 / 255.0;
+    rgb_to_hsl_f32([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0])
+}
+
+/// Converts normalised RGB to HSL (H: 0..360, S: 0..1, L: 0..1).
+///
+/// The working-precision form of [`rgb_to_hsl`]: identical arithmetic, without the trip
+/// through 8-bit channels. One implementation serves both, so a 16-bit adjustment cannot
+/// drift away from the 8-bit one by being written twice.
+pub fn rgb_to_hsl_f32(rgb: [f32; 3]) -> (f32, f32, f32) {
+    let [rf, gf, bf] = rgb;
 
     let max = rf.max(gf).max(bf);
     let min = rf.min(gf).min(bf);
@@ -36,9 +43,23 @@ pub fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
 
 /// Converts HSL (H: 0..360, S: 0..1, L: 0..1) to RGB (0..255)
 pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
+    let [r, g, b] = hsl_to_rgb_f32(h, s, l);
+    (
+        (r * 255.0).clamp(0.0, 255.0).round() as u8,
+        (g * 255.0).clamp(0.0, 255.0).round() as u8,
+        (b * 255.0).clamp(0.0, 255.0).round() as u8,
+    )
+}
+
+/// Converts HSL (H: 0..360, S: 0..1, L: 0..1) to normalised RGB.
+///
+/// The working-precision form of [`hsl_to_rgb`]. The 8-bit wrapper multiplies and rounds the
+/// result, which is the only difference between them, so quantisation happens once, at the
+/// boundary, instead of inside the maths.
+pub fn hsl_to_rgb_f32(h: f32, s: f32, l: f32) -> [f32; 3] {
     if s.abs() < 1e-5 {
-        let val = (l * 255.0).clamp(0.0, 255.0).round() as u8;
-        return (val, val, val);
+        let val = l.clamp(0.0, 1.0);
+        return [val, val, val];
     }
 
     let q = if l < 0.5 {
@@ -69,11 +90,11 @@ pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
         }
     };
 
-    let r = (hue_to_rgb(hk + 1.0 / 3.0) * 255.0).clamp(0.0, 255.0).round() as u8;
-    let g = (hue_to_rgb(hk) * 255.0).clamp(0.0, 255.0).round() as u8;
-    let b = (hue_to_rgb(hk - 1.0 / 3.0) * 255.0).clamp(0.0, 255.0).round() as u8;
-
-    (r, g, b)
+    [
+        hue_to_rgb(hk + 1.0 / 3.0).clamp(0.0, 1.0),
+        hue_to_rgb(hk).clamp(0.0, 1.0),
+        hue_to_rgb(hk - 1.0 / 3.0).clamp(0.0, 1.0),
+    ]
 }
 
 /// Adjusts Hue, Saturation, and Lightness of pixels in-place
