@@ -1,0 +1,114 @@
+name: Performance Report
+description: Report performance regressions, excessive resource usage, or optimization opportunities.
+title: "[Performance]: "
+labels:
+  - performance
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to report measurable performance problems in Aurelia.
+
+        Include reproducible conditions and measurements wherever possible. Avoid reporting subjective performance impressions without supporting context.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Performance Problem
+      description: Describe the operation that performs poorly.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Affected Operation
+      multiple: true
+      options:
+        - Canvas Rendering
+        - Compositing
+        - Painting and Brush Processing
+        - Layer Operations
+        - Masks
+        - Undo and Redo
+        - Document Loading
+        - Document Saving
+        - Image Import and Export
+        - Application Startup
+        - Memory Consumption
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: Explain how to reproduce the performance issue.
+    validations:
+      required: true
+
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Performance Measurements
+      description: Include timings, benchmark output, memory usage, or other relevant measurements.
+      placeholder: |
+        Before:
+        After:
+        Measurement method:
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Aurelia Version
+      placeholder: "3.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware Configuration
+      description: Include CPU, RAM, GPU, display resolution, and other relevant specifications.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating System
+      options:
+        - Windows 11 (64-bit)
+        - Windows 10 (64-bit)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: workload
+    attributes:
+      label: Test Conditions
+      description: Include canvas dimensions, layer count, brush settings, document size, or other relevant workload details.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Information
+      description: Include relevant logs, screenshots, benchmark results, or observations.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Submission Checklist
+      options:
+        - label: I have searched existing performance reports.
+          required: true
+        - label: I have described the conditions under which the issue occurs.
+          required: true
