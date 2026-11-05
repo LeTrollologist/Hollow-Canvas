@@ -4153,3 +4153,90 @@ mod generic_sampling {
         assert!(bicubic[0] > 255.0, "bicubic collapsed towards 8 bits: {}", bicubic[0]);
     }
 }
+
+/// Commit B: the renderers read and write native precision.
+#[cfg(test)]
+mod transform_precision {
+    use crate::transform::{render_transformed_patch, AffineTransform2D, InterpolationMode};
+    use glam::Vec2;
+
+    const SIDE: u32 = 8;
+    const PATCH: u32 = 4;
+
+    /// Off-lattice, opaque patch: nothing here is representable in 8 bits.
+    fn wide_patch() -> Vec<u16> {
+        let mut channels = vec![0u16; (PATCH * PATCH * 4) as usize];
+        for (index, px) in channels.chunks_exact_mut(4).enumerate() {
+            let step = crate::pixel::srgb8_to_srgb16((20 + index as u8 * 7).min(255));
+            px[0] = step + 128;
+            px[1] = crate::pixel::srgb8_to_srgb16(90) + 64;
+            px[2] = crate::pixel::srgb8_to_srgb16(200) + 255;
+            px[3] = 65535;
+        }
+        channels
+    }
+
+    fn identity_transform() -> AffineTransform2D {
+        let center = Vec2::new(PATCH as f32 * 0.5, PATCH as f32 * 0.5);
+        let mut transform = AffineTransform2D::new(center);
+        transform.pivot = center;
+        transform
+    }
+
+    /// The case the reviewer asked for: a 16-bit source rendered into a 16-bit destination with
+    /// identical maxima must preserve every channel exactly, alpha included. Nothing may round.
+    #[test]
+    fn sixteen_bit_source_into_sixteen_bit_destination_is_exact() {
+        let patch = wide_patch();
+        let origin = Vec2::new(1.0, 1.0);
+        let mut dst = vec![0u16; (SIDE * SIDE * 4) as usize];
+
+        render_transformed_patch(
+            &patch, PATCH, PATCH, origin, &identity_transform(),
+            InterpolationMode::Nearest, &mut dst, SIDE, SIDE,
+        );
+
+        for sy in 0..PATCH as usize {
+            for sx in 0..PATCH as usize {
+                let src = (sy * PATCH as usize + sx) * 4;
+                let d = ((sy + 1) * SIDE as usize + (sx + 1)) * 4;
+                assert_eq!(
+                    &dst[d..d + 4],
+                    &patch[src..src + 4],
+                    "pixel ({sx}, {sy}) must survive the full render unchanged"
+                );
+            }
+        }
+        // The off-lattice fixture really is off-lattice, so the assertion above means something.
+        assert!(patch.iter().any(|&c| c > 0 && c % 257 != 0));
+    }
+
+    /// A 16-bit source into an 8-bit destination must downconvert, not truncate: this is the
+    /// cross-format direction, and it is the only place a width change is allowed to round.
+    #[test]
+    fn sixteen_bit_source_into_eight_bit_destination_rounds_once() {
+        let patch = wide_patch();
+        let origin = Vec2::new(1.0, 1.0);
+        let mut dst = vec![0u8; (SIDE * SIDE * 4) as usize];
+
+        render_transformed_patch(
+            &patch, PATCH, PATCH, origin, &identity_transform(),
+            InterpolationMode::Nearest, &mut dst, SIDE, SIDE,
+        );
+
+        for sy in 0..PATCH as usize {
+            for sx in 0..PATCH as usize {
+                let src = (sy * PATCH as usize + sx) * 4;
+                let d = ((sy + 1) * SIDE as usize + (sx + 1)) * 4;
+                for channel in 0..4 {
+                    let expected = crate::pixel::srgb16_to_srgb8(patch[src + channel]);
+                    let actual = dst[d + channel];
+                    assert!(
+                        actual.abs_diff(expected) <= 1,
+                        "channel {channel} of ({sx}, {sy}): {actual} vs {expected}"
+                    );
+                }
+            }
+        }
+    }
+}

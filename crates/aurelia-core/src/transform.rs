@@ -825,24 +825,38 @@ pub fn sample_interpolated(
 // Zero-Allocation High-Performance Patch Rasterizers
 // =========================================================================
 
+/// Maps a sampled pixel from the source channel's scale into the destination's.
+///
+/// The intermediate is `f64` and the result `u64`, so the widest product (65535 x 65535)
+/// cannot overflow and nothing narrows early. Rounding is explicit and half-away-from-zero,
+/// matching the integer samplers. For identical scales the factor is exactly 1.0, so values
+/// pass through unchanged - which is what keeps the 8-bit renderers byte-identical.
+#[inline]
+fn scale_sample<C: Channel, S: Channel>(sample: [f32; 4]) -> [u64; 4] {
+    let dst_max = C::MAX_SCALED as f64;
+    let src_max = S::MAX_SCALED as f64;
+    let map = |value: f32| -> u64 {
+        (value as f64 * dst_max / src_max).round().clamp(0.0, dst_max) as u64
+    };
+    [map(sample[0]), map(sample[1]), map(sample[2]), map(sample[3])]
+}
 /// Alpha-composites a source pixel onto destination buffer
 #[inline]
-fn composite_pixel_in_place<C: Channel>(dst: &mut [C], dst_idx: usize, r: u8, g: u8, b: u8, a: u8) {
-    if a == 0 || dst_idx + 3 >= dst.len() {
+fn composite_pixel_in_place<C: Channel>(dst: &mut [C], dst_idx: usize, src: [u64; 4]) {
+    if src[3] == 0 || dst_idx + 3 >= dst.len() {
         return;
     }
 
-    // The same integer maths as before, written against the channel's own maximum so
-    // it works at either width. For u8 the max is 255 and every intermediate is identical.
+    // The same integer maths as before, written against the channel's own maximum. `src` is
+    // already in this channel's scale, so nothing narrows here.
     let max = C::MAX_SCALED as u64;
-    let scale = |value: u8| -> u64 { value as u64 * max / 255 };
     let cur_a = dst[dst_idx + 3].to_scaled_f32() as u64;
-    let new_a = scale(a);
+    let new_a = src[3];
 
     if new_a == max || cur_a == 0 {
-        dst[dst_idx] = C::from_scaled_u64(scale(r));
-        dst[dst_idx + 1] = C::from_scaled_u64(scale(g));
-        dst[dst_idx + 2] = C::from_scaled_u64(scale(b));
+        dst[dst_idx] = C::from_scaled_u64(src[0]);
+        dst[dst_idx + 1] = C::from_scaled_u64(src[1]);
+        dst[dst_idx + 2] = C::from_scaled_u64(src[2]);
         dst[dst_idx + 3] = C::from_scaled_u64(new_a);
     } else {
         let inv_a = max - new_a;
@@ -852,17 +866,17 @@ fn composite_pixel_in_place<C: Channel>(dst: &mut [C], dst_idx: usize, r: u8, g:
                 let existing = dst_channel.to_scaled_f32() as u64;
                 C::from_scaled_u64((src_channel * new_a + existing * cur_a * inv_a / max) / out_a)
             };
-            dst[dst_idx] = blend(dst[dst_idx], scale(r));
-            dst[dst_idx + 1] = blend(dst[dst_idx + 1], scale(g));
-            dst[dst_idx + 2] = blend(dst[dst_idx + 2], scale(b));
+            dst[dst_idx] = blend(dst[dst_idx], src[0]);
+            dst[dst_idx + 1] = blend(dst[dst_idx + 1], src[1]);
+            dst[dst_idx + 2] = blend(dst[dst_idx + 2], src[2]);
             dst[dst_idx + 3] = C::from_scaled_u64(out_a.min(max));
         }
     }
 }
 
 /// Transforms an Affine patch and composites it onto a target layer canvas
-pub fn render_transformed_patch<C: Channel>(
-    src_patch: &[u8],
+pub fn render_transformed_patch<C: Channel, S: Channel>(
+    src_patch: &[S],
     patch_w: u32,
     patch_h: u32,
     patch_origin: Vec2,
@@ -908,18 +922,18 @@ pub fn render_transformed_patch<C: Channel>(
             let local_x = src_canvas_pt.x - patch_origin.x;
             let local_y = src_canvas_pt.y - patch_origin.y;
 
-            let (r, g, b, a) = sample_interpolated(src_patch, patch_w, patch_h, local_x, local_y, interp);
-            if a > 0 {
+            let sample = sample_interpolated_scaled::<S>(src_patch, patch_w, patch_h, local_x, local_y, interp);
+            if sample[3] > 0.0 {
                 let dst_idx = (y * doc_w as usize + x) * 4;
-                composite_pixel_in_place(dst_layer_pixels, dst_idx, r, g, b, a);
+                composite_pixel_in_place(dst_layer_pixels, dst_idx, scale_sample::<C, S>(sample));
             }
         }
     }
 }
 
 /// Renders a Perspective Quad warped patch onto target layer canvas
-pub fn render_quad_transformed_patch<C: Channel>(
-    src_patch: &[u8],
+pub fn render_quad_transformed_patch<C: Channel, S: Channel>(
+    src_patch: &[S],
     patch_w: u32,
     patch_h: u32,
     quad: &PerspectiveQuadTransform,
@@ -956,10 +970,10 @@ pub fn render_quad_transformed_patch<C: Channel>(
                 let local_x = src_pt.x - quad.src_corners[0].x;
                 let local_y = src_pt.y - quad.src_corners[0].y;
 
-                let (r, g, b, a) = sample_interpolated(src_patch, patch_w, patch_h, local_x, local_y, interp);
-                if a > 0 {
+                let sample = sample_interpolated_scaled::<S>(src_patch, patch_w, patch_h, local_x, local_y, interp);
+                if sample[3] > 0.0 {
                     let dst_idx = (y * doc_w as usize + x) * 4;
-                    composite_pixel_in_place(dst_layer_pixels, dst_idx, r, g, b, a);
+                    composite_pixel_in_place(dst_layer_pixels, dst_idx, scale_sample::<C, S>(sample));
                 }
             }
         }
@@ -967,8 +981,8 @@ pub fn render_quad_transformed_patch<C: Channel>(
 }
 
 /// Renders a Mesh Grid warped patch onto target layer canvas
-pub fn render_mesh_warped_patch<C: Channel>(
-    src_patch: &[u8],
+pub fn render_mesh_warped_patch<C: Channel, S: Channel>(
+    src_patch: &[S],
     patch_w: u32,
     patch_h: u32,
     mesh: &MeshWarpGrid,
@@ -1002,10 +1016,10 @@ pub fn render_mesh_warped_patch<C: Channel>(
         for x in start_x..end_x {
             let canvas_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
             if let Some(src_pt) = mesh.inverse_sample(canvas_pt) {
-                let (r, g, b, a) = sample_interpolated(src_patch, patch_w, patch_h, src_pt.x, src_pt.y, interp);
-                if a > 0 {
+                let sample = sample_interpolated_scaled::<S>(src_patch, patch_w, patch_h, src_pt.x, src_pt.y, interp);
+                if sample[3] > 0.0 {
                     let dst_idx = (y * doc_w as usize + x) * 4;
-                    composite_pixel_in_place(dst_layer_pixels, dst_idx, r, g, b, a);
+                    composite_pixel_in_place(dst_layer_pixels, dst_idx, scale_sample::<C, S>(sample));
                 }
             }
         }
@@ -1013,8 +1027,8 @@ pub fn render_mesh_warped_patch<C: Channel>(
 }
 
 /// Renders a Thin Plate Spline (TPS) warped patch onto target layer canvas
-pub fn render_tps_warped_patch<C: Channel>(
-    src_patch: &[u8],
+pub fn render_tps_warped_patch<C: Channel, S: Channel>(
+    src_patch: &[S],
     patch_w: u32,
     patch_h: u32,
     patch_origin: Vec2,
@@ -1055,10 +1069,10 @@ pub fn render_tps_warped_patch<C: Channel>(
             let local_y = src_canvas_pt.y - patch_origin.y;
 
             if local_x >= 0.0 && local_x < patch_w as f32 && local_y >= 0.0 && local_y < patch_h as f32 {
-                let (r, g, b, a) = sample_interpolated(src_patch, patch_w, patch_h, local_x, local_y, interp);
-                if a > 0 {
+                let sample = sample_interpolated_scaled::<S>(src_patch, patch_w, patch_h, local_x, local_y, interp);
+                if sample[3] > 0.0 {
                     let dst_idx = (y * doc_w as usize + x) * 4;
-                    composite_pixel_in_place(dst_layer_pixels, dst_idx, r, g, b, a);
+                    composite_pixel_in_place(dst_layer_pixels, dst_idx, scale_sample::<C, S>(sample));
                 }
             }
         }
