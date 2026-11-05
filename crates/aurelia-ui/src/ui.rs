@@ -605,7 +605,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 ui.close_menu();
                             }
                             ui.separator();
-                            if ui.button("🔄 Invert Colors (Ctrl+I)").clicked() {
+                            if ui.button("🔄 Invert Colors (Ctrl+I)").clicked() && state.require_8bit("Invert Colors") {
                                 let w = state.document.width;
                                 let h = state.document.height;
                                 let sel = state.selection.clone();
@@ -618,7 +618,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 }
                                 ui.close_menu();
                             }
-                            if ui.button("📷 Grayscale").clicked() {
+                            if ui.button("📷 Grayscale").clicked() && state.require_8bit("Grayscale") {
                                 let w = state.document.width;
                                 let h = state.document.height;
                                 let sel = state.selection.clone();
@@ -631,7 +631,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 }
                                 ui.close_menu();
                             }
-                            if ui.button("🎞️ Vintage Sepia").clicked() {
+                            if ui.button("🎞️ Vintage Sepia").clicked() && state.require_8bit("Sepia Tone") {
                                 let w = state.document.width;
                                 let h = state.document.height;
                                 let sel = state.selection.clone();
@@ -974,6 +974,16 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         };
 
                         metric(ui, format!("{} × {} px", state.document.width, state.document.height), design::TEXT_MUTED);
+                        metric(ui, "·".to_string(), design::TEXT_MUTED);
+                        metric(
+                            ui,
+                            state.document_format_label().to_string(),
+                            if state.document.pixel_format == aurelia_core::layer::PixelFormat::Srgb16 {
+                                accent_c32
+                            } else {
+                                design::TEXT_MUTED
+                            },
+                        );
                         ui.separator();
                         metric(ui, format!("X {}  Y {}", state.cursor_canvas_pos.x.round() as i32, state.cursor_canvas_pos.y.round() as i32), design::TEXT_MUTED);
                         ui.separator();
@@ -1968,6 +1978,19 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                         if is_text {
                                             ui.label(RichText::new("🔤").size(10.5).color(accent_c32));
                                         }
+                                        // Only 16-bit layers get a badge: on a normal document
+                                        // every row would carry the same noise.
+                                        if state.document.layers[i].format()
+                                            != aurelia_core::layer::PixelFormat::Srgb8
+                                        {
+                                            ui.label(
+                                                RichText::new("16")
+                                                    .size(8.5)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(120, 210, 190)),
+                                            )
+                                            .on_hover_text("16-bit sRGB storage");
+                                        }
 
                                         // Editable Layer/Group Name — takes the space that is left.
                                         {
@@ -2372,13 +2395,38 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.selectable_value(&mut state.new_canvas_bg_mode, 2, "Transparent");
                 });
 
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("Color depth:");
+                    ui.selectable_value(
+                        &mut state.new_canvas_format,
+                        aurelia_core::layer::PixelFormat::Srgb8,
+                        "RGBA 8-bit",
+                    );
+                    ui.selectable_value(
+                        &mut state.new_canvas_format,
+                        aurelia_core::layer::PixelFormat::Srgb16,
+                        "RGBA 16-bit",
+                    );
+                });
+                if state.new_canvas_format != aurelia_core::layer::PixelFormat::Srgb8 {
+                    ui.label(
+                        RichText::new("16-bit: filters and merge-down are not available yet")
+                            .size(9.0)
+                            .color(Color32::from_rgb(198, 176, 120)),
+                    );
+                }
+
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button(RichText::new("✦ Create Canvas").strong().color(accent_c32)).clicked() {
                         state.pending_file_action = Some(PendingFileAction::NewCanvas(
-                            state.new_canvas_w,
-                            state.new_canvas_h,
-                            state.new_canvas_bg_mode,
+                            crate::state::NewCanvasSpec {
+                                width: state.new_canvas_w,
+                                height: state.new_canvas_h,
+                                bg_mode: state.new_canvas_bg_mode,
+                                format: state.new_canvas_format,
+                            },
                         ));
                         state.show_new_canvas_dialog = false;
                     }

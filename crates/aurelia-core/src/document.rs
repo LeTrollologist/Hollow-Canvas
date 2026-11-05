@@ -24,12 +24,27 @@ pub struct Document {
     pub is_transparent: bool,
     pub theme: ThemeMode,
     pub next_layer_id: u64,
+    /// The storage format new layers are created in, and the format the editor creates
+    /// documents in.
+    ///
+    /// A file may still hold layers whose per-layer tag names a different format - mixed
+    /// documents stay representable and loadable - but the editor does not create them, and
+    /// this field is what it deliberately keeps across a save. It is separate from the layers
+    /// so that deleting the last 16-bit layer does not silently turn the document 8-bit.
+    #[serde(default)]
+    pub pixel_format: PixelFormat,
 }
 
 impl Document {
     pub fn new(width: u32, height: u32) -> Self {
+        Self::new_with_format(width, height, PixelFormat::Srgb8)
+    }
+
+    /// Creates a document whose layers, and whose future layers, use `format`.
+    pub fn new_with_format(width: u32, height: u32, format: PixelFormat) -> Self {
         let first_id = 1;
-        let base_layer = Layer::new(first_id, "Layer 1", width, height);
+        let mut base_layer = Layer::new(first_id, "Layer 1", width, height);
+        base_layer.convert_format(format);
         Self {
             width,
             height,
@@ -39,6 +54,7 @@ impl Document {
             is_transparent: false,
             theme: ThemeMode::Dawn,
             next_layer_id: 2,
+            pixel_format: format,
         }
     }
 
@@ -75,7 +91,8 @@ impl Document {
         let id = self.next_layer_id;
         self.next_layer_id += 1;
         let layer_name = name.unwrap_or_else(|| format!("Layer {}", id));
-        let layer = Layer::new(id, layer_name, self.width, self.height);
+        let mut layer = Layer::new(id, layer_name, self.width, self.height);
+        layer.convert_format(self.pixel_format);
         self.layers.push(layer);
         self.active_layer_id = id;
         id
@@ -112,6 +129,7 @@ impl Document {
             }
         });
         let mut layer = Layer::new_text(id, layer_name, self.width, self.height, config);
+        layer.convert_format(self.pixel_format);
         layer.parent_id = parent_id;
         self.layers.push(layer);
         self.active_layer_id = id;
@@ -335,6 +353,14 @@ impl Document {
     }
 
     pub fn merge_layer_down(&mut self) -> bool {
+        // Merge-down composites in 8-bit (`get_pixel`/`set_pixel`), so it cannot run on a
+        // 16-bit document. Refusing is deliberate: the alternative is a silent flatten.
+        if self.pixel_format != PixelFormat::Srgb8
+            || self.layers.iter().any(|layer| layer.format() != PixelFormat::Srgb8)
+        {
+            return false;
+        }
+
         let active_idx = match self.layers.iter().position(|l| l.id == self.active_layer_id) {
             Some(i) if i > 0 => i,
             _ => return false,
@@ -390,11 +416,18 @@ impl Document {
             return;
         }
 
-        let flat = self.composite_layers(true);
         let id = self.next_layer_id;
         self.next_layer_id += 1;
 
-        let merged = Layer::from_pixels(id, "Merged", self.width, self.height, flat);
+        // A 16-bit document gets a native 16-bit merge, so flattening does not quietly
+        // downconvert the whole canvas.
+        let mut merged = Layer::new(id, "Merged", self.width, self.height);
+        if self.pixel_format == PixelFormat::Srgb16 {
+            *merged.buffer_mut() =
+                LayerBuffer::Srgb16(self.composite_layers_srgb16(true));
+        } else {
+            merged.set_pixels(self.composite_layers(true));
+        }
         self.layers.clear();
         self.layers.push(merged);
         self.active_layer_id = id;

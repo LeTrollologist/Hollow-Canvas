@@ -431,13 +431,10 @@ mod tests {
     #[test]
     fn malformed_format_tags_and_payloads_are_rejected() {
         fn sixteen_bit_doc() -> Document {
-            let mut doc = Document::new(3, 2);
+            // A real 16-bit document: the *document* format is 16-bit, which is what the
+            // header tag now records. The base layer follows it.
+            let mut doc = Document::new_with_format(3, 2, aurelia_core::layer::PixelFormat::Srgb16);
             doc.is_transparent = true;
-            let id = doc.active_layer_id;
-            let channels: Vec<u16> = (0..(3 * 2 * 4)).map(|i| (i as u16) * 257).collect();
-            if let Some(layer) = doc.get_layer_mut(id) {
-                *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
-            }
             doc
         }
 
@@ -535,4 +532,31 @@ mod tests {
         // And the reopened document previews identically, so the round trip is stable.
         assert_eq!(loaded.composite_layers(true), preview_before);
     }
-}
+    /// The document format is authoritative: a 16-bit document stays 16-bit across a save even
+    /// when every layer happens to be 8-bit. Deriving the tag from the layers lost it.
+    #[test]
+    fn a_sixteen_bit_document_keeps_its_format_even_with_only_eight_bit_layers() {
+        let mut doc = Document::new_with_format(3, 2, PixelFormat::Srgb16);
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            layer.convert_format(PixelFormat::Srgb8);
+        }
+        assert!(doc.layers.iter().all(|layer| layer.format() == PixelFormat::Srgb8));
+
+        let mut bytes = Vec::new();
+        save_project_to_writer(&doc, &mut bytes).expect("save");
+        let mut loaded = load_project_from_reader(&bytes[..]).expect("load");
+
+        assert_eq!(
+            loaded.pixel_format,
+            PixelFormat::Srgb16,
+            "the document format must survive the round trip"
+        );
+        assert_eq!(
+            loaded.layers[0].format(),
+            PixelFormat::Srgb8,
+            "the layer's own storage tag must survive as well"
+        );
+        let new_id = loaded.add_layer(None);
+        assert_eq!(loaded.get_layer(new_id).expect("layer").format(), PixelFormat::Srgb16);
+    }}

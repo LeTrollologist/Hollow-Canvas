@@ -3409,3 +3409,114 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod document_format {
+    use crate::document::Document;
+    use crate::layer::{Layer, PixelFormat};
+
+    /// The regression that motivated a document-level format: deleting the last 16-bit layer
+    /// used to turn the document 8-bit, because the format was derived from the layers.
+    #[test]
+    fn format_survives_deleting_the_last_sixteen_bit_layer() {
+        let mut doc = Document::new_with_format(4, 4, PixelFormat::Srgb16);
+        assert_eq!(doc.pixel_format, PixelFormat::Srgb16);
+        assert_eq!(doc.layers[0].format(), PixelFormat::Srgb16, "the base layer follows the document");
+
+        doc.delete_layer(doc.active_layer_id);
+        assert_eq!(doc.pixel_format, PixelFormat::Srgb16, "deleting layers must not change the format");
+
+        let id = doc.add_layer(None);
+        assert_eq!(
+            doc.get_layer(id).expect("layer").format(),
+            PixelFormat::Srgb16,
+            "a new layer must inherit the document format"
+        );
+    }
+
+    #[test]
+    fn new_documents_start_in_the_requested_format() {
+        let eight = Document::new(2, 2);
+        assert_eq!(eight.pixel_format, PixelFormat::Srgb8);
+        assert_eq!(eight.layers[0].format(), PixelFormat::Srgb8);
+
+        let wide = Document::new_with_format(2, 2, PixelFormat::Srgb16);
+        assert_eq!(wide.pixel_format, PixelFormat::Srgb16);
+        assert_eq!(wide.layers[0].format(), PixelFormat::Srgb16);
+        assert_eq!(
+            wide.layers[0].storage_len(),
+            (2 * 2 * 4) as usize * 2,
+            "16-bit storage is two bytes per channel"
+        );
+    }
+
+    #[test]
+    fn add_layer_does_not_downgrade_a_sixteen_bit_document() {
+        let mut doc = Document::new_with_format(3, 3, PixelFormat::Srgb16);
+        let raster = doc.add_layer(Some("raster".into()));
+        let text = doc.add_text_layer(Some("text".into()), crate::layer::TextLayerConfig::default(), None);
+        for id in [raster, text] {
+            assert_eq!(
+                doc.get_layer(id).expect("layer").format(),
+                PixelFormat::Srgb16,
+                "layer {id} must inherit the document format"
+            );
+        }
+    }
+
+    /// Flattening a 16-bit document has to stay 16-bit, or "merge visible" silently throws the
+    /// precision away - the one operation that would be a downgrade by design.
+    #[test]
+    fn merge_visible_layers_keeps_sixteen_bit_storage() {
+        use crate::layer::LayerBuffer;
+
+        let mut doc = Document::new_with_format(2, 1, PixelFormat::Srgb16);
+        let id = doc.active_layer_id;
+        let low = crate::pixel::srgb8_to_srgb16(200);
+        let high = low + 128;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            let mut channels = vec![0u16; 8];
+            for pixel in channels.chunks_exact_mut(4) {
+                pixel[0] = high;
+                pixel[3] = 65535;
+            }
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+        doc.add_layer(None);
+
+        doc.merge_visible_layers();
+
+        assert_eq!(doc.layers.len(), 1);
+        let merged = &doc.layers[0];
+        assert_eq!(merged.format(), PixelFormat::Srgb16, "merge must not downgrade the document");
+        let values = merged.as_srgb16().expect("16-bit");
+        assert_eq!(values[0], high, "the merged layer must keep the exact channel");
+    }
+
+    /// Merge-down composites in 8-bit, so it refuses a 16-bit document rather than flattening
+    /// it quietly. The UI reports the refusal.
+    #[test]
+    fn merge_down_refuses_a_sixteen_bit_document() {
+        let mut doc = Document::new_with_format(2, 2, PixelFormat::Srgb16);
+        doc.add_layer(None);
+        assert!(!doc.merge_layer_down(), "merge down must refuse 16-bit storage");
+        assert_eq!(doc.layers.len(), 2, "a refused merge must not change the layer stack");
+    }
+
+    /// `convert_format` is exact in the widening direction and rounds only when asked to
+    /// narrow.
+    #[test]
+    fn convert_format_round_trips_lattice_values() {
+        let mut layer = Layer::new(1, "l", 2, 1);
+        layer.as_srgb8_exact_mut().copy_from_slice(&[1, 2, 3, 4, 255, 128, 0, 64]);
+        let original = layer.as_srgb8_exact().to_vec();
+
+        layer.convert_format(PixelFormat::Srgb16);
+        assert_eq!(layer.format(), PixelFormat::Srgb16);
+        assert_eq!(layer.storage_len(), 2 * 4 * 2);
+
+        layer.convert_format(PixelFormat::Srgb8);
+        assert_eq!(layer.format(), PixelFormat::Srgb8);
+        assert_eq!(layer.as_srgb8_exact(), original.as_slice());
+    }
+}

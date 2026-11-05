@@ -259,8 +259,12 @@ pub enum LayerBuffer {
 ///
 /// Cheap to copy and compare, so a compositor can resolve the format once per layer rather
 /// than matching inside a pixel loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Default` is `Srgb8`: everything that existed before 16-bit documents is 8-bit, which is
+/// also what a serde-defaulted [`Document`](crate::document::Document) field means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PixelFormat {
+    #[default]
     Srgb8,
     Srgb16,
 }
@@ -414,6 +418,34 @@ impl Layer {
     #[inline]
     pub fn buffer(&self) -> &LayerBuffer {
         &self.buffer
+    }
+
+    /// Converts the buffer to another storage format.
+    ///
+    /// 8 -> 16 is exact (`v * 257` lands on the lattice). 16 -> 8 rounds with
+    /// `srgb16_to_srgb8`, which *loses* sub-lattice detail, so it is only for a caller that has
+    /// deliberately asked to flatten. An empty buffer stays empty in either direction.
+    pub fn convert_format(&mut self, format: PixelFormat) {
+        if self.format() == format {
+            return;
+        }
+        self.buffer = match (&self.buffer, format) {
+            (LayerBuffer::Srgb8(bytes), PixelFormat::Srgb16) => LayerBuffer::Srgb16(
+                bytes
+                    .iter()
+                    .map(|&value| crate::pixel::srgb8_to_srgb16(value))
+                    .collect(),
+            ),
+            (LayerBuffer::Srgb16(channels), PixelFormat::Srgb8) => LayerBuffer::Srgb8(
+                channels
+                    .iter()
+                    .map(|&channel| crate::pixel::srgb16_to_srgb8(channel))
+                    .collect(),
+            ),
+            // Only reachable if a third representation is added; keep the buffer as it is
+            // rather than inventing pixels.
+            _ => return,
+        };
     }
 
     /// Mutable view of the buffer, for callers that dispatch on the representation.

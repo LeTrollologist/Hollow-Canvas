@@ -1952,15 +1952,17 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.state.set_status("Deselected");
                 }
                 0x49 if is_ctrl => { // Ctrl+I (Invert Colors)
-                    let w = app.state.document.width;
-                    let h = app.state.document.height;
-                    let sel = app.state.selection.clone();
-                    if let Some(layer) = app.state.document.active_layer_mut() {
-                        let before = layer.as_srgb8_exact().to_vec();
-                        aurelia_core::filter::filter_invert(layer.as_srgb8_exact_mut(), w, h, sel.as_ref());
-                        let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Invert Colors", before, layer.as_srgb8_exact().to_vec()));
-                        app.state.history.push(cmd);
-                        app.state.set_status("Inverted Colors");
+                    if app.state.require_8bit("Invert Colors") {
+                        let w = app.state.document.width;
+                        let h = app.state.document.height;
+                        let sel = app.state.selection.clone();
+                        if let Some(layer) = app.state.document.active_layer_mut() {
+                            let before = layer.as_srgb8_exact().to_vec();
+                            aurelia_core::filter::filter_invert(layer.as_srgb8_exact_mut(), w, h, sel.as_ref());
+                            let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Invert Colors", before, layer.as_srgb8_exact().to_vec()));
+                            app.state.history.push(cmd);
+                            app.state.set_status("Inverted Colors");
+                        }
                     }
                 }
                 0x54 if is_ctrl => { // Ctrl+T (Free Transform)
@@ -2441,9 +2443,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             // 9. Handle pending file actions SAFELY OUTSIDE OF EGUI FRAME
             if let Some(action) = app.state.pending_file_action.take() {
                 match action {
-                    PendingFileAction::NewCanvas(w, h, bg_mode) => {
-                        let mut doc = aurelia_core::document::Document::new(w, h);
-                        match bg_mode {
+                    PendingFileAction::NewCanvas(spec) => {
+                        let mut doc = aurelia_core::document::Document::new_with_format(
+                            spec.width,
+                            spec.height,
+                            spec.format,
+                        );
+                        match spec.bg_mode {
                             1 => { // Pure white
                                 doc.is_transparent = false;
                                 doc.background_value = 255;
@@ -2463,7 +2469,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.state.document_path = None;
                         app.state.mark_saved();
                         app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
-                        app.state.set_status(format!("New canvas created: {} × {} px", w, h));
+                        app.state.set_status(format!(
+                            "New canvas created: {} × {} px ({})",
+                            spec.width,
+                            spec.height,
+                            app.state.document_format_label()
+                        ));
                     }
                     PendingFileAction::SaveProject => {
                         // Quick-save to the known path; only prompt when the file is new.

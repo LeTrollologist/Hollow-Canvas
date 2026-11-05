@@ -6,6 +6,7 @@ use aurelia_core::brush::BrushSettings;
 use aurelia_core::color::{Color, DEFAULT_PALETTE};
 use aurelia_core::document::Document;
 use aurelia_core::history::HistoryStack;
+use aurelia_core::layer::PixelFormat;
 use aurelia_core::selection::{SelectionMask, StrokePosition};
 use aurelia_core::symmetry::SymmetryConfig;
 use aurelia_core::transform::{
@@ -133,7 +134,18 @@ pub enum PendingFileAction {
     OpenProject,
     ExportPng,
     OpenReferenceImage,
-    NewCanvas(u32, u32, u8), // w, h, bg_mode (0: dark, 1: white, 2: transparent)
+    NewCanvas(NewCanvasSpec),
+}
+
+/// Everything the New Canvas dialog collects, carried as one value so the variant does not
+/// grow another positional argument every time a control is added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NewCanvasSpec {
+    pub width: u32,
+    pub height: u32,
+    /// 0: dark, 1: white, 2: transparent
+    pub bg_mode: u8,
+    pub format: PixelFormat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +223,8 @@ pub struct AppState {
     pub new_canvas_lock_aspect: bool,
     pub new_canvas_aspect_ratio: f32,
     pub new_canvas_bg_mode: u8, // 0: Dark, 1: Pure White, 2: Transparent
+    /// Storage format the next created document will use.
+    pub new_canvas_format: PixelFormat,
 
     // Resize / Scale Modal
     pub show_resize_canvas_dialog: bool,
@@ -445,6 +459,7 @@ impl AppState {
             new_canvas_lock_aspect: false,
             new_canvas_aspect_ratio: 1920.0 / 1080.0,
             new_canvas_bg_mode: 0,
+            new_canvas_format: PixelFormat::Srgb8,
 
             show_resize_canvas_dialog: false,
             resize_canvas_w: width,
@@ -1054,8 +1069,55 @@ impl AppState {
         }
     }
 
+    /// The active layer's storage format, or the document's when nothing is active.
+    pub fn active_layer_format(&self) -> PixelFormat {
+        self.document
+            .active_layer()
+            .map(|layer| layer.format())
+            .unwrap_or(self.document.pixel_format)
+    }
+
+    /// True when the active layer can be written through an 8-bit-only operation.
+    ///
+    /// On refusal it sets a status naming the operation and the document's format, and the
+    /// caller must not touch the layer. This is the guard that keeps #13 from exposing the
+    /// 8-bit-only paths as panics.
+    pub fn require_8bit(&mut self, operation: &str) -> bool {
+        if self.active_layer_format() == PixelFormat::Srgb8 {
+            return true;
+        }
+        self.set_status(format!(
+            "{operation} is 8-bit only; this document is 16-bit sRGB"
+        ));
+        false
+    }
+
+    /// Refuses an operation that rebuilds the layer stack in 8-bit (merge down).
+    pub fn require_8bit_document(&mut self, operation: &str) -> bool {
+        if self.document.pixel_format == PixelFormat::Srgb8
+            && self.document.layers.iter().all(|layer| layer.format() == PixelFormat::Srgb8)
+        {
+            return true;
+        }
+        self.set_status(format!(
+            "{operation} is 8-bit only; this document is 16-bit sRGB"
+        ));
+        false
+    }
+
+    /// A short label for the document's storage format, for the footer and the layer panel.
+    pub fn document_format_label(&self) -> &'static str {
+        match self.document.pixel_format {
+            PixelFormat::Srgb8 => "RGBA8",
+            PixelFormat::Srgb16 => "RGBA16",
+        }
+    }
+
     /// Backs up the active layer's pixels before opening a filter dialog
     pub fn begin_filter_modal(&mut self, modal: ActiveFilterModal) {
+        if !self.require_8bit("This filter") {
+            return;
+        }
         if let Some(layer) = self.document.active_layer() {
             self.filter_original_pixels = Some(layer.as_srgb8_exact().to_vec());
             self.active_filter_modal = modal;
@@ -2039,3 +2101,90 @@ mod discord_presence_defaults {
     }
 }
 
+
+#[cfg(test)]
+mod document_format_ui {
+    use super::*;
+
+    fn sixteen_bit_state() -> AppState {
+        let mut state = AppState::new(4, 4);
+        state.document = Document::new_with_format(4, 4, PixelFormat::Srgb16);
+        state
+    }
+
+    #[test]
+    fn the_footer_label_reports_the_document_format() {
+        let eight = AppState::new(2, 2);
+        assert_eq!(eight.document_format_label(), "RGBA8");
+
+        let wide = sixteen_bit_state();
+        assert_eq!(wide.document_format_label(), "RGBA16");
+    }
+
+    /// The guard that keeps 8-bit-only operations from becoming panics on a 16-bit document.
+    #[test]
+    fn eight_bit_only_operations_are_refused_with_a_message() {
+        let mut wide = sixteen_bit_state();
+        assert_eq!(wide.active_layer_format(), PixelFormat::Srgb16);
+
+        assert!(!wide.require_8bit("Invert Colors"), "the guard must refuse");
+        let message = wide.status_message.clone();
+        assert!(message.contains("8-bit only"), "status should explain the refusal: {message}");
+        assert!(message.contains("16-bit"), "status should name the document format: {message}");
+
+        assert!(!wide.require_8bit_document("Merge Down"));
+
+        // Opening a filter modal must refuse too, and must not leave a preview buffer behind.
+        wide.begin_filter_modal(ActiveFilterModal::BrightnessContrast);
+        assert!(wide.active_filter_modal == ActiveFilterModal::None);
+        assert!(wide.filter_original_pixels.is_none());
+
+        // The same calls succeed on an 8-bit document.
+        let mut eight = AppState::new(4, 4);
+        assert!(eight.require_8bit("Invert Colors"));
+        assert!(eight.require_8bit_document("Merge Down"));
+        eight.begin_filter_modal(ActiveFilterModal::BrightnessContrast);
+        assert!(eight.active_filter_modal == ActiveFilterModal::BrightnessContrast);
+        assert!(eight.filter_original_pixels.is_some());
+    }
+
+    /// Saving and reopening a 16-bit document keeps its native data and its format, through the
+    /// same `AppState` entry point the editor uses.
+    #[test]
+    fn save_and_reopen_preserves_native_sixteen_bit_data() {
+        use aurelia_core::layer::LayerBuffer;
+
+        let mut state = sixteen_bit_state();
+        let id = state.document.active_layer_id;
+        let low = aurelia_core::pixel::srgb8_to_srgb16(90);
+        let high = low + 128; // off-lattice
+        if let Some(layer) = state.document.get_layer_mut(id) {
+            // 4x4 pixels, four channels each.
+            let mut channels = vec![0u16; 4 * 4 * 4];
+            for pixel in channels.chunks_exact_mut(4) {
+                pixel[0] = high;
+                pixel[3] = 65535;
+            }
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        let dir = std::env::temp_dir().join(format!("aurelia-format-ui-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("wide.aur");
+
+        state.save_project_to(&path).expect("save");
+        let loaded = aurelia_io::load_project_file(&path).expect("load");
+
+        assert_eq!(loaded.pixel_format, PixelFormat::Srgb16, "format must survive");
+        let layer = loaded.get_layer(id).expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16, "storage must stay 16-bit");
+        assert_eq!(
+            layer.as_srgb16().expect("16-bit")[0],
+            high,
+            "an off-lattice channel must come back exactly"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

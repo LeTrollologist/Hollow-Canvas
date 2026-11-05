@@ -81,13 +81,18 @@ pub(crate) fn write_project_version<W: Write>(
     // AUR v3: the document's storage format, then one byte per layer that either inherits it
     // or names its own. A pure 8-bit document writes zeros throughout, which is exactly what
     // older readers of the reserved byte would expect.
-    let document_is_16bit = doc
+    //
+    // The tag records `doc.pixel_format` - what the editor is creating in - rather than being
+    // derived from the layers. Deriving it lost the format as soon as the last 16-bit layer
+    // was deleted, so a 16-bit document could silently save as 8-bit.
+    let document_is_16bit = doc.pixel_format == aurelia_core::layer::PixelFormat::Srgb16;
+    let any_16bit_layer = doc
         .layers
         .iter()
         .any(|layer| layer.format() == aurelia_core::layer::PixelFormat::Srgb16);
     if version >= 3 {
         writer.write_all(&[if document_is_16bit { 1u8 } else { FORMAT_SRGB8 }])?;
-    } else if document_is_16bit {
+    } else if document_is_16bit || any_16bit_layer {
         // Refuse rather than silently flatten: an old format cannot express 16-bit channels.
         return Err(ProjectError::UnsupportedFormat);
     }
@@ -776,6 +781,9 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         is_transparent,
         theme,
         next_layer_id: max_id + 1,
+        // The tag is authoritative for new layers; per-layer tags above resolved to their own
+        // formats, so a mixed file still loads exactly as it was saved.
+        pixel_format: document_format,
     })
 }
 
