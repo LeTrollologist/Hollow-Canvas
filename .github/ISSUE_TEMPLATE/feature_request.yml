@@ -1,0 +1,82 @@
+name: Feature Request
+description: Propose a new feature or improvement to Aurelia.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for proposing an improvement to Aurelia.
+
+        Feature requests should describe the problem being solved rather than only suggesting an implementation.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Use Case
+      description: What limitation or problem would this feature address?
+      placeholder: Describe the situation and why existing functionality is insufficient.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the functionality you would like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered alternative approaches or existing workarounds?
+    validations:
+      required: false
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Example Workflow
+      description: Explain how the proposed feature would be used.
+      placeholder: Describe a practical user workflow.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected Area
+      multiple: true
+      options:
+        - User Interface
+        - Painting and Brushes
+        - Layers and Masks
+        - Rendering and Compositing
+        - Document Management
+        - Import and Export
+        - Performance
+        - Accessibility
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Additional Considerations
+      description: Mention potential performance, compatibility, architectural, or usability implications.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Submission Checklist
+      options:
+        - label: I have searched existing issues and feature requests.
+          required: true
+        - label: This request describes a genuine use case.
+          required: true
