@@ -462,6 +462,19 @@ impl Layer {
         true
     }
 
+    /// The whole buffer as storage bytes, in the format's own layout.
+    ///
+    /// The format-agnostic counterpart of `as_srgb8_exact().to_vec()`: it lets a caller capture
+    /// an edit for history without knowing — or changing — whether the layer is 8-bit or
+    /// 16-bit. Pair it with [`LayerPixelsDeltaCommand`](crate::history::LayerPixelsDeltaCommand),
+    /// which replays byte spans through `write_storage_bytes`.
+    pub fn storage_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![0u8; self.storage_len()];
+        // `storage_len` is the buffer's own length, so this cannot be out of range.
+        self.read_storage_bytes(0, &mut bytes);
+        bytes
+    }
+
     /// Writes `src` as storage bytes at `offset`, the inverse of `read_storage_bytes`.
     pub fn write_storage_bytes(&mut self, offset: usize, src: &[u8]) -> bool {
         if offset + src.len() > self.storage_len() {

@@ -2667,4 +2667,93 @@ mod tests {
         assert_eq!(PixelFormat::Srgb16, PixelFormat::Srgb16);
         let _ = LayerBuffer::Srgb8(Vec::new());
     }
+
+    /// The application's stroke-undo path, end to end, on a 16-bit layer.
+    ///
+    /// `aurelia-app` cannot be unit tested (Win32 host), so this reproduces exactly what it
+    /// does: capture `storage_bytes()` before the stroke, paint, capture again, and push a
+    /// `LayerPixelsDeltaCommand`. The capture used to go through `as_srgb8_exact()`, which
+    /// panics on a 16-bit layer before the rasterizer - which does support one - is ever
+    /// reached. This test fails if that regresses, and if `storage_bytes()` stops being a
+    /// faithful, format-agnostic view of the buffer.
+    #[test]
+    fn a_sixteen_bit_stroke_can_be_captured_and_undone() {
+        use crate::brush::{BrushPoint, BrushSettings, ToolType};
+        use crate::history::{Command, LayerPixelsDeltaCommand};
+        use crate::layer::LayerBuffer;
+        use crate::symmetry::SymmetryConfig;
+
+        let mut doc = Document::new(12, 12);
+        doc.is_transparent = true;
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            // Half-lattice values, so nothing here is a promoted 8-bit pixel.
+            let channels: Vec<u16> = (0..(12 * 12 * 4))
+                .map(|i| (i as u16).wrapping_mul(4099).wrapping_add(17))
+                .collect();
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        let mut brush = BrushSettings::default();
+        brush.tool = ToolType::Brush;
+        brush.size = 4.0;
+        brush.opacity = 1.0;
+        brush.hardness = 1.0;
+        brush.primary_color = Color::WHITE;
+
+        let point = |x: f32, y: f32| BrushPoint {
+            position: glam::Vec2::new(x, y),
+            pressure: 1.0,
+        };
+
+        let before = doc.get_layer(id).expect("layer").storage_bytes();
+        assert_eq!(before.len(), 12 * 12 * 4 * 2, "16-bit storage is two bytes per channel");
+
+        crate::rasterizer::StrokeRasterizer::paint_segment(
+            &mut doc,
+            point(2.0, 2.0),
+            point(9.0, 9.0),
+            &brush,
+            &SymmetryConfig::default(),
+            None,
+        );
+
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(
+            layer.format(),
+            crate::layer::PixelFormat::Srgb16,
+            "the stroke must not change storage"
+        );
+        let after = layer.storage_bytes();
+        assert_ne!(before, after, "the stroke must change the buffer for this test to mean anything");
+
+        let mut command = LayerPixelsDeltaCommand::new(id, "16-bit stroke", before.clone(), after.clone());
+        command.undo(&mut doc);
+        assert_eq!(
+            doc.get_layer(id).expect("layer").storage_bytes(),
+            before,
+            "undo of a 16-bit stroke must restore every byte"
+        );
+        command.redo(&mut doc);
+        assert_eq!(
+            doc.get_layer(id).expect("layer").storage_bytes(),
+            after,
+            "redo of a 16-bit stroke must restore every byte"
+        );
+    }
+
+    /// `storage_bytes()` must agree with the two format-specific views it generalises.
+    #[test]
+    fn storage_bytes_matches_the_eight_bit_buffer() {
+        let mut doc = Document::new(4, 3);
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            for (index, byte) in layer.as_srgb8_exact_mut().iter_mut().enumerate() {
+                *byte = (index * 29 % 253) as u8;
+            }
+        }
+
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(layer.storage_bytes(), layer.as_srgb8_exact());
+    }
 }

@@ -356,6 +356,7 @@ struct AureliaDesktopApp {
     last_canvas_pos: Option<Vec2>,
     last_pan_screen_pos: Option<Vec2>,
     stroke_points: Vec<BrushPoint>,
+    /// The active layer's storage bytes before the current stroke, whatever its pixel format.
     before_stroke_pixels: Vec<u8>,
     before_move_offset: (i32, i32),
     active_snapshot_taken: bool,
@@ -1372,7 +1373,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
             } else if tool == ToolType::Fill {
                 if let Some(layer) = app.state.document.active_layer() {
-                    app.before_stroke_pixels = layer.as_srgb8_exact().to_vec();
+                    app.before_stroke_pixels = layer.storage_bytes();
                     app.active_snapshot_taken = true;
                 }
                 let sel = app.state.selection.as_ref();
@@ -1389,7 +1390,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
             } else if tool == ToolType::Gradient {
                 if let Some(layer) = app.state.document.active_layer() {
-                    app.before_stroke_pixels = layer.as_srgb8_exact().to_vec();
+                    app.before_stroke_pixels = layer.storage_bytes();
                     app.active_snapshot_taken = true;
                 }
                 app.state.drag_start_canvas_pos = Some(canvas_pos);
@@ -1468,7 +1469,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 if pts_len >= 2 && app.state.polygon_points[0].distance(canvas_pos) < 15.0 {
                     // Close polygon
                     if let Some(layer) = app.state.document.active_layer() {
-                        app.before_stroke_pixels = layer.as_srgb8_exact().to_vec();
+                        app.before_stroke_pixels = layer.storage_bytes();
                         app.active_snapshot_taken = true;
                     }
                     let pts = app.state.polygon_points.clone();
@@ -1500,7 +1501,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             } else if tool.is_shape_tool() || tool == ToolType::Marquee || tool == ToolType::Crop {
                 if tool.is_shape_tool() {
                     if let Some(layer) = app.state.document.active_layer() {
-                        app.before_stroke_pixels = layer.as_srgb8_exact().to_vec();
+                        app.before_stroke_pixels = layer.storage_bytes();
                         app.active_snapshot_taken = true;
                     }
                 }
@@ -1522,7 +1523,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     }
                 } else {
                     if let Some(layer) = app.state.document.active_layer() {
-                        app.before_stroke_pixels = layer.as_srgb8_exact().to_vec();
+                        app.before_stroke_pixels = layer.storage_bytes();
                         app.active_snapshot_taken = true;
                     }
                     let point = BrushPoint::new(canvas_pos, 1.0);
@@ -1723,7 +1724,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 if app.stroke_dirty {
                     if let Some(layer) = app.state.document.active_layer() {
                         let before = std::mem::take(&mut app.before_stroke_pixels);
-                        let after = layer.as_srgb8_exact().to_vec();
+                        let after = layer.storage_bytes();
                         let cmd = Box::new(LayerPixelsDeltaCommand::new(layer.id, app.state.brush.tool.label(), before, after));
                         app.state.history.push(cmd);
                     }
