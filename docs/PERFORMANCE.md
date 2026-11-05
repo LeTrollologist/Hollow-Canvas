@@ -36,11 +36,25 @@ number is the like-for-like path a 16-bit document uses. The gate-2 budget for s
 u8, so 67% passes with limited headroom — sparse is the first performance item in the
 stabilization phase.
 
+## Navigator thumbnail budget
+
+The viewport keeps the Navigator live while painting. A 320 px thumbnail rebuilt from the latest
+composite costs, on the same machine, median of 7 rounds x 200 iterations:
+
+| Document | Median per refresh | Maximum refresh rate |
+| :--- | ---: | ---: |
+| 1920x1080 | **1.62 ms** | ~616/s |
+| 3840x2160 | **2.72 ms** | ~368/s |
+
+At 4K this is ~16% of a 16.7 ms frame, so the app caps live rebuilds at **~30 Hz while a stroke is
+in progress**; the final refresh after mouse-up is immediate. Idle frames still do no work.
+
 ## Reproduce
 
 ```powershell
 cargo run --release -p aurelia-render --example bench_composite
 cargo run --release -p aurelia-render --example bench_brush
+cargo run --release -p aurelia-render --example bench_navigator
 cargo test -p aurelia-core gate_2 --release -- --ignored --nocapture
 ```
 

@@ -76,18 +76,20 @@ Progress:
   paper or transparency.
 - Deterministic tests now cover empty 8-bit and 16-bit paper, dark paper, the checkerboard,
   zoom/pan bounds, DPI point/pixel conversion, viewport-fraction mapping and dock clamping.
+- The Navigator budget is measured: 1.62 ms per refresh at 1080p and 2.72 ms at 4K. Live
+  rebuilds are capped at ~30 Hz during a stroke, with an immediate final refresh on mouse-up.
+- The 16-bit presentation decision is written:
+  [docs/16BIT_PRESENTATION.md](docs/16BIT_PRESENTATION.md). It is deferred behind a 10-bit/HDR
+  output proposal, not implemented by adding a texture.
 
-Remaining:
-
-- Measure the Navigator's per-frame refresh cost and coalesce uploads if it shows up in frame
-  timing.
-- Run the 16-bit presentation spike and write the decision.
+Status: **code complete; observation continues.** The remaining item is the two-release window
+with no canvas-invisible/black-viewport report.
 
 Exit criteria:
 
-- No canvas-invisible/black-viewport report across two consecutive patch releases.
-- Viewport tests run in the normal local suite, not only by hand.
-- A written decision on 16-bit presentation: adopt, defer with a date, or reject with evidence.
+- [ ] No canvas-invisible/black-viewport report across two consecutive patch releases.
+- [x] Viewport tests run in the normal local suite, not only by hand.
+- [x] A written decision on 16-bit presentation: adopt, defer with a date, or reject with evidence.
 
 ---
 
