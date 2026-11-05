@@ -692,3 +692,34 @@ or the issue tracker.
 
 Free transform's gate is now in place: `eight_bit_transform_output_is_unchanged` pins the
 affine, bicubic, quad, mesh and TPS renderers before their source sampling becomes generic.
+
+## Free transform: acceptance conditions
+
+These are non-negotiable for the refactor, and each maps to a test. They are listed here so a
+review can check them against the diff rather than against a conversation.
+
+1. **All five existing 8-bit digests remain unchanged.** `eight_bit_transform_output_is_unchanged`
+   covers affine, bicubic, quad, mesh and TPS. Any movement is a failure, not a tolerance.
+2. **A 16-bit source sample never passes through an 8-bit intermediate.** The test is an
+   off-lattice patch: sample it through the renderer and require off-lattice output. A path that
+   downconverted would collapse to multiples of 257.
+3. **Previews and commits preserve the document format.** Transform never calls `set_pixels` and
+   never reconstructs the buffer; format is asserted after begin, after preview and after commit.
+4. **A failed or cancelled transform leaves no partial state.** Cancelling restores storage bytes
+   exactly, and the history stack gains nothing.
+
+Additional coverage required beyond the five digests:
+
+- **Repeated previews.** `update_transform_preview` must be idempotent: N previews from the same
+  session produce the same buffer as one, because it restores from `original_layer_pixels` rather
+  than compositing over its own output.
+- **Fractional-coordinate sampling.** Sample positions that land between pixels, at each
+  interpolation mode, so the weighting is exercised rather than only integer offsets.
+- **Transparent edges.** A patch with zero alpha at its border must not darken the destination
+  edge (the alpha-unpremultiply path in `composite_pixel_in_place`).
+- **All interpolation modes** — nearest, bilinear, bicubic — for at least the affine and quad
+  paths, not just the mode the UI defaults to.
+
+Order of work, per the milestone: **correctness first, then measure, then optimise.** No
+throughput change is made in the refactor commit; if genericising the source sampling costs
+performance, that is measured in milestone 4 and addressed in milestone 5, not hidden here.
