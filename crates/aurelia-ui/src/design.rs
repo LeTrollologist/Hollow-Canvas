@@ -13,31 +13,32 @@ use egui::{
 use crate::fonts;
 
 // ── Palette: warm ink + golden hour ─────────────────────────────────────
-pub const INK_BASE: Color32 = Color32::from_rgb(12, 9, 7);
-pub const INK_DEEP: Color32 = Color32::from_rgb(11, 8, 6);
-pub const INK_SUNKEN: Color32 = Color32::from_rgb(15, 12, 9);
-pub const INK_PANEL: Color32 = Color32::from_rgb(23, 19, 14);
+pub const INK_BASE: Color32 = Color32::from_rgb(18, 14, 10);
+pub const INK_DEEP: Color32 = Color32::from_rgb(14, 11, 8);
+pub const INK_SUNKEN: Color32 = Color32::from_rgb(23, 18, 13);
+pub const INK_PANEL: Color32 = Color32::from_rgb(27, 22, 16);
 /// Panels are painted as a very shallow vertical gradient between these two.
-pub const INK_PANEL_TOP: Color32 = Color32::from_rgb(29, 24, 18);
-pub const INK_PANEL_BOTTOM: Color32 = Color32::from_rgb(19, 15, 11);
-pub const INK_RAISED: Color32 = Color32::from_rgb(38, 30, 22);
-pub const INK_RAISED_TOP: Color32 = Color32::from_rgb(50, 41, 29);
+pub const INK_PANEL_TOP: Color32 = Color32::from_rgb(36, 29, 21);
+pub const INK_PANEL_BOTTOM: Color32 = Color32::from_rgb(23, 18, 13);
+pub const INK_RAISED: Color32 = Color32::from_rgb(42, 33, 23);
+pub const INK_RAISED_TOP: Color32 = Color32::from_rgb(58, 46, 32);
 
-pub const HAIRLINE: Color32 = Color32::from_rgb(58, 45, 35);
+pub const HAIRLINE: Color32 = Color32::from_rgb(58, 46, 36);
 /// Low-contrast rule for section captions (fades out to the right).
 pub const HAIRLINE_SOFT: Color32 = Color32::from_rgb(96, 76, 56);
 /// 1 px highlight along the top inside edge of a raised surface.
 pub const INNER_GLOW: Color32 = Color32::from_rgba_premultiplied(255, 236, 198, 22);
 
-pub const TEXT: Color32 = Color32::from_rgb(244, 233, 216);
+pub const TEXT: Color32 = Color32::from_rgb(243, 233, 216);
 pub const TEXT_DIM: Color32 = Color32::from_rgb(200, 181, 158);
-pub const TEXT_MUTED: Color32 = Color32::from_rgb(146, 128, 108);
+pub const TEXT_MUTED: Color32 = Color32::from_rgb(168, 148, 124);
 /// Warm champagne used for section captions; reads as gold without shouting.
 pub const CAPTION: Color32 = Color32::from_rgb(188, 162, 124);
 
-pub const GOLD: Color32 = Color32::from_rgb(246, 196, 90);
-pub const GOLD_DEEP: Color32 = Color32::from_rgb(198, 143, 48);
-pub const AMBER: Color32 = Color32::from_rgb(232, 150, 63);
+pub const GOLD: Color32 = Color32::from_rgb(217, 164, 65);
+pub const GOLD_BRIGHT: Color32 = Color32::from_rgb(240, 200, 120);
+pub const GOLD_DEEP: Color32 = Color32::from_rgb(140, 94, 36);
+pub const AMBER: Color32 = Color32::from_rgb(210, 142, 67);
 pub const CORAL: Color32 = Color32::from_rgb(228, 112, 95);
 pub const TEAL: Color32 = Color32::from_rgb(95, 179, 163);
 

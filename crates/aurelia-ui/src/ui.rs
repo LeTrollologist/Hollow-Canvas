@@ -2,7 +2,7 @@ use crate::design;
 use crate::fonts;
 
 use crate::icons::draw_tool_icon;
-use crate::state::{ActiveFilterModal, AppState, CanvasPreset, PendingFileAction};
+use crate::state::{ActiveFilterModal, AppState, CanvasPreset, PendingFileAction, WindowAction};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Stroke, Vec2};
 use aurelia_core::brush::{EraserMode, GradientType, ShapeFillMode, ToolType};
 use aurelia_core::color::{Color, DEFAULT_PALETTE};
@@ -159,6 +159,135 @@ fn screen_px(ctx: &egui::Context) -> (f32, f32) {
     (sr.width() * ppp, sr.height() * ppp)
 }
 
+/// Height of the custom caption row, in egui points. Keep in sync with the
+/// native hit-test in `aurelia-app` (35 points including the 5 pt frame pad).
+pub const TITLE_BAR_HEIGHT: f32 = 30.0;
+const TITLE_BUTTON_WIDTH: f32 = 46.0;
+
+#[derive(Clone, Copy)]
+enum TitleButtonKind {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+fn title_button(ui: &mut egui::Ui, kind: TitleButtonKind, maximized: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(TITLE_BUTTON_WIDTH, TITLE_BAR_HEIGHT),
+        egui::Sense::click(),
+    );
+    let label = match kind {
+        TitleButtonKind::Minimize => "Minimize window",
+        TitleButtonKind::Maximize => "Maximize or restore window",
+        TitleButtonKind::Close => "Close window",
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    if response.has_focus() {
+        ui.painter()
+            .rect_stroke(rect.shrink(1.0), 0.0, Stroke::new(1.0, design::GOLD));
+    }
+    let hovered = response.hovered();
+    let close = matches!(kind, TitleButtonKind::Close);
+    let fill = if hovered {
+        if close {
+            Color32::from_rgb(190, 52, 52)
+        } else {
+            Color32::from_rgba_unmultiplied(217, 164, 65, 22)
+        }
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(rect, 0.0, fill);
+    let colour = if hovered && close {
+        Color32::WHITE
+    } else if hovered {
+        design::GOLD_BRIGHT
+    } else {
+        design::TEXT
+    };
+    let stroke = Stroke::new(1.3, colour);
+    let centre = rect.center();
+    match kind {
+        TitleButtonKind::Minimize => {
+            ui.painter().line_segment(
+                [
+                    egui::pos2(centre.x - 6.0, centre.y + 4.0),
+                    egui::pos2(centre.x + 6.0, centre.y + 4.0),
+                ],
+                stroke,
+            );
+        }
+        TitleButtonKind::Maximize => {
+            let front = Rect::from_center_size(centre, egui::vec2(11.0, 9.0));
+            if maximized {
+                let back = front.translate(egui::vec2(2.0, -2.0));
+                ui.painter().rect_stroke(back, 0.0, stroke);
+                ui.painter().rect_filled(
+                    Rect::from_min_max(front.min, back.max),
+                    0.0,
+                    design::INK_PANEL_TOP,
+                );
+            }
+            ui.painter().rect_stroke(front, 0.0, stroke);
+        }
+        TitleButtonKind::Close => {
+            ui.painter().line_segment(
+                [centre + egui::vec2(-5.5, -5.5), centre + egui::vec2(5.5, 5.5)],
+                stroke,
+            );
+            ui.painter().line_segment(
+                [centre + egui::vec2(5.5, -5.5), centre + egui::vec2(-5.5, 5.5)],
+                stroke,
+            );
+        }
+    }
+    response.clicked()
+}
+
+fn render_title_bar(ui: &mut egui::Ui, state: &mut AppState) {
+    // Paint the caption surface explicitly: the panel gradient covers the menu
+    // row, but the caption row can otherwise expose the DWM frame colour.
+    let bar = Rect::from_min_size(
+        ui.cursor().min,
+        egui::vec2(ui.available_width(), TITLE_BAR_HEIGHT),
+    );
+    ui.painter().rect_filled(bar, 0.0, design::INK_PANEL_TOP);
+    ui.painter().line_segment(
+        [bar.left_bottom(), bar.right_bottom()],
+        Stroke::new(1.0, design::HAIRLINE),
+    );
+    ui.set_min_height(TITLE_BAR_HEIGHT);
+    ui.horizontal(|ui| {
+        let (mark, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+        ui.painter()
+            .circle_filled(mark.center(), 5.0, design::GOLD.linear_multiply(0.18));
+        ui.painter().circle_filled(mark.center(), 2.4, design::GOLD);
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new("Aurelia Studio")
+                .size(10.5)
+                .color(design::TEXT_MUTED),
+        );
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(state.document_title())
+                .size(12.0)
+                .color(design::TEXT_DIM),
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if title_button(ui, TitleButtonKind::Close, state.is_maximized) {
+                state.window_action = Some(WindowAction::Close);
+            }
+            if title_button(ui, TitleButtonKind::Maximize, state.is_maximized) {
+                state.window_action = Some(WindowAction::ToggleMaximize);
+            }
+            if title_button(ui, TitleButtonKind::Minimize, state.is_maximized) {
+                state.window_action = Some(WindowAction::Minimize);
+            }
+        });
+    });
+}
+
 pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
     state.ui_ppp = ctx.pixels_per_point().max(0.01);
     let accent = state.document.theme.accent_color();
@@ -188,6 +317,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     design::INK_PANEL_TOP,
                     design::INK_PANEL_BOTTOM,
                 );
+                render_title_bar(ui, state);
+                ui.add_space(1.0);
                 ui.horizontal(|ui| {
                     // Left: lamp mark, wordmark, version chip
                     let (mark, _) =

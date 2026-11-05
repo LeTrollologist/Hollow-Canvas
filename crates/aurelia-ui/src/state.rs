@@ -159,6 +159,13 @@ pub enum ReferenceMode {
     CanvasTracing,  // Pinned directly to canvas for tracing paper overlay/underlay
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowAction {
+    Minimize,
+    ToggleMaximize,
+    Close,
+}
+
 pub struct AppState {
     pub document: Document,
     pub history: HistoryStack,
@@ -263,6 +270,9 @@ pub struct AppState {
     /// Separate opt-in: include the project display name in the activity.
     pub discord_show_project_name: bool,
     pub show_discord_presence_dialog: bool,
+    // ── Custom window chrome ──
+    pub window_action: Option<WindowAction>,
+    pub is_maximized: bool,
     // ── Export settings ──
     pub jpeg_quality: u8,
     pub sprite_columns: u32,
@@ -475,6 +485,8 @@ impl AppState {
             discord_presence_configured: false,
             discord_show_project_name: false,
             show_discord_presence_dialog: false,
+            window_action: None,
+            is_maximized: false,
             jpeg_quality: 90,
             sprite_columns: 4,
             export_format: 0,

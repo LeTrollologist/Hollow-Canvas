@@ -89,6 +89,31 @@ struct RECT {
 }
 
 #[repr(C)]
+struct MARGINS {
+    left: i32,
+    right: i32,
+    top: i32,
+    bottom: i32,
+}
+
+#[repr(C)]
+struct MONITORINFO {
+    cb_size: u32,
+    rc_monitor: RECT,
+    rc_work: RECT,
+    dw_flags: u32,
+}
+
+#[repr(C)]
+struct MINMAXINFO {
+    pt_reserved: POINT,
+    pt_max_size: POINT,
+    pt_max_position: POINT,
+    pt_min_track_size: POINT,
+    pt_max_track_size: POINT,
+}
+
+#[repr(C)]
 struct PAINTSTRUCT {
     hdc: HDC,
     f_erase: i32,
@@ -191,6 +216,22 @@ extern "system" {
     fn SetProcessDpiAwarenessContext(value: isize) -> i32;
     fn GetPointerType(pointerId: u32, pointerType: *mut u32) -> i32;
     fn GetPointerPenInfo(pointerId: u32, penInfo: *mut std::ffi::c_void) -> i32;
+    fn FreeConsole() -> i32;
+    fn GetConsoleWindow() -> HWND;
+    fn GetConsoleProcessList(processes: *mut u32, count: u32) -> u32;
+    fn SetStdHandle(nStdHandle: u32, hHandle: *mut std::ffi::c_void) -> i32;
+    fn GetDpiForWindow(hwnd: HWND) -> u32;
+    fn IsZoomed(hwnd: HWND) -> i32;
+    fn PostMessageW(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> i32;
+    fn SetWindowPos(hwnd: HWND, after: HWND, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+    fn MonitorFromWindow(hwnd: HWND, flags: u32) -> isize;
+    fn GetMonitorInfoW(monitor: isize, info: *mut MONITORINFO) -> i32;
+}
+
+#[link(name = "dwmapi")]
+extern "system" {
+    fn DwmSetWindowAttribute(hwnd: HWND, attribute: u32, value: *const std::ffi::c_void, size: u32) -> i32;
+    fn DwmExtendFrameIntoClientArea(hwnd: HWND, margins: *const MARGINS) -> i32;
 }
 
 fn vk_to_egui_key(vk: usize) -> Option<egui::Key> {
@@ -307,6 +348,7 @@ struct AureliaDesktopApp {
     buffer: Vec<u32>,
     win_w: usize,
     win_h: usize,
+    dpi_scale: f32,
     is_pointer_down: bool,
     is_drawing_on_canvas: bool,
     is_space_down: bool,
@@ -640,6 +682,96 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
     const WM_KEYDOWN: UINT = 0x0100;
     const WM_KEYUP: UINT = 0x0101;
     const WM_CHAR: UINT = 0x0102;
+    const WM_NCCALCSIZE: UINT = 0x0083;
+    const WM_NCHITTEST: UINT = 0x0084;
+    const WM_GETMINMAXINFO: UINT = 0x0024;
+
+    if msg == WM_GETMINMAXINFO && lparam != 0 {
+        let info = &mut *(lparam as *mut MINMAXINFO);
+        let monitor = MonitorFromWindow(hwnd, 2 /* MONITOR_DEFAULTTONEAREST */);
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cb_size = std::mem::size_of::<MONITORINFO>() as u32;
+        if monitor != 0 && GetMonitorInfoW(monitor, &mut mi) != 0 {
+            info.pt_max_position.x = mi.rc_work.left - mi.rc_monitor.left;
+            info.pt_max_position.y = mi.rc_work.top - mi.rc_monitor.top;
+            info.pt_max_size.x = mi.rc_work.right - mi.rc_work.left;
+            info.pt_max_size.y = mi.rc_work.bottom - mi.rc_work.top;
+        }
+        return 0;
+    }
+
+    if msg == WM_NCCALCSIZE {
+        // Remove the standard non-client frame; the title bar is drawn by egui.
+        return 0;
+    }
+
+    if msg == 0x00A1 && wparam == 9 {
+        // WM_NCLBUTTONDOWN over HTMAXBUTTON. Handle the click ourselves so the
+        // custom-drawn button still maximizes while the hit target keeps the
+        // Windows 11 snap-layout flyout available.
+        let cmd = if IsZoomed(hwnd) != 0 { 9 } else { 3 };
+        ShowWindow(hwnd, cmd);
+        return 0;
+    }
+
+    if msg == WM_NCHITTEST {
+        let scale = GetDpiForWindow(hwnd) as f32 / 96.0;
+        let border = (8.0 * scale).round() as i32;
+        let title = (35.0 * scale).round() as i32;
+        let buttons = (3.0 * 46.0 * scale).round() as i32;
+        let mut pt = POINT {
+            x: (lparam as u32 & 0xFFFF) as i16 as i32,
+            y: ((lparam as u32 >> 16) & 0xFFFF) as i16 as i32,
+        };
+        ScreenToClient(hwnd, &mut pt);
+        let mut rc: RECT = std::mem::zeroed();
+        GetClientRect(hwnd, &mut rc);
+        let maximized = IsZoomed(hwnd) != 0;
+
+        if !maximized {
+            let left = pt.x < border;
+            let right = pt.x >= rc.right - border;
+            let top = pt.y < border;
+            let bottom = pt.y >= rc.bottom - border;
+            if top && left {
+                return 13;
+            }
+            if top && right {
+                return 14;
+            }
+            if bottom && left {
+                return 16;
+            }
+            if bottom && right {
+                return 17;
+            }
+            if left {
+                return 10;
+            }
+            if right {
+                return 11;
+            }
+            if top {
+                return 12;
+            }
+            if bottom {
+                return 15;
+            }
+        }
+
+        if pt.y < title {
+            let button = (46.0 * scale).round() as i32;
+            if pt.x >= rc.right - 2 * button && pt.x < rc.right - button {
+                return 9; // HTMAXBUTTON
+            }
+            if pt.x >= rc.right - buttons {
+                return 1; // HTCLIENT
+            }
+            return 2; // HTCAPTION
+        }
+        return 1; // HTCLIENT
+    }
+
 
     let app = if !GLOBAL_APP_PTR.is_null() {
         &mut *GLOBAL_APP_PTR
@@ -720,6 +852,29 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
         }
         WM_DESTROY => {
             PostQuitMessage(0);
+            0
+        }
+        0x02E0 => {
+            // WM_DPICHANGED: move to the suggested rect and rescale the UI.
+            let new_scale = (wparam & 0xFFFF) as f32 / 96.0;
+            let ratio = new_scale / app.dpi_scale.max(0.01);
+            app.dpi_scale = new_scale;
+            app.egui_ctx.set_pixels_per_point(new_scale);
+            app.state.left_panel_w *= ratio;
+            app.state.right_panel_w *= ratio;
+            app.state.header_h *= ratio;
+            app.state.footer_h *= ratio;
+            let suggested = &*(lparam as *const RECT);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                suggested.left,
+                suggested.top,
+                suggested.right - suggested.left,
+                suggested.bottom - suggested.top,
+                0x0004 | 0x0010, // SWP_NOZORDER | SWP_NOACTIVATE
+            );
+            InvalidateRect(hwnd, std::ptr::null(), 0);
             0
         }
         WM_SIZE => {
@@ -1978,6 +2133,22 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     render_ui(ctx, &mut app.state);
                 });
 
+                app.state.is_maximized = IsZoomed(hwnd) != 0;
+                if let Some(action) = app.state.window_action.take() {
+                    match action {
+                        aurelia_ui::WindowAction::Minimize => {
+                            ShowWindow(hwnd, 6); // SW_MINIMIZE
+                        }
+                        aurelia_ui::WindowAction::ToggleMaximize => {
+                            let cmd = if IsZoomed(hwnd) != 0 { 9 } else { 3 };
+                            ShowWindow(hwnd, cmd);
+                        }
+                        aurelia_ui::WindowAction::Close => {
+                            PostMessageW(hwnd, 0x0010, 0, 0); // WM_CLOSE
+                        }
+                    }
+                }
+
                 let project = project_name(app.state.document_path.as_deref());
                 app.presence.update(PresenceUpdate {
                     enabled: app.state.discord_presence,
@@ -2425,7 +2596,68 @@ fn to_wide(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(Some(0)).collect()
 }
 
+/// Release GUI launches detach the console created by the console subsystem.
+/// CLI invocations keep their inherited terminal handles untouched.
+#[cfg(all(windows, not(debug_assertions)))]
+fn prepare_console() {
+    use std::os::windows::io::AsRawHandle;
+
+    const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5;
+    const STD_ERROR_HANDLE: u32 = 0xFFFF_FFF4;
+
+    let cli = std::env::args().skip(1).any(|arg| {
+        matches!(
+            arg.as_str(),
+            "export" | "inspect" | "--help" | "-h" | "--register-shell" | "--unregister-shell"
+        )
+    });
+    if cli {
+        return;
+    }
+
+    unsafe {
+        let console = GetConsoleWindow();
+        if !console.is_null() {
+            let mut pids = [0u32; 2];
+            let owners = GetConsoleProcessList(pids.as_mut_ptr(), 2);
+            if owners <= 1 {
+                ShowWindow(console, 0); // SW_HIDE
+            }
+            FreeConsole();
+        }
+        if let Ok(null) = std::fs::OpenOptions::new().write(true).open("NUL") {
+            let handle = null.as_raw_handle() as *mut _;
+            SetStdHandle(STD_OUTPUT_HANDLE, handle);
+            SetStdHandle(STD_ERROR_HANDLE, handle);
+            std::mem::forget(null);
+        }
+    }
+}
+
+/// Ask DWM for the dark, rounded, accent-bordered frame. Attributes unsupported
+/// on the running Windows build simply fail and leave the default frame intact.
+unsafe fn apply_window_theme(hwnd: HWND) {
+    let dark: i32 = 1;
+    let border: u32 = 0x0041_A4D9; // COLORREF for #D9A441
+    let corner: i32 = 2; // DWMWCP_ROUND
+    let backdrop: i32 = 2; // DWMSBT_MAINWINDOW (Mica), ignored on Windows 10
+    let _ = DwmSetWindowAttribute(hwnd, 20, &dark as *const _ as *const _, 4);
+    let _ = DwmSetWindowAttribute(hwnd, 34, &border as *const _ as *const _, 4);
+    let _ = DwmSetWindowAttribute(hwnd, 33, &corner as *const _ as *const _, 4);
+    let _ = DwmSetWindowAttribute(hwnd, 38, &backdrop as *const _ as *const _, 4);
+    let margins = MARGINS {
+        left: 1,
+        right: 1,
+        top: 1,
+        bottom: 1,
+    };
+    let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(all(windows, not(debug_assertions)))]
+    prepare_console();
+
     let args: Vec<String> = std::env::args().collect();
 
     // CLI Subcommands & Flags
@@ -2633,6 +2865,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         buffer: vec![0u32; initial_width * initial_height],
         win_w: initial_width,
         win_h: initial_height,
+        dpi_scale,
         is_pointer_down: false,
         is_drawing_on_canvas: false,
         is_space_down: false,
@@ -2706,6 +2939,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
 
+        apply_window_theme(hwnd);
         DragAcceptFiles(hwnd, 1);
 
         // Load and set custom Application & Taskbar Icon
