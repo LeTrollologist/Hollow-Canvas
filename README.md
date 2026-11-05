@@ -80,6 +80,9 @@
     <a href="https://github.com/LeTrollologist/Aurelia/wiki">
     <img src="https://img.shields.io/badge/Wiki-Docs,_guides,_%26_specs!-3FA796?style=for-the-badge&labelColor=1A120B" alt="Wiki" />
   </a>
+  <a href="https://discord.gg/QujPkvhbhc">
+    <img src="https://img.shields.io/badge/%E2%9A%A1_Discord_Support-Server-F6C45A?style=for-the-badge&labelColor=1A120B" alt="Discord" />
+  </a>
 </p>
 
 </div>
