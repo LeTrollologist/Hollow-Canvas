@@ -1,4 +1,4 @@
-﻿use glam::Vec2;
+use glam::Vec2;
 use aurelia_core::brush::{BrushPoint, ToolType};
 use aurelia_core::history::LayerPixelsDeltaCommand;
 use aurelia_core::rasterizer::StrokeRasterizer;
@@ -2155,6 +2155,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             }
             app.last_canvas_pos = None;
             app.last_pan_screen_pos = None;
+            app.state.snap_markers.clear();
             InvalidateRect(hwnd, std::ptr::null(), 0);
             0
         }
