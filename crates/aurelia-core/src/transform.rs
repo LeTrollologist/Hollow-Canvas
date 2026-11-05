@@ -1164,3 +1164,160 @@ mod tests {
     }
 }
 
+
+// ── Channel-generic sampling (Commit A of the free-transform refactor) ──────────────────────
+//
+// These are the same samplers, reading any storage width and returning **rounded integer
+// channels in the source's own scale** (0..=255 for `u8`, 0..=65535 for `u16`). Returning the
+// source scale - not a normalised 0..1 - is what lets the renderers keep their existing integer
+// arithmetic: for a `u8` source the result is exactly what the `&[u8]` samplers above produce,
+// which `scaled_samplers_reproduce_the_eight_bit_samplers` asserts over a grid of coordinates.
+
+/// Nearest-neighbour sampling into working precision, in the source channel's own scale.
+#[inline]
+pub fn sample_nearest_scaled<T: crate::pixel::Channel>(
+    src: &[T],
+    w: u32,
+    h: u32,
+    x: f32,
+    y: f32,
+) -> [f32; 4] {
+    let ix = x.floor() as isize;
+    let iy = y.floor() as isize;
+    if ix >= 0 && ix < w as isize && iy >= 0 && iy < h as isize {
+        let idx = (iy as usize * w as usize + ix as usize) * 4;
+        if idx + 3 < src.len() {
+            return [
+                src[idx].to_scaled_f32(),
+                src[idx + 1].to_scaled_f32(),
+                src[idx + 2].to_scaled_f32(),
+                src[idx + 3].to_scaled_f32(),
+            ];
+        }
+    }
+    [0.0; 4]
+}
+
+/// Bilinear sub-pixel sampling into working precision, in the source channel's own scale.
+#[inline]
+pub fn sample_bilinear_scaled<T: crate::pixel::Channel>(
+    src: &[T],
+    w: u32,
+    h: u32,
+    x: f32,
+    y: f32,
+) -> [f32; 4] {
+    if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 {
+        return sample_nearest_scaled(src, w, h, x.round(), y.round());
+    }
+
+    let x0 = x.floor() as usize;
+    let y0 = y.floor() as usize;
+    let x1 = (x0 + 1).min(w as usize - 1);
+    let y1 = (y0 + 1).min(h as usize - 1);
+
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let inv_fx = 1.0 - fx;
+    let inv_fy = 1.0 - fy;
+
+    let w00 = inv_fx * inv_fy;
+    let w10 = fx * inv_fy;
+    let w01 = inv_fx * fy;
+    let w11 = fx * fy;
+
+    let get_px = |px: usize, py: usize| -> [f32; 4] {
+        let idx = (py * w as usize + px) * 4;
+        [
+            src[idx].to_scaled_f32(),
+            src[idx + 1].to_scaled_f32(),
+            src[idx + 2].to_scaled_f32(),
+            src[idx + 3].to_scaled_f32(),
+        ]
+    };
+
+    let p00 = get_px(x0, y0);
+    let p10 = get_px(x1, y0);
+    let p01 = get_px(x0, y1);
+    let p11 = get_px(x1, y1);
+
+    let mut out = [0.0_f32; 4];
+    for ch in 0..4 {
+        out[ch] = (p00[ch] * w00 + p10[ch] * w10 + p01[ch] * w01 + p11[ch] * w11).round();
+    }
+    out
+}
+
+/// Bicubic (16-sample Catmull-Rom) sampling into working precision, in the source's scale.
+#[inline]
+pub fn sample_bicubic_scaled<T: crate::pixel::Channel>(
+    src: &[T],
+    w: u32,
+    h: u32,
+    x: f32,
+    y: f32,
+) -> [f32; 4] {
+    if x < 0.0 || y < 0.0 || x >= w as f32 || y >= h as f32 {
+        return [0.0; 4];
+    }
+
+    let x_int = x.floor() as i32;
+    let y_int = y.floor() as i32;
+    let tx = x - x_int as f32;
+    let ty = y - y_int as f32;
+    let max = T::MAX_SCALED as f32;
+
+    let get_px = |ix: i32, iy: i32| -> [f32; 4] {
+        let cx = ix.clamp(0, w as i32 - 1) as usize;
+        let cy = iy.clamp(0, h as i32 - 1) as usize;
+        let idx = (cy * w as usize + cx) * 4;
+        [
+            src[idx].to_scaled_f32(),
+            src[idx + 1].to_scaled_f32(),
+            src[idx + 2].to_scaled_f32(),
+            src[idx + 3].to_scaled_f32(),
+        ]
+    };
+
+    let mut col_results = [[0.0_f32; 4]; 4];
+    for m in 0..4 {
+        let sample_y = y_int - 1 + m;
+        let p0 = get_px(x_int - 1, sample_y);
+        let p1 = get_px(x_int, sample_y);
+        let p2 = get_px(x_int + 1, sample_y);
+        let p3 = get_px(x_int + 2, sample_y);
+        for ch in 0..4 {
+            col_results[m as usize][ch] = cubic_hermite(p0[ch], p1[ch], p2[ch], p3[ch], tx);
+        }
+    }
+
+    let mut out = [0.0_f32; 4];
+    for ch in 0..4 {
+        let v = cubic_hermite(
+            col_results[0][ch],
+            col_results[1][ch],
+            col_results[2][ch],
+            col_results[3][ch],
+            ty,
+        );
+        out[ch] = v.round().clamp(0.0, max);
+    }
+    out
+}
+
+/// Interpolated sampling into working precision, in the source channel's own scale.
+#[inline]
+pub fn sample_interpolated_scaled<T: crate::pixel::Channel>(
+    src: &[T],
+    w: u32,
+    h: u32,
+    x: f32,
+    y: f32,
+    mode: InterpolationMode,
+) -> [f32; 4] {
+    match mode {
+        InterpolationMode::Nearest => sample_nearest_scaled(src, w, h, x, y),
+        InterpolationMode::Bilinear => sample_bilinear_scaled(src, w, h, x, y),
+        InterpolationMode::Bicubic => sample_bicubic_scaled(src, w, h, x, y),
+    }
+}

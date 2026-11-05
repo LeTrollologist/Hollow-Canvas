@@ -4035,3 +4035,121 @@ mod transform_baseline {
 
     }
 }
+
+/// Commit A of the free-transform refactor: the channel-generic samplers must reproduce the
+/// existing `&[u8]` samplers **exactly**, over a deterministic grid rather than a few points.
+#[cfg(test)]
+mod generic_sampling {
+    use crate::transform::{
+        sample_bicubic, sample_bilinear, sample_interpolated, sample_interpolated_scaled,
+        sample_nearest,
+    };
+    use crate::transform::InterpolationMode;
+
+    const W: u32 = 8;
+    const H: u32 = 8;
+
+    fn source() -> Vec<u8> {
+        let mut bytes = vec![0u8; (W * H * 4) as usize];
+        for (index, px) in bytes.chunks_exact_mut(4).enumerate() {
+            px[0] = ((index * 37) % 256) as u8;
+            px[1] = ((index * 11 + 5) % 256) as u8;
+            px[2] = ((index * 53 + 19) % 256) as u8;
+            // Some fully transparent pixels, so the alpha path is exercised too.
+            px[3] = if index % 5 == 0 { 0 } else { 255 - (index % 128) as u8 };
+        }
+        bytes
+    }
+
+    /// Integer, fractional, on-boundary, just-outside and far-outside coordinates.
+    fn coordinates() -> Vec<f32> {
+        let mut values = vec![-4.0, -1.5, -0.75, 0.0, 0.5, 1.0, 1.25, 2.5, 3.0, 6.5];
+        values.push(W as f32 - 1.0);
+        values.push(W as f32 - 0.5);
+        values.push(W as f32);
+        values.push(W as f32 + 0.5);
+        values.push(W as f32 + 3.0);
+        values
+    }
+
+    #[test]
+    fn scaled_samplers_reproduce_the_eight_bit_samplers() {
+        let src = source();
+        let coords = coordinates();
+        let mut checked = 0usize;
+
+        for &x in &coords {
+            for &y in &coords {
+                for mode in [
+                    InterpolationMode::Nearest,
+                    InterpolationMode::Bilinear,
+                    InterpolationMode::Bicubic,
+                ] {
+                    let (r, g, b, a) = sample_interpolated(&src, W, H, x, y, mode);
+                    let scaled = sample_interpolated_scaled::<u8>(&src, W, H, x, y, mode);
+                    let quantised = [scaled[0] as u8, scaled[1] as u8, scaled[2] as u8, scaled[3] as u8];
+                    assert_eq!(
+                        [r, g, b, a],
+                        quantised,
+                        "{mode:?} at ({x}, {y}) differs between the byte sampler and the scaled one"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 500, "the grid exercised only {checked} samples");
+    }
+
+    /// The per-mode entry points must agree with the dispatcher (and therefore with the old
+    /// per-mode functions), including the out-of-bounds branches that differ per mode:
+    /// bilinear clamps to the nearest pixel, bicubic returns transparent.
+    #[test]
+    fn per_mode_wrappers_match_the_old_behaviour() {
+        let src = source();
+        for &x in &[0.5f32, 3.25, 7.0, 9.0] {
+            for &y in &[0.5f32, 2.75, 7.0, 9.0] {
+                let nearest = crate::transform::sample_nearest_scaled::<u8>(&src, W, H, x, y);
+                let (r, g, b, a) = sample_nearest(&src, W, H, x, y);
+                assert_eq!([nearest[0] as u8, nearest[1] as u8, nearest[2] as u8, nearest[3] as u8], [r, g, b, a]);
+
+                let bilinear = crate::transform::sample_bilinear_scaled::<u8>(&src, W, H, x, y);
+                let (r, g, b, a) = sample_bilinear(&src, W, H, x, y);
+                assert_eq!([bilinear[0] as u8, bilinear[1] as u8, bilinear[2] as u8, bilinear[3] as u8], [r, g, b, a]);
+
+                let bicubic = crate::transform::sample_bicubic_scaled::<u8>(&src, W, H, x, y);
+                let (r, g, b, a) = sample_bicubic(&src, W, H, x, y);
+                assert_eq!([bicubic[0] as u8, bicubic[1] as u8, bicubic[2] as u8, bicubic[3] as u8], [r, g, b, a]);
+            }
+        }
+    }
+
+    /// A 16-bit source samples at 16-bit precision: an off-lattice neighbour comes back
+    /// untouched, and interpolated values exceed what 8 bits can hold.
+    #[test]
+    fn sixteen_bit_sources_keep_their_precision() {
+        let dst = crate::pixel::srgb8_to_srgb16(200) + 128;
+        let high = 60000u16;
+        let mut channels = vec![dst; 4];
+        channels.extend(std::iter::repeat(high).take(4));
+        channels.extend(std::iter::repeat(0u16).take((W as usize * H as usize - 2) * 4));
+        assert_eq!(channels.len(), (W * H * 4) as usize);
+
+        // Nearest: exact, off-lattice, no round trip through 8 bits.
+        let nearest = crate::transform::sample_nearest_scaled::<u16>(&channels, W, H, 0.0, 0.0);
+        assert_eq!(nearest[0], dst as f32);
+        assert_ne!(nearest[0] as u16 % 257, 0, "the sample must stay off-lattice");
+
+        // Bilinear between an off-lattice pixel and a high-value neighbour.
+        let bilinear = crate::transform::sample_bilinear_scaled::<u16>(&channels, W, H, 0.5, 0.0);
+        assert!(
+            bilinear[0] > 255.0,
+            "a 16-bit sample must exceed the 8-bit range, got {}",
+            bilinear[0]
+        );
+        assert!(bilinear[0] < dst as f32 + 1.0 || bilinear[0] <= high as f32);
+
+        // Bicubic over the same neighbourhood also stays above 8 bits.
+        let bicubic = crate::transform::sample_bicubic_scaled::<u16>(&channels, W, H, 0.5, 0.0);
+        assert!(bicubic[0] > 255.0, "bicubic collapsed towards 8 bits: {}", bicubic[0]);
+    }
+}
