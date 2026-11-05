@@ -1,0 +1,107 @@
+name: Bug Report
+description: Report a reproducible bug or unexpected application behavior.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug in Aurelia.
+
+        Please provide enough information to reproduce and investigate the issue. Search existing issues before submitting a new report.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Bug Description
+      description: Describe the problem clearly.
+      placeholder: What happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Provide the exact steps needed to reproduce the issue.
+      placeholder: |
+        1. Open Aurelia.
+        2. Create or open a document.
+        3. Select the affected tool.
+        4. Observe the behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or Recordings
+      description: Attach screenshots or recordings if they help demonstrate the issue.
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Aurelia Version
+      description: Include the application version.
+      placeholder: "3.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating System
+      options:
+        - Windows 11 (64-bit)
+        - Windows 10 (64-bit)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Additional Environment Information
+      description: Include relevant hardware, display configuration, or other environmental details.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and Error Messages
+      description: Include relevant error messages or logs. Remove private information before posting.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Submission Checklist
+      options:
+        - label: I have searched existing issues for duplicates.
+          required: true
+        - label: I have provided reproducible steps.
+          required: true
+        - label: I am using an official or otherwise identified Aurelia build.
+          required: true
