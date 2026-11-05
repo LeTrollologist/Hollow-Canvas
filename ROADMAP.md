@@ -69,6 +69,20 @@ Actions:
    rewrite the UI. The spike succeeds only if it keeps the existing viewport tests green and
    costs no measurable frame rate.
 
+Progress:
+
+- The viewport and Navigator now share `Document::paper_rgb8()` and
+  `Document::transparency_checker_rgb8()`; the renderer, thumbnail and UI cannot disagree about
+  paper or transparency.
+- Deterministic tests now cover empty 8-bit and 16-bit paper, dark paper, the checkerboard,
+  zoom/pan bounds, DPI point/pixel conversion, viewport-fraction mapping and dock clamping.
+
+Remaining:
+
+- Measure the Navigator's per-frame refresh cost and coalesce uploads if it shows up in frame
+  timing.
+- Run the 16-bit presentation spike and write the decision.
+
 Exit criteria:
 
 - No canvas-invisible/black-viewport report across two consecutive patch releases.

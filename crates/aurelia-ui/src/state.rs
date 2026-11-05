@@ -1909,6 +1909,71 @@ mod viewport_geometry {
         assert!(x0 < -0.5, "panning right must move the box left: {x0}");
     }
 
+    /// The normalized viewport slice and the renderer's canvas-to-screen mapping must agree at
+    /// all four edges. This is the invariant the Navigator framing box and hit-testing share.
+    #[test]
+    fn viewport_fraction_edges_match_canvas_mapping() {
+        let mut state = AppState::new(640, 480);
+        state.show_ui_panels = true;
+        state.show_rulers = true;
+        state.left_panel_w = 240.0;
+        state.right_panel_w = 300.0;
+        state.header_h = 40.0;
+        state.footer_h = 30.0;
+        state.zoom = 1.7;
+        state.pan = glam::Vec2::new(13.0, -7.0);
+
+        let (win_w, win_h) = (1200.0_f32, 800.0_f32);
+        let [vx0, vy0, vx1, vy1] = state.viewport_rect(win_w as usize, win_h as usize);
+        let (fx0, fy0, fx1, fy1) = state.viewport_canvas_fraction(win_w as usize, win_h as usize);
+        let doc_w = state.document.width as f32;
+        let doc_h = state.document.height as f32;
+
+        let p0 = state.canvas_to_screen(glam::Vec2::new(fx0 * doc_w, fy0 * doc_h), win_w, win_h);
+        let p1 = state.canvas_to_screen(glam::Vec2::new(fx1 * doc_w, fy1 * doc_h), win_w, win_h);
+
+        assert!((p0.x - vx0 as f32).abs() < 0.01, "left edge: {} vs {vx0}", p0.x);
+        assert!((p0.y - vy0 as f32).abs() < 0.01, "top edge: {} vs {vy0}", p0.y);
+        assert!((p1.x - vx1 as f32).abs() < 0.01, "right edge: {} vs {vx1}", p1.x);
+        assert!((p1.y - vy1 as f32).abs() < 0.01, "bottom edge: {} vs {vy1}", p1.y);
+    }
+
+    /// Overlay coordinates are in egui points; the renderer and hit-testing are in physical
+    /// pixels. Converting one way and back must land on the same canvas point at every DPI.
+    #[test]
+    fn canvas_to_ui_and_screen_agree_at_non_integer_dpi() {
+        let mut state = AppState::new(320, 200);
+        state.zoom = 1.3;
+        state.pan = glam::Vec2::new(-9.0, 14.0);
+        state.show_ui_panels = true;
+        state.left_panel_w = 91.0;
+        state.right_panel_w = 117.0;
+        state.header_h = 33.0;
+        state.footer_h = 27.0;
+
+        let ppp = 1.5_f32;
+        state.ui_ppp = ppp;
+        let (win_w, win_h) = (900.0_f32, 600.0_f32);
+        let canvas = glam::Vec2::new(123.0, 77.0);
+        let screen = state.canvas_to_screen(canvas, win_w, win_h);
+        let ui = state.canvas_to_ui(canvas, win_w / ppp, win_h / ppp);
+
+        assert!((ui.x * ppp - screen.x).abs() < 0.01, "x: {} vs {}", ui.x * ppp, screen.x);
+        assert!((ui.y * ppp - screen.y).abs() < 0.01, "y: {} vs {}", ui.y * ppp, screen.y);
+    }
+
+    /// Docks larger than the window must collapse to an empty rect, not invert it.
+    #[test]
+    fn tiny_window_clamps_viewport_rect() {
+        let mut state = AppState::new(100, 100);
+        state.show_ui_panels = true;
+        state.left_panel_w = 500.0;
+        state.right_panel_w = 500.0;
+        state.header_h = 500.0;
+        state.footer_h = 500.0;
+        assert_eq!(state.viewport_rect(100, 100), [100, 100, 100, 100]);
+    }
+
     /// "Fit" must target the viewport rect, not the window minus a fudge factor.
     #[test]
     fn fit_to_viewport_is_exact() {

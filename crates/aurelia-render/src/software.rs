@@ -107,7 +107,7 @@ impl SoftwareRenderer {
             viewport_clip[3].min(win_h),
         ];
 
-        let bg_val = doc.background_value;
+        let paper = doc.paper_rgb8();
 
         // Studio backdrop: a soft vertical gradient (lamplight above, deep ink below)
         // so the artboard reads as paper resting on a lit surface rather than floating
@@ -239,13 +239,11 @@ impl SoftwareRenderer {
 
                 // Base paper / background color
                 let (mut base_r, mut base_g, mut base_b) = if doc.is_transparent {
-                    let tile_x = (doc_xi / 16) % 2;
-                    let tile_y = (doc_yi / 16) % 2;
-                    let is_dark = tile_x == tile_y;
-                    let check_val = if is_dark { 18u8 } else { 28u8 };
-                    (check_val, check_val, check_val)
+                    let [r, g, b] =
+                        doc.transparency_checker_rgb8(doc_xi as u32, doc_yi as u32);
+                    (r, g, b)
                 } else {
-                    (bg_val, bg_val, bg_val)
+                    (paper[0], paper[1], paper[2])
                 };
 
                 // Tracing reference pixel sampling
@@ -408,19 +406,17 @@ impl SoftwareRenderer {
                     let sy = ((ty * N + iy) * dh / (th * N)).min(dh - 1);
                     for ix in 0..N {
                         let sx = ((tx * N + ix) * dw / (tw * N)).min(dw - 1);
-                        let (br, bg, bb) = if doc.is_transparent {
-                            let v = if (sx / 16) % 2 == (sy / 16) % 2 { 18u32 } else { 28u32 };
-                            (v, v, v)
+                        let [br, bg, bb] = if doc.is_transparent {
+                            doc.transparency_checker_rgb8(sx as u32, sy as u32)
                         } else {
-                            let v = doc.background_value as u32;
-                            (v, v, v)
+                            doc.paper_rgb8()
                         };
                         let i = (sy * dw + sx) * 4;
                         let a = self.composite_buffer[i + 3] as u32;
                         let inv = 255 - a;
-                        sr += (br * inv + self.composite_buffer[i] as u32 * a) / 255;
-                        sg += (bg * inv + self.composite_buffer[i + 1] as u32 * a) / 255;
-                        sb += (bb * inv + self.composite_buffer[i + 2] as u32 * a) / 255;
+                        sr += (br as u32 * inv + self.composite_buffer[i] as u32 * a) / 255;
+                        sg += (bg as u32 * inv + self.composite_buffer[i + 1] as u32 * a) / 255;
+                        sb += (bb as u32 * inv + self.composite_buffer[i + 2] as u32 * a) / 255;
                     }
                 }
                 let n = (N * N) as u32;
@@ -1372,6 +1368,106 @@ mod ruler_tests {
         blend_px(&mut buffer, 0, 0xFFFF_FFFF, 128);
         let mid = (buffer[0] >> 16) & 0xFF;
         assert!((120..=136).contains(&mid), "midpoint not blended: {mid}");
+    }
+}
+
+#[cfg(test)]
+mod viewport_tests {
+    use super::*;
+
+    fn render(doc: &Document, win: usize, pan: Vec2, zoom: f32) -> Vec<u32> {
+        let mut renderer = SoftwareRenderer::new();
+        let mut buffer = vec![0u32; win * win];
+        renderer.render_canvas(
+            &mut buffer,
+            win,
+            win,
+            doc,
+            pan,
+            zoom,
+            Vec2::ZERO,
+            [0, 0, win, win],
+            None,
+            &[],
+            None,
+        );
+        buffer
+    }
+
+    fn px(buffer: &[u32], win: usize, x: usize, y: usize) -> u32 {
+        buffer[y * win + x]
+    }
+
+    /// A transparent document must show the same checkerboard in the viewport that the
+    /// Navigator samples, not an accidental black or white paper.
+    #[test]
+    fn transparent_document_draws_the_checkerboard() {
+        let mut doc = Document::new(32, 32);
+        doc.is_transparent = true;
+        let buffer = render(&doc, 40, Vec2::ZERO, 1.0);
+
+        // Doc pixel (8, 8) is in the dark tile; (24, 8) is in the light tile.
+        assert_eq!(px(&buffer, 40, 12, 12), 0xFF12_1212);
+        assert_eq!(px(&buffer, 40, 28, 12), 0xFF1C_1C1C);
+    }
+
+    /// The paper value is data, not a theme constant: a dark paper renders dark.
+    #[test]
+    fn dark_paper_renders_its_document_value() {
+        let mut doc = Document::new(32, 32);
+        doc.background_value = 13;
+        let buffer = render(&doc, 40, Vec2::ZERO, 1.0);
+        assert_eq!(px(&buffer, 40, 20, 20), 0xFF0D_0D0D);
+    }
+
+    /// Zoom and pan move the canvas bounds without changing the paper inside them.
+    #[test]
+    fn canvas_bounds_follow_zoom_and_pan() {
+        let doc = Document::new(32, 32);
+        let buffer = render(&doc, 64, Vec2::new(10.0, 0.0), 0.5);
+
+        // 32 px at 50% is 16 px, centred at x=42, y=32: bounds 34..50 x 24..40.
+        assert_eq!(px(&buffer, 64, 40, 32), 0xFFFF_FFFF, "inside the canvas");
+        assert_ne!(px(&buffer, 64, 10, 32), 0xFFFF_FFFF, "left of the canvas");
+        assert_ne!(px(&buffer, 64, 60, 32), 0xFFFF_FFFF, "right of the canvas");
+    }
+
+    /// The Navigator thumbnail must use the same paper and transparency rules as the viewport.
+    #[test]
+    fn navigator_thumbnail_uses_the_document_paper() {
+        let mut renderer = SoftwareRenderer::new();
+        let mut doc = Document::new(32, 32);
+        let mut buffer = vec![0u32; 40 * 40];
+        renderer.render_canvas(
+            &mut buffer,
+            40,
+            40,
+            &doc,
+            Vec2::ZERO,
+            1.0,
+            Vec2::ZERO,
+            [0, 0, 40, 40],
+            None,
+            &[],
+            None,
+        );
+        let image = renderer
+            .navigator_thumbnail(&doc, 16)
+            .expect("thumbnail from the rendered composite");
+        assert_eq!(image.size, [16, 16]);
+        assert!(image.pixels.iter().all(|p| *p == egui::Color32::WHITE));
+
+        doc.background_value = 13;
+        let image = renderer
+            .navigator_thumbnail(&doc, 16)
+            .expect("thumbnail after paper change");
+        assert!(
+            image
+                .pixels
+                .iter()
+                .all(|p| *p == egui::Color32::from_rgb(13, 13, 13)),
+            "the Navigator must follow the paper, not retain white"
+        );
     }
 }
 

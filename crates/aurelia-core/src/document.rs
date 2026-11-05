@@ -67,6 +67,25 @@ impl Document {
         }
     }
 
+    /// The opaque paper colour, as RGB bytes. This is the single source of truth for the
+    /// viewport, the Navigator thumbnail and any other presentation of the paper.
+    #[inline]
+    pub fn paper_rgb8(&self) -> [u8; 3] {
+        let v = self.background_value;
+        [v, v, v]
+    }
+
+    /// The checkerboard square that represents transparency at a canvas coordinate.
+    ///
+    /// Both the viewport and the Navigator use this so a transparent document cannot look
+    /// different in the two views.
+    #[inline]
+    pub fn transparency_checker_rgb8(&self, x: u32, y: u32) -> [u8; 3] {
+        let is_dark = (x / 16) % 2 == (y / 16) % 2;
+        let v = if is_dark { 18 } else { 28 };
+        [v, v, v]
+    }
+
     pub fn active_layer(&self) -> Option<&Layer> {
         self.layers.iter().find(|l| l.id == self.active_layer_id)
     }

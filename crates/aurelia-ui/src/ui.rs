@@ -1543,8 +1543,8 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         let bg_c = if state.document.is_transparent {
                             Color32::from_rgb(38, 33, 18)
                         } else {
-                            let v = state.document.background_value;
-                            Color32::from_rgb(v, v, v)
+                            let [r, g, b] = state.document.paper_rgb8();
+                            Color32::from_rgb(r, g, b)
                         };
                         painter.rect_filled(rect, 0.0, bg_c);
                         if let Some(tex) = &state.navigator_texture {
