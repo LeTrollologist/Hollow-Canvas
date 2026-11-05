@@ -1,7 +1,8 @@
 # 16-bit storage: implementation plan
 
-**Status:** plan for review on issue #11. Three gates, in order. No implementation until
-gate 1 is specified *and* reviewed, and gate 3 does not start until gates 1 and 2 pass.
+**Status: implemented and shipped in v3.4.0.** All three gates passed and native 16-bit
+editing, compositing and free transform are complete (see the status table and implementation
+results at the end). This document is kept as the design and verification record.
 
 ---
 
