@@ -2,7 +2,9 @@ use crate::design;
 use crate::fonts;
 
 use crate::icons::draw_tool_icon;
-use crate::state::{ActiveFilterModal, AppState, CanvasPreset, PendingFileAction, WindowAction};
+use crate::state::{
+    ActiveFilterModal, AppState, CanvasPreset, GuideOrientation, PendingFileAction, WindowAction,
+};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Stroke, Vec2};
 use aurelia_core::brush::{EraserMode, GradientType, ShapeFillMode, ToolType};
 use aurelia_core::color::{Color, DEFAULT_PALETTE};
@@ -1479,7 +1481,38 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     if state.show_grid {
                         ui.add(egui::Slider::new(&mut state.grid_size, 8..=128).text("Cell Size"));
                         ui.add(egui::Slider::new(&mut state.grid_opacity, 0.05..=0.8).text("Grid Alpha"));
+                        ui.horizontal(|ui| {
+                            ui.label("Origin");
+                            ui.add(
+                                egui::DragValue::new(&mut state.grid_origin.x)
+                                    .speed(1.0)
+                                    .prefix("X ")
+                                    .max_decimals(0),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut state.grid_origin.y)
+                                    .speed(1.0)
+                                    .prefix("Y ")
+                                    .max_decimals(0),
+                            );
+                            if ui.small_button("Reset").clicked() {
+                                state.reset_grid_origin();
+                            }
+                        });
                     }
+
+                    ui.horizontal(|ui| {
+                        ui.label("Guides");
+                        if ui.small_button("+ H").on_hover_text("Add a horizontal guide").clicked() {
+                            state.add_guide(GuideOrientation::Horizontal);
+                        }
+                        if ui.small_button("+ V").on_hover_text("Add a vertical guide").clicked() {
+                            state.add_guide(GuideOrientation::Vertical);
+                        }
+                        if ui.small_button("Clear").clicked() {
+                            state.clear_guides();
+                        }
+                    });
                 });
             });
     }
@@ -4637,7 +4670,103 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                 });
             });
     }
+    paint_guides(ctx, state);
     paint_ruler_numbers(ctx, state);
+}
+
+/// Session measurement guides and the draggable grid-origin handle.
+fn paint_guides(ctx: &egui::Context, state: &AppState) {
+    if state.guides.is_empty() && !state.show_grid {
+        return;
+    }
+    let ppp = ctx.pixels_per_point().max(0.01);
+    let screen = ctx.screen_rect();
+    let win_w = screen.width();
+    let win_h = screen.height();
+    let [vx0, vy0, vx1, vy1] = state.viewport_rect(
+        (win_w * ppp) as usize,
+        (win_h * ppp) as usize,
+    );
+    let viewport = egui::Rect::from_min_max(
+        egui::pos2(vx0 as f32 / ppp, vy0 as f32 / ppp),
+        egui::pos2(vx1 as f32 / ppp, vy1 as f32 / ppp),
+    );
+    let doc_w = state.document.width as f32;
+    let doc_h = state.document.height as f32;
+    let canvas_min = state.canvas_to_ui(glam::Vec2::ZERO, win_w, win_h);
+    let canvas_max = state.canvas_to_ui(glam::Vec2::new(doc_w, doc_h), win_w, win_h);
+    let paper = egui::Rect::from_min_max(
+        egui::pos2(canvas_min.x.min(canvas_max.x), canvas_min.y.min(canvas_max.y)),
+        egui::pos2(canvas_min.x.max(canvas_max.x), canvas_min.y.max(canvas_max.y)),
+    );
+    let clip = viewport.intersect(paper);
+    if clip.width() <= 0.0 || clip.height() <= 0.0 {
+        return;
+    }
+
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("measurement_guides"),
+    ));
+    let painter = painter.with_clip_rect(clip);
+    let guide_color = Color32::from_rgba_unmultiplied(92, 224, 216, 200);
+    let text_color = Color32::from_rgb(236, 208, 128);
+
+    for guide in &state.guides {
+        match guide.orientation {
+            GuideOrientation::Vertical => {
+                let p = state.canvas_to_ui(glam::Vec2::new(guide.position, 0.0), win_w, win_h);
+                painter.line_segment(
+                    [egui::pos2(p.x, clip.top()), egui::pos2(p.x, clip.bottom())],
+                    Stroke::new(1.0, guide_color),
+                );
+                painter.text(
+                    egui::pos2(p.x + 3.0, clip.top() + 2.0),
+                    egui::Align2::LEFT_TOP,
+                    format!("x {:.0}", guide.position),
+                    egui::FontId::proportional(9.0),
+                    text_color,
+                );
+            }
+            GuideOrientation::Horizontal => {
+                let p = state.canvas_to_ui(glam::Vec2::new(0.0, guide.position), win_w, win_h);
+                painter.line_segment(
+                    [egui::pos2(clip.left(), p.y), egui::pos2(clip.right(), p.y)],
+                    Stroke::new(1.0, guide_color),
+                );
+                painter.text(
+                    egui::pos2(clip.left() + 3.0, p.y + 2.0),
+                    egui::Align2::LEFT_TOP,
+                    format!("y {:.0}", guide.position),
+                    egui::FontId::proportional(9.0),
+                    text_color,
+                );
+            }
+        }
+    }
+
+    if state.show_grid {
+        let origin_v = state.canvas_to_ui(state.grid_origin, win_w, win_h);
+        let origin = egui::pos2(origin_v.x, origin_v.y);
+        if viewport.contains(origin) {
+            let handle = Color32::from_rgb(246, 196, 90);
+            painter.circle_stroke(origin, 4.0, Stroke::new(1.5, handle));
+            painter.line_segment(
+                [
+                    egui::pos2(origin.x - 7.0, origin.y),
+                    egui::pos2(origin.x + 7.0, origin.y),
+                ],
+                Stroke::new(1.0, handle),
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(origin.x, origin.y - 7.0),
+                    egui::pos2(origin.x, origin.y + 7.0),
+                ],
+                Stroke::new(1.0, handle),
+            );
+        }
+    }
 }
 
 /// Renders on-canvas interactive transform gizmos, wireframe grids, handles, and TPS pin vectors

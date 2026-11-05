@@ -181,6 +181,7 @@ These are user-visible gaps, not architecture changes:
 | **Preferences UI** | Autosave interval, undo budget, JPEG quality and theme are file-only today | No new backend; expose existing state |
 | **History panel** | Undo is invisible; users cannot see what will be undone or how much memory it holds | Read-only list with a memory readout |
 | **Navigator/viewport polish** | Fit/centre/zoom now behave; add explicit tests for DPI and dock-width changes | Follows the P0 harness |
+| **Measurement guides** | Move the cutting-mat workflow into the viewport | **First slice shipped:** drag guides out of the rulers, move the grid origin, `+ H` / `+ V` / `Clear` in the panel, session-only; persistence and snapping remain |
 
 ---
 

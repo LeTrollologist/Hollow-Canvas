@@ -442,6 +442,7 @@ impl SoftwareRenderer {
         viewport_clip: [usize; 4],
         grid_size: u32,
         grid_opacity: f32,
+        grid_origin: Vec2,
     ) {
         if win_w == 0 || win_h == 0 || grid_size == 0 || grid_opacity <= 0.001 {
             return;
@@ -476,11 +477,14 @@ impl SoftwareRenderer {
         let gg = 159u32;
         let gb = 216u32;
 
-        // 1. Draw Vertical Grid Lines
-        let mut gx = 0u32;
-        while gx <= doc.width {
-            let sx = ((gx as f32 - doc_w * 0.5) * zoom + center_x).round() as isize;
-            if sx >= x_start as isize && sx < x_end as isize {
+        let size = grid_size as f32;
+        // Lines are at origin + k*size. Starting one step before zero lets a shifted
+        // origin still draw the line just outside the canvas edge without a separate
+        // modulo branch in the pixel loop.
+        let mut gx = grid_origin.x.rem_euclid(size) - size;
+        while gx <= doc_w {
+            let sx = ((gx - doc_w * 0.5) * zoom + center_x).round() as isize;
+            if gx >= 0.0 && sx >= x_start as isize && sx < x_end as isize {
                 let x = sx as usize;
                 for y in y_start..y_end {
                     let pixel_idx = y * win_w + x;
@@ -498,14 +502,14 @@ impl SoftwareRenderer {
                     }
                 }
             }
-            gx += grid_size;
+            gx += size;
         }
 
         // 2. Draw Horizontal Grid Lines
-        let mut gy = 0u32;
-        while gy <= doc.height {
-            let sy = ((gy as f32 - doc_h * 0.5) * zoom + center_y).round() as isize;
-            if sy >= y_start as isize && sy < y_end as isize {
+        let mut gy = grid_origin.y.rem_euclid(size) - size;
+        while gy <= doc_h {
+            let sy = ((gy - doc_h * 0.5) * zoom + center_y).round() as isize;
+            if gy >= 0.0 && sy >= y_start as isize && sy < y_end as isize {
                 let y = sy as usize;
                 let row = y * win_w;
                 for x in x_start..x_end {
@@ -524,7 +528,7 @@ impl SoftwareRenderer {
                     }
                 }
             }
-            gy += grid_size;
+            gy += size;
         }
     }
 
@@ -1430,6 +1434,31 @@ mod viewport_tests {
         assert_eq!(px(&buffer, 64, 40, 32), 0xFFFF_FFFF, "inside the canvas");
         assert_ne!(px(&buffer, 64, 10, 32), 0xFFFF_FFFF, "left of the canvas");
         assert_ne!(px(&buffer, 64, 60, 32), 0xFFFF_FFFF, "right of the canvas");
+    }
+
+    /// The grid origin moves the lines; it must not silently snap back to the canvas corner.
+    #[test]
+    fn grid_origin_offsets_the_grid_lines() {
+        let doc = Document::new(64, 64);
+        let mut renderer = SoftwareRenderer::new();
+        let mut buffer = vec![0xFF00_0000u32; 64 * 64];
+        renderer.render_grid(
+            &mut buffer,
+            64,
+            64,
+            &doc,
+            Vec2::ZERO,
+            1.0,
+            Vec2::ZERO,
+            [0, 0, 64, 64],
+            8,
+            1.0,
+            Vec2::new(4.0, 4.0),
+        );
+        assert_ne!(px(&buffer, 64, 4, 10), 0xFF00_0000, "line at origin x=4");
+        assert_eq!(px(&buffer, 64, 0, 10), 0xFF00_0000, "no line at x=0");
+        assert_ne!(px(&buffer, 64, 10, 4), 0xFF00_0000, "line at origin y=4");
+        assert_eq!(px(&buffer, 64, 10, 0), 0xFF00_0000, "no line at y=0");
     }
 
     /// The Navigator thumbnail must use the same paper and transparency rules as the viewport.

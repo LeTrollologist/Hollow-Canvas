@@ -192,6 +192,20 @@ pub enum WindowAction {
     Close,
 }
 
+/// A session-only measurement guide in canvas coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuideOrientation {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Guide {
+    pub orientation: GuideOrientation,
+    /// Canvas-space coordinate: y for horizontal, x for vertical.
+    pub position: f32,
+}
+
 pub struct AppState {
     pub document: Document,
     pub history: HistoryStack,
@@ -213,6 +227,10 @@ pub struct AppState {
     pub show_grid: bool,
     pub grid_size: u32,
     pub grid_opacity: f32,
+    /// Canvas-space origin of the grid. Dragging the on-canvas handle moves it.
+    pub grid_origin: Vec2,
+    /// Session-only horizontal/vertical measurement guides.
+    pub guides: Vec<Guide>,
     pub show_rulers: bool,
     pub show_navigator: bool,
     pub flip_view_horizontal: bool,
@@ -455,6 +473,8 @@ impl AppState {
             show_grid: false,
             grid_size: 32,
             grid_opacity: 0.25,
+            grid_origin: Vec2::ZERO,
+            guides: Vec::new(),
             show_rulers: true,
             show_navigator: true,
             flip_view_horizontal: false,
@@ -1051,6 +1071,23 @@ impl AppState {
         let offset = screen_pos - center;
         let canvas_size = Vec2::new(self.document.width as f32, self.document.height as f32);
         (offset / self.zoom) + (canvas_size * 0.5)
+    }
+
+    /// Adds a guide at the canvas centre. Used by the panel buttons and by a click in a ruler.
+    pub fn add_guide(&mut self, orientation: GuideOrientation) {
+        let position = match orientation {
+            GuideOrientation::Horizontal => self.document.height as f32 * 0.5,
+            GuideOrientation::Vertical => self.document.width as f32 * 0.5,
+        };
+        self.guides.push(Guide { orientation, position });
+    }
+
+    pub fn clear_guides(&mut self) {
+        self.guides.clear();
+    }
+
+    pub fn reset_grid_origin(&mut self) {
+        self.grid_origin = Vec2::ZERO;
     }
 
     pub fn canvas_to_screen(&self, canvas_pos: Vec2, win_w: f32, win_h: f32) -> Vec2 {
@@ -1863,7 +1900,7 @@ impl Default for AppState {
 
 #[cfg(test)]
 mod viewport_geometry {
-    use super::AppState;
+    use super::{AppState, GuideOrientation};
 
     /// Panel-free window so the viewport is the whole window, which makes the numbers
     /// checkable by hand.
@@ -1960,6 +1997,24 @@ mod viewport_geometry {
 
         assert!((ui.x * ppp - screen.x).abs() < 0.01, "x: {} vs {}", ui.x * ppp, screen.x);
         assert!((ui.y * ppp - screen.y).abs() < 0.01, "y: {} vs {}", ui.y * ppp, screen.y);
+    }
+
+    /// Guides and the grid origin are session state, not document state.
+    #[test]
+    fn guides_and_grid_origin_are_session_only() {
+        let mut state = AppState::new(200, 100);
+        state.add_guide(GuideOrientation::Horizontal);
+        state.add_guide(GuideOrientation::Vertical);
+        assert_eq!(state.guides.len(), 2);
+        assert_eq!(state.guides[0].position, 50.0);
+        assert_eq!(state.guides[1].position, 100.0);
+
+        state.grid_origin = glam::Vec2::new(17.0, 9.0);
+        state.reset_grid_origin();
+        assert_eq!(state.grid_origin, glam::Vec2::ZERO);
+
+        state.clear_guides();
+        assert!(state.guides.is_empty());
     }
 
     /// Docks larger than the window must collapse to an empty rect, not invert it.

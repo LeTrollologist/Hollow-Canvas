@@ -338,6 +338,13 @@ unsafe fn set_clipboard_text(hwnd: HWND, text: &str) -> bool {
 
 static mut GLOBAL_APP_PTR: *mut AureliaDesktopApp = std::ptr::null_mut();
 
+/// What the pointer is currently dragging on the measurement layer.
+#[derive(Debug, Clone, Copy)]
+enum GuideDrag {
+    Existing(usize),
+    GridOrigin,
+}
+
 struct AureliaDesktopApp {
     state: AppState,
     presence: PresenceManager,
@@ -351,6 +358,7 @@ struct AureliaDesktopApp {
     dpi_scale: f32,
     is_pointer_down: bool,
     is_drawing_on_canvas: bool,
+    guide_drag: Option<GuideDrag>,
     is_space_down: bool,
     is_middle_panning: bool,
     last_canvas_pos: Option<Vec2>,
@@ -614,6 +622,84 @@ impl AureliaDesktopApp {
     fn ui_pos(&self) -> egui::Pos2 {
         let ppp = self.egui_ctx.pixels_per_point().max(0.01);
         egui::pos2(self.mouse_pos.x / ppp, self.mouse_pos.y / ppp)
+    }
+
+    /// Starts a guide or grid-origin drag when the pointer is on an existing guide, the
+    /// origin handle, or a ruler strip. Returns true when the canvas should not receive the
+    /// click.
+    fn begin_guide_drag(&mut self, screen_pos: Vec2) -> bool {
+        let win_w = self.win_w as f32;
+        let win_h = self.win_h as f32;
+        let [vx0, vy0, vx1, vy1] = self.state.viewport_rect(self.win_w, self.win_h);
+        let (vx0, vy0, vx1, vy1) = (vx0 as f32, vy0 as f32, vx1 as f32, vy1 as f32);
+        if screen_pos.x < vx0
+            || screen_pos.x > vx1
+            || screen_pos.y < vy0
+            || screen_pos.y > vy1
+        {
+            return false;
+        }
+
+        // Existing guide takes priority over painting, with a forgiving 5 px hit band.
+        for (index, guide) in self.state.guides.iter().enumerate() {
+            let screen = match guide.orientation {
+                aurelia_ui::state::GuideOrientation::Horizontal => {
+                    self.state.canvas_to_screen(Vec2::new(0.0, guide.position), win_w, win_h).y
+                }
+                aurelia_ui::state::GuideOrientation::Vertical => {
+                    self.state.canvas_to_screen(Vec2::new(guide.position, 0.0), win_w, win_h).x
+                }
+            };
+            let distance = match guide.orientation {
+                aurelia_ui::state::GuideOrientation::Horizontal => (screen_pos.y - screen).abs(),
+                aurelia_ui::state::GuideOrientation::Vertical => (screen_pos.x - screen).abs(),
+            };
+            if distance <= 5.0 {
+                self.guide_drag = Some(GuideDrag::Existing(index));
+                self.is_drawing_on_canvas = false;
+                return true;
+            }
+        }
+
+        if self.state.show_grid {
+            let origin = self
+                .state
+                .canvas_to_screen(self.state.grid_origin, win_w, win_h);
+            if (origin - screen_pos).length() <= 8.0 {
+                self.guide_drag = Some(GuideDrag::GridOrigin);
+                self.is_drawing_on_canvas = false;
+                return true;
+            }
+        }
+
+        if !self.state.show_rulers {
+            return false;
+        }
+
+        let ruler = aurelia_ui::design::RULER_PX;
+        let canvas = self.state.screen_to_canvas(screen_pos, win_w, win_h);
+        let orientation = if screen_pos.y <= vy0 + ruler && screen_pos.x <= vx1 {
+            Some(aurelia_ui::state::GuideOrientation::Horizontal)
+        } else if screen_pos.x <= vx0 + ruler && screen_pos.y <= vy1 {
+            Some(aurelia_ui::state::GuideOrientation::Vertical)
+        } else {
+            None
+        };
+        let Some(orientation) = orientation else {
+            return false;
+        };
+
+        self.state.add_guide(orientation);
+        let index = self.state.guides.len() - 1;
+        let doc_w = self.state.document.width as f32;
+        let doc_h = self.state.document.height as f32;
+        self.state.guides[index].position = match orientation {
+            aurelia_ui::state::GuideOrientation::Horizontal => canvas.y.clamp(0.0, doc_h),
+            aurelia_ui::state::GuideOrientation::Vertical => canvas.x.clamp(0.0, doc_w),
+        };
+        self.guide_drag = Some(GuideDrag::Existing(index));
+        self.is_drawing_on_canvas = false;
+        true
     }
 
     pub fn is_over_ui(&self, pos: Vec2) -> bool {
@@ -922,6 +1008,33 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
             let canvas_pos = app.state.screen_to_canvas(screen_pos, app.win_w as f32, app.win_h as f32);
             app.state.cursor_canvas_pos = canvas_pos;
+
+            if let Some(drag) = app.guide_drag {
+                let doc_w = app.state.document.width as f32;
+                let doc_h = app.state.document.height as f32;
+                match drag {
+                    GuideDrag::Existing(index) => {
+                        if let Some(guide) = app.state.guides.get_mut(index) {
+                            guide.position = match guide.orientation {
+                                aurelia_ui::state::GuideOrientation::Horizontal => {
+                                    canvas_pos.y.clamp(0.0, doc_h)
+                                }
+                                aurelia_ui::state::GuideOrientation::Vertical => {
+                                    canvas_pos.x.clamp(0.0, doc_w)
+                                }
+                            };
+                        }
+                    }
+                    GuideDrag::GridOrigin => {
+                        app.state.grid_origin = Vec2::new(
+                            canvas_pos.x.clamp(0.0, doc_w),
+                            canvas_pos.y.clamp(0.0, doc_h),
+                        );
+                    }
+                }
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+                return 0;
+            }
 
             if app.is_pointer_down && app.state.transform_session.is_active {
                 if let Some(handle) = app.state.transform_session.active_handle {
@@ -1299,6 +1412,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
             let canvas_pos = app.state.screen_to_canvas(screen_pos, app.win_w as f32, app.win_h as f32);
 
+            if app.begin_guide_drag(screen_pos) {
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+                return 0;
+            }
+
             if app.state.transform_session.is_active {
                 if let Some(handle) = hit_test_transform_handle(&app.state, screen_pos, app.win_w as f32, app.win_h as f32) {
                     app.state.transform_session.active_handle = Some(handle);
@@ -1544,6 +1662,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.is_drawing_on_canvas = false;
             app.last_canvas_pos = None;
             app.last_pan_screen_pos = None;
+            if app.guide_drag.take().is_some() {
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+                return 0;
+            }
 
             let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
             let raw_y = ((lparam as u32 >> 16) & 0xFFFF) as i16 as f32;
@@ -2312,6 +2434,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         viewport_clip,
                         app.state.grid_size,
                         app.state.grid_opacity,
+                        app.state.grid_origin,
                     );
                 }
 
@@ -2906,6 +3029,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         dpi_scale,
         is_pointer_down: false,
         is_drawing_on_canvas: false,
+        guide_drag: None,
         is_space_down: false,
         is_middle_panning: false,
         last_canvas_pos: None,
