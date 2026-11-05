@@ -2578,7 +2578,8 @@ mod tests {
             let dst = &grown[y * 6 * 4..y * 6 * 4 + 4 * 4];
             assert_eq!(dst, src, "row {y} was not copied verbatim");
         }
-        assert_eq!(grown[(0 * 6 + 5) * 4], 0, "new space must be zero-filled");
+        // Column 5 of row 0 is outside the old 4-wide canvas, so it must be zero-filled.
+        assert_eq!(grown[5 * 4], 0, "new space must be zero-filled");
 
         // Shrink: the surviving region is the top-left corner, still exact.
         doc.get_layer_mut(id).expect("layer").resize(2, 2);
@@ -3493,16 +3494,79 @@ mod document_format {
         assert_eq!(values[0], high, "the merged layer must keep the exact channel");
     }
 
-    /// Merge-down composites in 8-bit, so it refuses a 16-bit document rather than flattening
-    /// it quietly. The UI reports the refusal.
+    /// Merge-down used to refuse a 16-bit document because it composited through `get_pixel`
+    /// and `set_pixel`. It now composites in working precision and writes into the lower
+    /// layer's own storage.
     #[test]
-    fn merge_down_refuses_a_sixteen_bit_document() {
-        let mut doc = Document::new_with_format(2, 2, PixelFormat::Srgb16);
-        doc.add_layer(None);
-        assert!(!doc.merge_layer_down(), "merge down must refuse 16-bit storage");
-        assert_eq!(doc.layers.len(), 2, "a refused merge must not change the layer stack");
+    fn merge_down_composites_sixteen_bit_layers() {
+        use crate::layer::LayerBuffer;
+
+        let mut doc = Document::new_with_format(2, 1, PixelFormat::Srgb16);
+        let base = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(base) {
+            // Opaque blue.
+            *layer.buffer_mut() = LayerBuffer::Srgb16(vec![0, 0, 65535, 65535, 0, 0, 65535, 65535]);
+        }
+        let upper = doc.add_layer(None);
+        if let Some(layer) = doc.get_layer_mut(upper) {
+            // Opaque red.
+            *layer.buffer_mut() = LayerBuffer::Srgb16(vec![65535, 0, 0, 65535, 65535, 0, 0, 65535]);
+        }
+
+        assert!(doc.merge_layer_down(), "merge-down must work on a 16-bit document");
+        assert_eq!(doc.layers.len(), 1, "the upper layer is consumed");
+
+        let merged = &doc.layers[0];
+        assert_eq!(merged.format(), PixelFormat::Srgb16, "merge must not downgrade storage");
+        let values = merged.as_srgb16().expect("16-bit");
+        assert_eq!(&values[0..4], &[65535, 0, 0, 65535], "the opaque upper layer covers the lower");
     }
 
+    /// Mixed formats merge through the same path: each layer is read in its own format and the
+    /// result lands in the lower layer's.
+    #[test]
+    fn merge_down_handles_a_mixed_format_pair() {
+        use crate::layer::LayerBuffer;
+
+        let mut doc = Document::new(2, 1); // 8-bit document
+        let base = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(base) {
+            layer.as_srgb8_exact_mut().copy_from_slice(&[0, 0, 255, 255, 0, 0, 255, 255]);
+        }
+        let upper = doc.add_layer(None);
+        if let Some(layer) = doc.get_layer_mut(upper) {
+            *layer.buffer_mut() =
+                LayerBuffer::Srgb16(vec![65535, 0, 0, 65535, 65535, 0, 0, 65535]);
+        }
+
+        assert!(doc.merge_layer_down());
+        let merged = &doc.layers[0];
+        assert_eq!(
+            merged.format(),
+            PixelFormat::Srgb8,
+            "the result lands in the lower layer's format"
+        );
+        assert_eq!(&merged.as_srgb8_exact()[0..4], &[255, 0, 0, 255]);
+    }
+
+    /// GOLDEN for 8-bit merge-down: the working-precision rewrite must not move these bytes.
+    /// Red at 50% alpha over opaque blue is the case with an intermediate value on every
+    /// channel.
+    #[test]
+    fn merge_down_eight_bit_output_is_unchanged() {
+        let mut doc = Document::new(2, 1);
+        let base = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(base) {
+            layer.as_srgb8_exact_mut().copy_from_slice(&[0, 0, 255, 255, 0, 0, 255, 255]);
+        }
+        let upper = doc.add_layer(None);
+        if let Some(layer) = doc.get_layer_mut(upper) {
+            layer.as_srgb8_exact_mut().copy_from_slice(&[255, 0, 0, 128, 255, 0, 0, 128]);
+        }
+
+        assert!(doc.merge_layer_down());
+        assert_eq!(&doc.layers[0].as_srgb8_exact()[0..4], &[128, 0, 127, 255]);
+    }
     /// `convert_format` is exact in the widening direction and rounds only when asked to
     /// narrow.
     #[test]

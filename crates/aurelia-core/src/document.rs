@@ -352,15 +352,13 @@ impl Document {
         }
     }
 
+    /// Merges the active layer into the one below it.
+    ///
+    /// Composites in working precision and writes into the **lower** layer's storage, so this
+    /// works for an 8-bit document, a 16-bit document, and a mixed pair (each layer is read in
+    /// its own format). The 8-bit result is unchanged: the same blend maths, the same
+    /// quantisation on write.
     pub fn merge_layer_down(&mut self) -> bool {
-        // Merge-down composites in 8-bit (`get_pixel`/`set_pixel`), so it cannot run on a
-        // 16-bit document. Refusing is deliberate: the alternative is a silent flatten.
-        if self.pixel_format != PixelFormat::Srgb8
-            || self.layers.iter().any(|layer| layer.format() != PixelFormat::Srgb8)
-        {
-            return false;
-        }
-
         let active_idx = match self.layers.iter().position(|l| l.id == self.active_layer_id) {
             Some(i) if i > 0 => i,
             _ => return false,
@@ -368,37 +366,44 @@ impl Document {
 
         let upper = self.layers.remove(active_idx);
         let lower = &mut self.layers[active_idx - 1];
+        let (width, height) = (self.width, self.height);
 
         // Composite upper into lower, respecting offsets
-        for y in 0..self.height {
-            for x in 0..self.width {
+        for y in 0..height {
+            for x in 0..width {
                 // Sample lower layer at its local coords
                 let lx = x as i32 - lower.offset_x;
                 let ly = y as i32 - lower.offset_y;
-                let lower_px = if lx >= 0 && lx < self.width as i32 && ly >= 0 && ly < self.height as i32 {
-                    lower.get_pixel(lx as u32, ly as u32).unwrap_or([0, 0, 0, 0])
+                let lower_px = if lx >= 0 && ly >= 0 {
+                    layer_pixel_working(lower, lx as u32, ly as u32)
                 } else {
-                    [0, 0, 0, 0]
-                };
+                    None
+                }
+                .unwrap_or([0.0, 0.0, 0.0, 0.0]);
 
                 // Pre-multiply lower layer's opacity into its pixels
-                let lower_baked = BlendMode::Normal.composite_pixel([0, 0, 0, 0], lower_px, lower.opacity);
+                let lower_baked = BlendMode::Normal.composite_working(
+                    [0.0, 0.0, 0.0, 0.0],
+                    lower_px,
+                    lower.opacity,
+                );
 
                 // Sample upper layer at its local coords
                 let ux = x as i32 - upper.offset_x;
                 let uy = y as i32 - upper.offset_y;
-                let upper_px = if ux >= 0 && ux < self.width as i32 && uy >= 0 && uy < self.height as i32 {
-                    upper.get_pixel(ux as u32, uy as u32).unwrap_or([0, 0, 0, 0])
+                let upper_px = if ux >= 0 && uy >= 0 {
+                    layer_pixel_working(&upper, ux as u32, uy as u32)
                 } else {
-                    [0, 0, 0, 0]
-                };
+                    None
+                }
+                .unwrap_or([0.0, 0.0, 0.0, 0.0]);
 
-                let blended = upper.blend_mode.composite_pixel(lower_baked, upper_px, upper.opacity);
+                let blended =
+                    upper.blend_mode.composite_working(lower_baked, upper_px, upper.opacity);
 
-                // Store result at canvas coordinate in lower layer
-                // We need to write at the lower layer's local coordinate
-                if lx >= 0 && lx < self.width as i32 && ly >= 0 && ly < self.height as i32 {
-                    lower.set_pixel(lx as u32, ly as u32, blended);
+                // Store result at the lower layer's local coordinate
+                if lx >= 0 && ly >= 0 {
+                    write_layer_pixel_working(lower, lx as u32, ly as u32, blended);
                 }
             }
         }
@@ -790,6 +795,68 @@ impl Document {
                 BlendMode::Difference => run!(crate::blend::compose_difference),
                 BlendMode::Exclusion => run!(crate::blend::compose_exclusion),
                 BlendMode::Luminosity => run!(crate::blend::compose_luminosity),
+            }
+        }
+    }
+}
+
+/// Reads one pixel of a layer in working precision, or `None` when it is outside the layer.
+///
+/// Used by operations that combine two layers which may not share a storage format (merge
+/// down). Reading in working precision is what lets the pair be composited correctly without
+/// converting either buffer.
+fn layer_pixel_working(layer: &Layer, x: u32, y: u32) -> Option<[f32; 4]> {
+    if x >= layer.width || y >= layer.height {
+        return None;
+    }
+    let index = ((y as usize) * layer.width as usize + x as usize) * 4;
+    match layer.buffer() {
+        LayerBuffer::Srgb8(bytes) => {
+            if index + 3 >= bytes.len() {
+                return None;
+            }
+            Some([
+                bytes[index].to_f32(),
+                bytes[index + 1].to_f32(),
+                bytes[index + 2].to_f32(),
+                bytes[index + 3].to_f32(),
+            ])
+        }
+        LayerBuffer::Srgb16(channels) => {
+            if index + 3 >= channels.len() {
+                return None;
+            }
+            Some([
+                channels[index].to_f32(),
+                channels[index + 1].to_f32(),
+                channels[index + 2].to_f32(),
+                channels[index + 3].to_f32(),
+            ])
+        }
+    }
+}
+
+/// Writes one working-precision pixel into the layer's own storage format.
+fn write_layer_pixel_working(layer: &mut Layer, x: u32, y: u32, pixel: [f32; 4]) {
+    if x >= layer.width || y >= layer.height {
+        return;
+    }
+    let index = ((y as usize) * layer.width as usize + x as usize) * 4;
+    match layer.buffer_mut() {
+        LayerBuffer::Srgb8(bytes) => {
+            if index + 3 < bytes.len() {
+                bytes[index] = u8::from_f32(pixel[0]);
+                bytes[index + 1] = u8::from_f32(pixel[1]);
+                bytes[index + 2] = u8::from_f32(pixel[2]);
+                bytes[index + 3] = u8::from_f32(pixel[3]);
+            }
+        }
+        LayerBuffer::Srgb16(channels) => {
+            if index + 3 < channels.len() {
+                channels[index] = u16::from_f32(pixel[0]);
+                channels[index + 1] = u16::from_f32(pixel[1]);
+                channels[index + 2] = u16::from_f32(pixel[2]);
+                channels[index + 3] = u16::from_f32(pixel[3]);
             }
         }
     }

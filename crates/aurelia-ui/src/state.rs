@@ -1092,19 +1092,6 @@ impl AppState {
         false
     }
 
-    /// Refuses an operation that rebuilds the layer stack in 8-bit (merge down).
-    pub fn require_8bit_document(&mut self, operation: &str) -> bool {
-        if self.document.pixel_format == PixelFormat::Srgb8
-            && self.document.layers.iter().all(|layer| layer.format() == PixelFormat::Srgb8)
-        {
-            return true;
-        }
-        self.set_status(format!(
-            "{operation} is 8-bit only; this document is 16-bit sRGB"
-        ));
-        false
-    }
-
     /// A short label for the document's storage format, for the footer and the layer panel.
     pub fn document_format_label(&self) -> &'static str {
         match self.document.pixel_format {
@@ -1115,11 +1102,8 @@ impl AppState {
 
     /// Backs up the active layer's pixels before opening a filter dialog
     pub fn begin_filter_modal(&mut self, modal: ActiveFilterModal) {
-        if !self.require_8bit("This filter") {
-            return;
-        }
         if let Some(layer) = self.document.active_layer() {
-            self.filter_original_pixels = Some(layer.as_srgb8_exact().to_vec());
+            self.filter_original_pixels = Some(layer.storage_bytes());
             self.active_filter_modal = modal;
             self.filter_preview_active = true;
         }
@@ -1139,8 +1123,9 @@ impl AppState {
     pub fn apply_filter_modal(&mut self, filter_name: &'static str) {
         if let Some(before) = self.filter_original_pixels.take() {
             if let Some(layer) = self.document.active_layer() {
-                if before != layer.as_srgb8_exact() {
-                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, filter_name, before, layer.as_srgb8_exact().to_vec()));
+                let after = layer.storage_bytes();
+                if before != after {
+                    let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, filter_name, before, after));
                     self.history.push(cmd);
                     self.set_status(format!("Applied {}", filter_name));
                 }
@@ -2121,31 +2106,27 @@ mod document_format_ui {
         assert_eq!(wide.document_format_label(), "RGBA16");
     }
 
-    /// The guard that keeps 8-bit-only operations from becoming panics on a 16-bit document.
+    /// The guard still reports rather than silently doing nothing, for any future 8-bit-only
+    /// operation, and filters now open on a 16-bit document.
     #[test]
-    fn eight_bit_only_operations_are_refused_with_a_message() {
+    fn the_eight_bit_guard_still_reports_and_filters_open_on_sixteen_bit() {
         let mut wide = sixteen_bit_state();
-        assert_eq!(wide.active_layer_format(), PixelFormat::Srgb16);
-
-        assert!(!wide.require_8bit("Merge Down"), "the guard must refuse");
+        assert!(!wide.require_8bit("Something New"), "the guard must refuse");
         let message = wide.status_message.clone();
         assert!(message.contains("8-bit only"), "status should explain the refusal: {message}");
         assert!(message.contains("16-bit"), "status should name the document format: {message}");
 
-        assert!(!wide.require_8bit_document("Merge Down"));
+        assert!(AppState::new(4, 4).require_8bit("Something New"));
 
-        // Opening a filter modal must refuse too, and must not leave a preview buffer behind.
+        // Filters are no longer 8-bit only: the modal opens and captures storage bytes, so the
+        // preview can restore a 16-bit layer exactly.
         wide.begin_filter_modal(ActiveFilterModal::BrightnessContrast);
-        assert!(wide.active_filter_modal == ActiveFilterModal::None);
-        assert!(wide.filter_original_pixels.is_none());
-
-        // The same calls succeed on an 8-bit document.
-        let mut eight = AppState::new(4, 4);
-        assert!(eight.require_8bit("Invert Colors"));
-        assert!(eight.require_8bit_document("Merge Down"));
-        eight.begin_filter_modal(ActiveFilterModal::BrightnessContrast);
-        assert!(eight.active_filter_modal == ActiveFilterModal::BrightnessContrast);
-        assert!(eight.filter_original_pixels.is_some());
+        assert!(wide.active_filter_modal == ActiveFilterModal::BrightnessContrast);
+        assert_eq!(
+            wide.filter_original_pixels.as_ref().map(|bytes| bytes.len()),
+            Some((4 * 4 * 4 * 2) as usize),
+            "the preview buffer must be storage bytes, not an 8-bit view"
+        );
     }
 
     /// Saving and reopening a 16-bit document keeps its native data and its format, through the

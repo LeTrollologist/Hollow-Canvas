@@ -622,9 +622,7 @@ widths is where quantisation happens, not which formula is used.
   the document 8-bit, because the format is no longer derived from the layers.
 - The AUR `document_format` byte records this field (see `docs/PROJECT_FORMAT.md`). No format
   bump was needed: the tag already existed and was already read.
-- `merge_visible_layers` merges through `composite_layers_srgb16` for a 16-bit document, so
-  flattening does not downconvert. `merge_layer_down` composites in 8-bit and therefore refuses
-  a 16-bit document; the UI reports the refusal rather than silently flattening.
+- `merge_visible_layers` merges through `composite_layers_srgb16` for a 16-bit document, so flattening does not downconvert. `merge_layer_down` composites in working precision and writes into the lower layer's own storage, so it works for 8-bit, 16-bit and mixed pairs alike.
 
 What the editor can and cannot do with a 16-bit document today:
 
@@ -636,7 +634,7 @@ What the editor can and cannot do with a 16-bit document today:
 | Flip / rotate / crop / scale | yes (native) |
 | Compositing and merge-visible | yes (native) |
 | Filters (all 15) and the three adjustment passes | yes (native) as of #28 |
-| Merge down | **refused with a message** - 8-bit by construction |
+| Merge down | yes (native; writes into the lower layer's format) |
 | Viewport | shows an 8-bit presentation; egui textures are 8-bit |
 
 The refusal message names the operation and the document format, and mutates nothing. That is
