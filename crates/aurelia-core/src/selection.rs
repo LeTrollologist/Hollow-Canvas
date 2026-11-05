@@ -247,6 +247,37 @@ impl SelectionMask {
         Self::from_mask_vec(width, height, mask)
     }
 
+    /// Builds a selection from a layer's alpha channel, whatever its storage format.
+    ///
+    /// Alpha is matched at **8-bit precision on purpose**. The selection mask is 8-bit, and
+    /// comparing at its own width keeps region boundaries identical in both formats - the same
+    /// asymmetry `docs/16bit-plan.md` records for flood fill, where the tolerance test stays in
+    /// 8-bit terms while the fill writes native channels. A 16-bit layer is therefore
+    /// selectable without an 8-bit copy of the whole layer existing anywhere.
+    pub fn from_layer(layer: &crate::layer::Layer, threshold: u8) -> Self {
+        let size = (layer.width as usize) * (layer.height as usize);
+        let mut mask = vec![0u8; size];
+
+        match layer.buffer() {
+            crate::layer::LayerBuffer::Srgb8(bytes) => {
+                let available = (bytes.len() / 4).min(size);
+                for (index, slot) in mask.iter_mut().enumerate().take(available) {
+                    let alpha = bytes[index * 4 + 3];
+                    *slot = if alpha >= threshold { alpha } else { 0 };
+                }
+            }
+            crate::layer::LayerBuffer::Srgb16(channels) => {
+                let available = (channels.len() / 4).min(size);
+                for (index, slot) in mask.iter_mut().enumerate().take(available) {
+                    let alpha = crate::pixel::srgb16_to_srgb8(channels[index * 4 + 3]);
+                    *slot = if alpha >= threshold { alpha } else { 0 };
+                }
+            }
+        }
+
+        Self::from_mask_vec(layer.width, layer.height, mask)
+    }
+
     #[inline]
     pub fn get_value(&self, x: u32, y: u32) -> u8 {
         if x < self.width && y < self.height {

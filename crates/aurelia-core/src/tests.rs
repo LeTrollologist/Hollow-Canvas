@@ -2742,6 +2742,107 @@ mod tests {
         );
     }
 
+    /// The magic wand samples the active layer directly. That sampling was an 8-bit copy, so
+    /// colour-select on a 16-bit layer aborted before any selection existed. Matching stays in
+    /// 8-bit terms (the tolerance is an 8-bit value), but it must not require an 8-bit layer.
+    #[test]
+    fn magic_wand_reads_sixteen_bit_layers() {
+        use crate::layer::LayerBuffer;
+        use crate::rasterizer::StrokeRasterizer;
+
+        let mut doc = Document::new(4, 4);
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            let mut channels = vec![0u16; 4 * 4 * 4];
+            for y in 0..4u32 {
+                for x in 2..4u32 {
+                    let base = ((y * 4 + x) * 4) as usize;
+                    channels[base] = 65535; // red
+                    channels[base + 3] = 65535; // opaque
+                }
+            }
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        let mask = StrokeRasterizer::rasterize_magic_wand(&doc, 3, 1, 0, true, false);
+
+        assert!(mask.has_selection(), "the wand must select the opaque block");
+        assert_eq!(mask.get_value(3, 1), 255, "a pixel inside the block must be selected");
+        assert_eq!(mask.get_value(0, 0), 0, "a transparent pixel must not be selected");
+    }
+
+    /// Export composites each timeline frame on its own. A frame holding 16-bit layers has to
+    /// reach the working-precision compositor rather than the 8-bit copy it used to assume.
+    #[test]
+    fn animation_frames_composite_sixteen_bit_layers() {
+        use crate::animation::AnimationFrame;
+        use crate::layer::LayerBuffer;
+
+        let mut doc = Document::new(2, 2);
+        doc.is_transparent = false;
+        doc.background_value = 7;
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            let channels: Vec<u16> = (0..(2 * 2 * 4))
+                .map(|index| (index as u16).wrapping_mul(8191).wrapping_add(3))
+                .collect();
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        let frame = AnimationFrame::from_layers(1, "frame", doc.layers.clone(), id, 2);
+        let from_frame = frame.composite_layers(2, 2, true, 7);
+        let from_document = doc.composite_layers(true);
+
+        assert_eq!(from_frame.len(), 2 * 2 * 4);
+        assert_eq!(
+            from_frame, from_document,
+            "a 16-bit frame must composite exactly like the document it was captured from"
+        );
+    }
+
+    /// "Select layer alpha" must work on either storage width, and must agree with the 8-bit
+    /// result for alpha values on the lattice. Matching stays in 8-bit terms by design, the
+    /// same asymmetry flood fill documents.
+    #[test]
+    fn layer_alpha_selection_reads_sixteen_bit_alpha() {
+        use crate::layer::LayerBuffer;
+        use crate::selection::SelectionMask;
+
+        // 3x1: transparent, opaque, half-way.
+        let mut wide = Document::new(3, 1);
+        let wide_id = wide.active_layer_id;
+        if let Some(layer) = wide.get_layer_mut(wide_id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(vec![
+                0, 0, 0, 0, //
+                9, 9, 9, 65535, //
+                9, 9, 9, 32768,
+            ]);
+        }
+        let mask = SelectionMask::from_layer(wide.get_layer(wide_id).expect("layer"), 8);
+        assert_eq!(mask.get_value(0, 0), 0, "transparent alpha must not select");
+        assert_eq!(mask.get_value(1, 0), 255, "opaque alpha must select fully");
+        assert_eq!(
+            mask.get_value(2, 0),
+            crate::pixel::srgb16_to_srgb8(32768),
+            "half-way alpha keeps its 8-bit coverage"
+        );
+
+        // The same alphas on a lattice-aligned 8-bit layer produce the same mask.
+        let mut narrow = Document::new(3, 1);
+        let narrow_id = narrow.active_layer_id;
+        if let Some(layer) = narrow.get_layer_mut(narrow_id) {
+            layer.as_srgb8_exact_mut().copy_from_slice(&[
+                0, 0, 0, 0, 9, 9, 9, 255, 9, 9, 9, 128,
+            ]);
+        }
+        let narrow_mask = SelectionMask::from_layer(narrow.get_layer(narrow_id).expect("layer"), 8);
+        assert_eq!(
+            (0..3).map(|x| mask.get_value(x, 0)).collect::<Vec<_>>(),
+            (0..3).map(|x| narrow_mask.get_value(x, 0)).collect::<Vec<_>>(),
+            "8-bit and 16-bit alpha must select identically for lattice values"
+        );
+    }
+
     /// `storage_bytes()` must agree with the two format-specific views it generalises.
     #[test]
     fn storage_bytes_matches_the_eight_bit_buffer() {

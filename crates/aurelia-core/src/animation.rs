@@ -66,6 +66,25 @@ impl AnimationFrame {
     }
 
     pub fn composite_layers(&self, width: u32, height: u32, include_background: bool, bg_val: u8) -> Vec<u8> {
+        // A frame holding any 16-bit layer must be composited at working precision, and that
+        // compositor lives on `Document`. Delegating keeps one implementation of the blend
+        // maths instead of a second one here; the clone is a single frame, dropped as soon as
+        // the composite exists, so peak memory does not grow with the timeline.
+        if self
+            .layers
+            .iter()
+            .any(|layer| layer.format() != crate::layer::PixelFormat::Srgb8)
+        {
+            let mut doc = Document::new(width, height);
+            doc.layers = self.layers.clone();
+            doc.active_layer_id = self.active_layer_id;
+            doc.next_layer_id = self.next_layer_id;
+            // `composite_layers` derives the background from these two fields.
+            doc.is_transparent = !include_background;
+            doc.background_value = bg_val;
+            return doc.composite_layers(true);
+        }
+
         let mut out = vec![0u8; (width * height * 4) as usize];
         if include_background {
             let bg_rgb = [bg_val, bg_val, bg_val, 255];

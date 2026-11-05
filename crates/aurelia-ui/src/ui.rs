@@ -472,12 +472,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             }
                             if ui.button("◱ Select Layer Alpha").clicked() {
                                 if let Some(layer) = state.document.active_layer() {
-                                    let mask = SelectionMask::from_layer_alpha(
-                                        layer.as_srgb8_exact(),
-                                        state.document.width,
-                                        state.document.height,
-                                        8,
-                                    );
+                                    let mask = SelectionMask::from_layer(layer, 8);
                                     let selected =
                                         mask.mask.iter().filter(|&&v| v > 8).count();
                                     state.selection = Some(mask);
@@ -492,12 +487,7 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             }
                             if ui.button("∩ Intersect with Layer Alpha").clicked() {
                                 let alpha = state.document.active_layer().map(|layer| {
-                                    SelectionMask::from_layer_alpha(
-                                        layer.as_srgb8_exact(),
-                                        state.document.width,
-                                        state.document.height,
-                                        8,
-                                    )
+                                    SelectionMask::from_layer(layer, 8)
                                 });
                                 if let Some(alpha) = alpha {
                                     match &mut state.selection {

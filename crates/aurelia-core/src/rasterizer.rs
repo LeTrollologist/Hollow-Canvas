@@ -1061,6 +1061,23 @@ impl StrokeRasterizer {
         }
     }
 
+    /// An 8-bit view of a layer's pixels for region matching.
+    ///
+    /// The magic wand's tolerance is defined on 8-bit values, so matching stays in 8-bit terms
+    /// for a 16-bit layer too - the same asymmetry flood fill records, where the fill writes
+    /// native channels but the comparison does not. Returning an owned buffer (rather than
+    /// borrowing the layer) is what lets the same code cover both widths without the caller
+    /// allocating an 8-bit copy of the layer itself.
+    fn srgb8_matching_view(layer: &Layer) -> Vec<u8> {
+        match layer.buffer() {
+            LayerBuffer::Srgb8(bytes) => bytes.clone(),
+            LayerBuffer::Srgb16(channels) => channels
+                .iter()
+                .map(|&channel| crate::pixel::srgb16_to_srgb8(channel))
+                .collect(),
+        }
+    }
+
     pub fn rasterize_magic_wand(
         doc: &Document,
         start_x: u32,
@@ -1078,9 +1095,9 @@ impl StrokeRasterizer {
         let source_buffer = if sample_all_layers {
             doc.composite_layers(false)
         } else if let Some(ref_layer) = doc.reference_layer() {
-            ref_layer.as_srgb8_exact().to_vec()
+            Self::srgb8_matching_view(ref_layer)
         } else if let Some(layer) = doc.active_layer() {
-            layer.as_srgb8_exact().to_vec()
+            Self::srgb8_matching_view(layer)
         } else {
             return mask;
         };
