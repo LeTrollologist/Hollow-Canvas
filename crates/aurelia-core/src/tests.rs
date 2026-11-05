@@ -2422,39 +2422,133 @@ mod tests {
         assert_eq!(at(7, 2), mid, "the region right of the barrier must be untouched");
     }
 
-    /// Text is the one operation still 8-bit only, and the decision is to say so rather than
-    /// panic or silently skip: a 16-bit layer is reported unsupported and left untouched.
+    /// Text on a 16-bit layer renders natively: the loop dispatches once per draw and writes
+    /// `u16` channels, so glyph coverage produces values below the 8-bit lattice instead of
+    /// being quantised on the way in.
     #[test]
-    fn text_reports_unsupported_on_sixteen_bit_layers() {
+    fn text_renders_natively_on_sixteen_bit_layers() {
         use crate::layer::{LayerBuffer, PixelFormat};
 
-        let mut doc = Document::new(16, 16);
+        let font = ab_glyph::FontArc::try_from_vec(crate::assets::bundled_font().to_vec())
+            .expect("bundled font");
+
+        let mut doc = Document::new(64, 48);
         doc.is_transparent = true;
         let id = doc.active_layer_id;
-        let mid = crate::pixel::srgb8_to_srgb16(50) + 128;
-        let channels = vec![mid; 16 * 16 * 4];
         if let Some(layer) = doc.get_layer_mut(id) {
-            *layer.buffer_mut() = LayerBuffer::Srgb16(channels.clone());
+            *layer.buffer_mut() = LayerBuffer::Srgb16(vec![0u16; 64 * 48 * 4]);
         }
 
-        // No font is loaded in this fixture, so the call must refuse before touching pixels.
+        let mut config = crate::layer::TextLayerConfig::default();
+        config.content = "Wg".to_string();
+        config.font_size = 28.0;
+        config.color = [255, 255, 255, 255];
+        config.pos_x = 4.0;
+        config.pos_y = 4.0;
+
         let layer = doc.get_layer_mut(id).expect("layer");
-        let config = crate::layer::TextLayerConfig::default();
-        let font = crate::rasterizer::StrokeRasterizer::load_font(None, None);
-        if let Some(font) = font {
-            let rendered = crate::rasterizer::StrokeRasterizer::rasterize_text_layer_config(
-                layer, &config, &font,
-            );
-            assert!(!rendered, "text must report unsupported on a 16-bit layer");
+        assert!(
+            crate::rasterizer::StrokeRasterizer::rasterize_text_layer_config(layer, &config, &font),
+            "16-bit text must render, not report unsupported"
+        );
+
+        let layer = doc.get_layer(id).expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16, "text must not change storage");
+        let channels = layer.as_srgb16().expect("16-bit");
+        assert!(channels.iter().any(|&c| c > 0), "nothing was rendered");
+
+        // Glyph edges are fractional coverage: some channel must land off the 8-bit lattice,
+        // which is the whole point of rendering at 16 bits rather than promoting afterwards.
+        assert!(
+            channels.iter().any(|&c| c > 0 && c % 257 != 0),
+            "16-bit text produced only lattice values; it was quantised somewhere"
+        );
+    }
+
+    /// Rendering empty text must clear the layer without changing its storage format - the
+    /// failure mode worth guarding, because the function clears its buffer first.
+    #[test]
+    fn empty_text_clears_without_changing_format() {
+        use crate::layer::{LayerBuffer, PixelFormat};
+
+        let font = ab_glyph::FontArc::try_from_vec(crate::assets::bundled_font().to_vec())
+            .expect("bundled font");
+
+        let mut doc = Document::new(8, 8);
+        let id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(id) {
+            *layer.buffer_mut() = LayerBuffer::Srgb16(vec![65535u16; 8 * 8 * 4]);
         }
+
+        let mut config = crate::layer::TextLayerConfig::default();
+        config.content = String::new();
+        let layer = doc.get_layer_mut(id).expect("layer");
+        assert!(crate::rasterizer::StrokeRasterizer::rasterize_text_layer_config(layer, &config, &font));
 
         let layer = doc.get_layer(id).expect("layer");
         assert_eq!(layer.format(), PixelFormat::Srgb16);
-        assert_eq!(
-            layer.as_srgb16().expect("16-bit"),
-            channels.as_slice(),
-            "a refused text render must leave the layer untouched, not cleared"
+        assert!(
+            layer.as_srgb16().expect("16-bit").iter().all(|&c| c == 0),
+            "empty text must clear the layer"
         );
+    }
+
+    /// Alpha lock and a selection mask must behave the same way at both widths.
+    #[test]
+    fn text_alpha_lock_and_selection_apply_at_both_widths() {
+        use crate::brush::TextAlign;
+        use crate::layer::LayerBuffer;
+        use crate::selection::SelectionMask;
+
+        let font = ab_glyph::FontArc::try_from_vec(crate::assets::bundled_font().to_vec())
+            .expect("bundled font");
+
+        let selection = SelectionMask::from_mask_vec(
+            64,
+            32,
+            (0..64 * 32).map(|index| if index % 64 < 20 { 255u8 } else { 0 }).collect(),
+        );
+
+        let mut results = Vec::new();
+        for wide in [false, true] {
+            let mut doc = Document::new(64, 32);
+            doc.is_transparent = true;
+            let id = doc.active_layer_id;
+            if let Some(layer) = doc.get_layer_mut(id) {
+                if wide {
+                    *layer.buffer_mut() = LayerBuffer::Srgb16(vec![0u16; 64 * 32 * 4]);
+                }
+                layer.alpha_locked = true;
+            }
+
+            crate::rasterizer::StrokeRasterizer::rasterize_text(
+                &mut doc,
+                glam::Vec2::new(2.0, 4.0),
+                "Locked",
+                Some(&font),
+                24.0,
+                Color::WHITE,
+                1.0,
+                1.0,
+                0.0,
+                TextAlign::Left,
+                Some(&selection),
+            );
+
+            let layer = doc.get_layer(id).expect("layer");
+            // Alpha lock on a fully transparent layer refuses every write, at either width.
+            let all_zero = if wide {
+                layer.as_srgb16().expect("16-bit").iter().all(|&c| c == 0)
+            } else {
+                layer.as_srgb8_exact().iter().all(|&b| b == 0)
+            };
+            assert!(
+                all_zero,
+                "alpha-locked text on a transparent layer must not paint (wide = {wide})"
+            );
+            results.push(all_zero);
+        }
+        assert_eq!(results, vec![true, true], "both widths must agree");
     }
 
     /// Step 3 begins with resize: a 16-bit layer must keep its format and copy its overlapping
@@ -3132,8 +3226,7 @@ mod tests {
     /// on normalised channels. The two can differ by one 8-bit step where a result sits on a
     /// rounding boundary; anything larger means the formulas have diverged.
     #[test]
-    fn adjustment_working_matches_eight_bit() {
-        use crate::layer::AdjustmentType;
+    fn adjustment_working_matches_eight_bit() {        use crate::layer::AdjustmentType;
         use crate::pixel::Channel;
 
         let cases = [
@@ -3174,5 +3267,145 @@ mod tests {
             worst <= 1,
             "working-precision adjustments drifted {worst} steps from the 8-bit result"
         );
+    }
+
+    // ── Text: the 8-bit baseline (#14) ──────────────────────────────────────────────────────
+
+    /// Every text fixture, digested.
+    ///
+    /// Recorded **before** the glyph loop was generalised, against the bundled font, so this
+    /// is a baseline rather than a snapshot of whatever the refactor produced. The font is
+    /// bundled for exactly this reason: a system font would make the digest machine-specific
+    /// and therefore meaningless.
+    mod text_baseline {
+        use crate::brush::TextAlign;
+        use crate::color::Color;
+        use crate::document::Document;
+        use crate::layer::{TextLayerConfig, LayerBuffer};
+        use crate::rasterizer::StrokeRasterizer;
+
+        fn font() -> ab_glyph::FontArc {
+            ab_glyph::FontArc::try_from_vec(crate::assets::bundled_font().to_vec())
+                .expect("bundled font")
+        }
+
+        fn digest(bytes: &[u8]) -> u64 {
+            let mut hash = 0xcbf29ce484222325u64;
+            for &byte in bytes {
+                hash ^= byte as u64;
+                hash = hash.wrapping_mul(0x100000001b3);
+            }
+            hash
+        }
+
+        fn config(content: &str, size: f32) -> TextLayerConfig {
+            TextLayerConfig {
+                content: content.to_string(),
+                font_family: "bundled".to_string(),
+                font_size: size,
+                color: [255, 255, 255, 255],
+                align: TextAlign::Left,
+                line_spacing: 1.0,
+                letter_spacing: 0.0,
+                box_w: 0.0,
+                box_h: 0.0,
+                pos_x: 4.0,
+                pos_y: 4.0,
+            }
+        }
+
+        fn render(width: u32, height: u32, cfg: &TextLayerConfig) -> Vec<u8> {
+            let mut doc = Document::new(width, height);
+            doc.is_transparent = true;
+            let id = doc.active_layer_id;
+            if let Some(layer) = doc.get_layer_mut(id) {
+                *layer.buffer_mut() = LayerBuffer::Srgb8(vec![0u8; (width * height * 4) as usize]);
+                assert!(StrokeRasterizer::rasterize_text_layer_config(layer, cfg, &font()));
+                return layer.as_srgb8_exact().to_vec();
+            }
+            unreachable!()
+        }
+
+        #[test]
+        fn a_single_line_is_unchanged() {
+            let bytes = render(96, 48, &config("Aurelia", 32.0));
+            assert_ne!(bytes.iter().filter(|&&byte| byte > 0).count(), 0, "nothing rendered");
+            assert_eq!(digest(&bytes), 10483588990592354726, "a_single_line_is_unchanged");
+        }
+
+        #[test]
+        fn wrapping_and_centering_are_unchanged() {
+            let mut cfg = config("Wrap this line", 20.0);
+            cfg.box_w = 70.0;
+            cfg.align = TextAlign::Center;
+            let bytes = render(96, 96, &cfg);
+            assert_eq!(digest(&bytes), 1623966499463724239, "wrapping_and_centering_are_unchanged");
+        }
+
+        #[test]
+        fn alpha_and_letter_spacing_are_unchanged() {
+            let mut cfg = config("Spaced", 24.0);
+            cfg.color = [255, 200, 120, 128];
+            cfg.letter_spacing = 2.5;
+            let bytes = render(96, 48, &cfg);
+            assert_eq!(digest(&bytes), 9779906792473839393, "alpha_and_letter_spacing_are_unchanged");
+        }
+
+        #[test]
+        fn a_glyph_clipped_at_the_edge_is_unchanged() {
+            let mut cfg = config("Wg", 28.0);
+            cfg.pos_x = -6.0;
+            cfg.pos_y = -4.0;
+            let bytes = render(32, 32, &cfg);
+            assert_eq!(digest(&bytes), 16401277342387934969, "a_glyph_clipped_at_the_edge_is_unchanged");
+        }
+
+        #[test]
+        fn the_tool_path_is_unchanged() {
+            let mut doc = Document::new(96, 48);
+            doc.is_transparent = true;
+            let bounds = StrokeRasterizer::rasterize_text(
+                &mut doc,
+                glam::Vec2::new(10.0, 10.0),
+                "Hi",
+                Some(&font()),
+                24.0,
+                Color::new(1.0, 0.2, 0.2, 1.0),
+                1.0,
+                1.0,
+                0.0,
+                TextAlign::Left,
+                None,
+            );
+            assert!(bounds.is_some(), "the tool path rendered nothing");
+            let bytes = doc.layers[0].as_srgb8_exact().to_vec();
+            assert_eq!(digest(&bytes), 2616636973191488769, "the_tool_path_is_unchanged");
+        }
+
+        #[test]
+        fn the_tool_path_with_a_selection_is_unchanged() {
+            let mut doc = Document::new(96, 48);
+            doc.is_transparent = true;
+            let selection = crate::selection::SelectionMask::from_mask_vec(
+                96,
+                48,
+                (0..96 * 48).map(|index| if index % 96 < 40 { 255u8 } else { 0 }).collect(),
+            );
+            StrokeRasterizer::rasterize_text(
+                &mut doc,
+                glam::Vec2::new(6.0, 8.0),
+                "Masked",
+                Some(&font()),
+                20.0,
+                Color::WHITE,
+                1.0,
+                1.0,
+                0.0,
+                TextAlign::Left,
+                Some(&selection),
+            );
+            let bytes = doc.layers[0].as_srgb8_exact().to_vec();
+            assert_eq!(digest(&bytes), 10656664465313779728, "the_tool_path_with_a_selection_is_unchanged");
+        }
     }
 }

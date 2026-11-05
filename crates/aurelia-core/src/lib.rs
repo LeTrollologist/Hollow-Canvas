@@ -1,4 +1,5 @@
 pub mod animation;
+pub mod assets;
 pub mod blend;
 pub mod brush;
 pub mod color;

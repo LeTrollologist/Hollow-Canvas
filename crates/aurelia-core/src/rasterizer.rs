@@ -1340,7 +1340,10 @@ impl StrokeRasterizer {
                 }
             }
         }
-        None
+
+        // Last resort: the bundled font, so text still renders on a machine with no system
+        // font at the paths above. This is also what makes text tests deterministic.
+        FontArc::try_from_vec(crate::assets::bundled_font().to_vec()).ok()
     }
 
     /// Measure text bounding box (width, height) without rendering.
@@ -1507,24 +1510,22 @@ impl StrokeRasterizer {
     }
 
     /// Rasterizes an entire `TextLayerConfig` dynamically into the given `Layer`'s pixel buffer.
+    ///
+    /// Format-aware: the glyph loop runs once per storage width and writes channels natively,
+    /// so text on a 16-bit layer renders instead of being refused. The 8-bit output is pinned
+    /// byte for byte by the `text_baseline` digests, which were recorded before this became
+    /// generic.
     pub fn rasterize_text_layer_config(
         layer: &mut Layer,
         config: &crate::layer::TextLayerConfig,
         font_ref: &FontArc,
     ) -> bool {
-        // Text is the one operation still 8-bit only, and refusing is deliberate: the glyph
-        // loop composites coverage through hand-written source-over maths rather than the
-        // shared blend, so converting it means first deciding whether its rounding may move.
-        // Until that decision has a golden baseline, a 16-bit layer is reported as
-        // unsupported instead of being silently skipped or panicking.
-        if layer.format() != crate::layer::PixelFormat::Srgb8 {
-            return false;
-        }
+        let (layer_w, layer_h) = (layer.width, layer.height);
 
         // Clear destination layer buffer to transparent
-        layer.as_srgb8_exact_mut().fill(0);
+        layer.clear();
 
-        if config.content.is_empty() || layer.width == 0 || layer.height == 0 {
+        if config.content.is_empty() || layer_w == 0 || layer_h == 0 {
             return true;
         }
 
@@ -1536,6 +1537,30 @@ impl StrokeRasterizer {
             config.box_w,
         );
 
+        match layer.buffer_mut() {
+            LayerBuffer::Srgb8(pixels) => {
+                Self::text_config_impl(pixels, layer_w, layer_h, config, font_ref, &lines)
+            }
+            LayerBuffer::Srgb16(pixels) => {
+                Self::text_config_impl(pixels, layer_w, layer_h, config, font_ref, &lines)
+            }
+        }
+        true
+    }
+
+    /// The glyph loop behind [`StrokeRasterizer::rasterize_text_layer_config`].
+    ///
+    /// One body, instantiated for `u8` and `u16`. The composite is hand-written source-over
+    /// rather than the shared blend - that is what the 8-bit text renderer has always done -
+    /// so the formula is preserved exactly and only the channel reads and writes are generic.
+    fn text_config_impl<C: Channel>(
+        pixels: &mut [C],
+        layer_w: u32,
+        layer_h: u32,
+        config: &crate::layer::TextLayerConfig,
+        font_ref: &FontArc,
+        lines: &[String],
+    ) {
         let scale = PxScale::from(config.font_size.max(4.0));
         let scaled_font = font_ref.as_scaled(scale);
         let ascent = scaled_font.ascent();
@@ -1543,10 +1568,8 @@ impl StrokeRasterizer {
         let line_gap = scaled_font.line_gap();
         let line_height = (ascent - descent + line_gap) * config.line_spacing.max(0.5);
 
-        let layer_w = layer.width;
-        let layer_h = layer.height;
-        let color = config.color;
-        let [cr, cg, cb, ca] = color;
+        let [cr, cg, cb, ca] = config.color;
+        let src = Self::u8_px([cr, cg, cb, 255]);
         let col_a = ca as f32 / 255.0;
 
         for (line_idx, line) in lines.iter().enumerate() {
@@ -1590,31 +1613,25 @@ impl StrokeRasterizer {
                         if cx >= 0 && cx < layer_w as i32 && cy >= 0 && cy < layer_h as i32 {
                             let idx = ((cy as usize * layer_w as usize) + cx as usize) * 4;
                             let alpha = coverage * col_a;
-                            if alpha <= 0.001 {
+                            if alpha <= 0.001 || idx + 3 >= pixels.len() {
                                 return;
                             }
 
                             // Source over blend on top of existing pixels in this text layer
-                            let dst_r = layer.as_srgb8_exact()[idx] as f32 / 255.0;
-                            let dst_g = layer.as_srgb8_exact()[idx + 1] as f32 / 255.0;
-                            let dst_b = layer.as_srgb8_exact()[idx + 2] as f32 / 255.0;
-                            let dst_a = layer.as_srgb8_exact()[idx + 3] as f32 / 255.0;
-
-                            let src_r = cr as f32 / 255.0;
-                            let src_g = cg as f32 / 255.0;
-                            let src_b = cb as f32 / 255.0;
-                            let src_a = alpha;
-
-                            let out_a = src_a + dst_a * (1.0 - src_a);
+                            let dst = Self::read_px(pixels, idx);
+                            let out_a = alpha + dst[3] * (1.0 - alpha);
                             if out_a > 0.0001 {
-                                let out_r = (src_r * src_a + dst_r * dst_a * (1.0 - src_a)) / out_a;
-                                let out_g = (src_g * src_a + dst_g * dst_a * (1.0 - src_a)) / out_a;
-                                let out_b = (src_b * src_a + dst_b * dst_a * (1.0 - src_a)) / out_a;
-
-                                layer.as_srgb8_exact_mut()[idx] = (out_r * 255.0).clamp(0.0, 255.0).round() as u8;
-                                layer.as_srgb8_exact_mut()[idx + 1] = (out_g * 255.0).clamp(0.0, 255.0).round() as u8;
-                                layer.as_srgb8_exact_mut()[idx + 2] = (out_b * 255.0).clamp(0.0, 255.0).round() as u8;
-                                layer.as_srgb8_exact_mut()[idx + 3] = (out_a * 255.0).clamp(0.0, 255.0).round() as u8;
+                                let inv = dst[3] * (1.0 - alpha);
+                                Self::store_px(
+                                    pixels,
+                                    idx,
+                                    [
+                                        (src[0] * alpha + dst[0] * inv) / out_a,
+                                        (src[1] * alpha + dst[1] * inv) / out_a,
+                                        (src[2] * alpha + dst[2] * inv) / out_a,
+                                        out_a,
+                                    ],
+                                );
                             }
                         }
                     });
@@ -1622,11 +1639,11 @@ impl StrokeRasterizer {
                 current_x += scaled_font.h_advance(glyph_id) + config.letter_spacing;
             }
         }
-        true
     }
 
     /// Rasterize formatted text directly onto the active layer.
     /// Returns bounding box (min_x, min_y, max_x, max_y) in canvas coordinates if anything was rendered.
+    #[allow(clippy::too_many_arguments)]
     pub fn rasterize_text(
         doc: &mut Document,
         pos: Vec2,
@@ -1662,18 +1679,45 @@ impl StrokeRasterizer {
             }
         };
 
-        let scale = PxScale::from(font_size.max(4.0));
+        let run = TextRun {
+            text,
+            origin: pos,
+            font_size,
+            color: color.to_rgba8(),
+            opacity,
+            line_spacing: line_spacing_mult,
+            letter_spacing,
+            align,
+            alpha_locked: layer.alpha_locked,
+            blend_mode: layer.blend_mode,
+            selection: selection.filter(|s| s.has_selection()),
+        };
+
+        // One dispatch per text draw, not per pixel.
+        match layer.buffer_mut() {
+            LayerBuffer::Srgb8(pixels) => Self::text_run_impl(pixels, doc_w, doc_h, font_ref, &run),
+            LayerBuffer::Srgb16(pixels) => Self::text_run_impl(pixels, doc_w, doc_h, font_ref, &run),
+        }
+    }
+
+    /// The glyph loop behind [`StrokeRasterizer::rasterize_text`], generic over storage.
+    #[allow(clippy::too_many_arguments)]
+    fn text_run_impl<C: Channel>(
+        pixels: &mut [C],
+        width: u32,
+        height: u32,
+        font_ref: &FontArc,
+        run: &TextRun<'_>,
+    ) -> Option<(f32, f32, f32, f32)> {
+        let scale = PxScale::from(run.font_size.max(4.0));
         let scaled_font = font_ref.as_scaled(scale);
         let ascent = scaled_font.ascent();
         let descent = scaled_font.descent();
         let line_gap = scaled_font.line_gap();
-        let line_height = (ascent - descent + line_gap) * line_spacing_mult.max(0.5);
+        let line_height = (ascent - descent + line_gap) * run.line_spacing.max(0.5);
 
-        let lines: Vec<&str> = text.split('\n').collect();
-        let active_mask = selection.filter(|s| s.has_selection());
-        let src_col = color.to_rgba8();
-        let alpha_locked = layer.alpha_locked;
-        let blend_mode = layer.blend_mode;
+        let lines: Vec<&str> = run.text.split('\n').collect();
+        let src = Self::u8_px(run.color);
 
         let mut overall_min_x = f32::MAX;
         let mut overall_min_y = f32::MAX;
@@ -1685,16 +1729,16 @@ impl StrokeRasterizer {
             let mut line_w: f32 = 0.0;
             for c in line.chars() {
                 let glyph = scaled_font.scaled_glyph(c);
-                line_w += scaled_font.h_advance(glyph.id) + letter_spacing;
+                line_w += scaled_font.h_advance(glyph.id) + run.letter_spacing;
             }
 
-            let start_x = match align {
-                TextAlign::Left => pos.x,
-                TextAlign::Center => pos.x - line_w * 0.5,
-                TextAlign::Right => pos.x - line_w,
+            let start_x = match run.align {
+                TextAlign::Left => run.origin.x,
+                TextAlign::Center => run.origin.x - line_w * 0.5,
+                TextAlign::Right => run.origin.x - line_w,
             };
 
-            let baseline_y = pos.y + ascent + (line_idx as f32 * line_height);
+            let baseline_y = run.origin.y + ascent + (line_idx as f32 * line_height);
             let mut current_x = start_x;
 
             for c in line.chars() {
@@ -1711,12 +1755,12 @@ impl StrokeRasterizer {
                         let cx = bounds.min.x as i32 + gx as i32;
                         let cy = bounds.min.y as i32 + gy as i32;
 
-                        if cx >= 0 && cx < doc_w as i32 && cy >= 0 && cy < doc_h as i32 {
+                        if cx >= 0 && cx < width as i32 && cy >= 0 && cy < height as i32 {
                             let ux = cx as u32;
                             let uy = cy as u32;
 
                             let mut mask_factor = 1.0_f32;
-                            if let Some(mask) = active_mask {
+                            if let Some(mask) = run.selection {
                                 let mv = mask.get_value(ux, uy);
                                 if mv < 8 {
                                     return;
@@ -1724,28 +1768,28 @@ impl StrokeRasterizer {
                                 mask_factor = mv as f32 / 255.0;
                             }
 
-                            let idx = ((uy * doc_w + ux) * 4) as usize;
-                            let dst = [
-                                layer.as_srgb8_exact()[idx],
-                                layer.as_srgb8_exact()[idx + 1],
-                                layer.as_srgb8_exact()[idx + 2],
-                                layer.as_srgb8_exact()[idx + 3],
-                            ];
+                            let idx = ((uy * width + ux) * 4) as usize;
+                            if idx + 3 >= pixels.len() {
+                                return;
+                            }
+                            let dst = Self::read_px(pixels, idx);
 
-                            if alpha_locked && dst[3] == 0 {
+                            if run.alpha_locked && dst[3] <= 0.0 {
                                 return;
                             }
 
-                            let effective_alpha = coverage * opacity * color.a * mask_factor;
+                            let effective_alpha = coverage * run.opacity * run.color[3] as f32 / 255.0 * mask_factor;
                             if effective_alpha <= 0.001 {
                                 return;
                             }
 
-                            let mut blended = blend_mode.composite_pixel(dst, src_col, effective_alpha);
-                            if alpha_locked {
+                            let mut blended = run
+                                .blend_mode
+                                .composite_working(dst, src, effective_alpha);
+                            if run.alpha_locked {
                                 blended[3] = dst[3];
                             }
-                            layer.as_srgb8_exact_mut()[idx..idx + 4].copy_from_slice(&blended);
+                            Self::store_px(pixels, idx, blended);
 
                             drawn_any = true;
                             if (cx as f32) < overall_min_x { overall_min_x = cx as f32; }
@@ -1755,7 +1799,7 @@ impl StrokeRasterizer {
                         }
                     });
                 }
-                current_x += scaled_font.h_advance(glyph_id) + letter_spacing;
+                current_x += scaled_font.h_advance(glyph_id) + run.letter_spacing;
             }
         }
 
@@ -1765,4 +1809,24 @@ impl StrokeRasterizer {
             None
         }
     }
+}
+
+/// One text draw through the tool path.
+///
+/// Gathered into a struct because the loop needs eleven inputs and a struct makes the
+/// per-draw state explicit (and the dispatch site readable).
+struct TextRun<'a> {
+    text: &'a str,
+    origin: Vec2,
+    font_size: f32,
+    /// Source colour as RGBA8; the tool takes a `Color`, which is 8-bit by definition.
+    color: [u8; 4],
+    opacity: f32,
+    line_spacing: f32,
+    letter_spacing: f32,
+    align: TextAlign,
+    alpha_locked: bool,
+    blend_mode: BlendMode,
+    /// Already filtered to a mask that has a selection.
+    selection: Option<&'a SelectionMask>,
 }
