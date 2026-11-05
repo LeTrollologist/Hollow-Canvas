@@ -39,3 +39,16 @@ implemented.
 Large canvases and deep undo histories are memory-bound. Close other documents, reduce undo
 depth, or flatten layers before very large exports. See [PERFORMANCE.md](PERFORMANCE.md) for the
 measured baseline.
+
+## Transforms
+
+**Free transform on a 16-bit document.** Affine, perspective quad, mesh and TPS transforms edit
+16-bit documents natively; nothing is converted to 8 bits. The viewport still shows an 8-bit
+presentation, so export or reopen the file to inspect the full 16-bit data.
+
+**A hard transparent edge darkens under Bilinear interpolation.** Bilinear sampling averages
+colour and alpha independently, so a fully transparent border with non-black RGB can tint the
+edge it is blended against. This is a known limitation inherited from the 8-bit path, not a
+16-bit bug. Use **Nearest** interpolation for hard-edged cutouts, or keep the RGB under
+zero-alpha border pixels black. See the known-limitation section in
+[16bit-plan.md](16bit-plan.md#known-limitation-bilinear-transparent-edges).

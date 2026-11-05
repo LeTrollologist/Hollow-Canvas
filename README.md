@@ -116,6 +116,7 @@
   - **Bicubic Mesh Grid**: Configurable $N \times M$ control grids (3x3, 4x4, 5x5, 6x6, 8x8) with draggable vertex pins and inverse bilinear quad mapping.
   - **Thin Plate Splines (TPS)**: Multi-pin landmark warping driven by radial basis function kernels with Gauss-Jordan partial pivoting solvers for organic elasticity.
   - **Subpixel Sampling Filters**: Real-time Bicubic (16-sample Catmull-Rom), Bilinear, and Nearest-neighbor interpolation.
+- 🎨 **Native 16-bit sRGB Editing**: Create, open and save RGBA16 documents and edit them at their own storage width — painting, erasing, fill, gradients, shapes, text, free transform, filters, selection edits, compositing and merge-visible all run natively at 16 bits. The viewport still presents an 8-bit image because `egui` textures are 8-bit; that is a display limitation, not a data one.
 - ✨ **Non-Destructive Adjustment Layers**: Real-time, zero-allocation filter passes during composite steps (`Brightness/Contrast`, `HSL`, `Color Balance`, `Invert`, `Posterize`, `Threshold`, `Sepia`) that dynamically affect layers underneath without altering base pixel data.
 - 🎨 **Floating Mixing Scratchpad (<kbd>F4</kbd>)**: Persistent off-canvas color mixing dock for scribbling, smudging pigments, and eyedropper sampling without modifying the main document or history.
 - ⚡ **Subpixel-Antialiased High-Frequency Engine**: Guaranteed physical sub-pixel antialiasing transition bands across all hardness levels, with true Catmull-Rom spline tangent curvature and S-Level Global Stroke Stabilization (S-0 through S-7 Lazy Rope).
@@ -162,7 +163,7 @@ Aurelia/
 | :--- | :--- | :--- |
 | OS | Windows 10/11 x86-64 | No Linux/macOS build yet |
 | Project files | AUR v3 (`.aur`), legacy HCV v2–v5 (`.hcv`) | AUR v1/v2 are read-only compatibility formats; saves always write v3 |
-| Pixel formats | 8-bit sRGB and 16-bit sRGB layers | Mixed-format documents round-trip; 16-bit compositing is not yet native (see #15) |
+| Pixel formats | 8-bit and 16-bit sRGB documents; native 16-bit editing and compositing | Viewport presents an 8-bit image; mixed-format documents round-trip but are not created by the editor |
 | Layer features | Raster, groups, masks, adjustment layers, text, clipping | Animation is timeline-only; no video export |
 | Exports | PNG, JPEG, WebP, GIF, sprite sheets, frame sequences | Color profiles are not embedded yet; no ICC/Display P3 workflow |
 | Rich Presence | Optional Discord IPC | Off by default; no artwork previews; Windows Discord desktop only |

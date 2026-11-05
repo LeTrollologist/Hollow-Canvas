@@ -196,6 +196,23 @@ hits both and cancels in the ratio.
   at 16 bits, which is expected: the loop is compute-bound there, and the wider channel does
   not add work per pixel.
 
+### Completion re-measurement (checkpoint `v3.4.0-16bit-complete`)
+
+Re-run after the free-transform integration, release profile, five paired rounds on
+Intel64 Family 6 Model 154 Stepping 3 / rustc 1.93.1. The initial table above is kept as the
+original gate run rather than replaced:
+
+| Workload | u8 MPix/s | Srgb16 | ratio (median) | ratio spread |
+| :--- | ---: | ---: | ---: | :--- |
+| opaque | 38.0 | 40.6 | **0.93** | 0.83 .. 1.09 |
+| sparse 10% | 175.8 | 113.8 | **0.67** | 0.53 .. 0.76 |
+| masked | 44.1 | 42.1 | **0.96** | 0.91 .. 1.00 |
+| clipped | 41.7 | 38.4 | **0.93** | 0.79 .. 0.99 |
+
+Sparse is 67% of the u8 baseline against the 60% budget - **pass**, with less headroom than the
+initial run. That result moves sparse-path performance into the stabilization phase rather than
+being treated as a completed optimization.
+
 ### What was wrong with the earlier measurements
 
 Both earlier results were artefacts, and both are kept in the record rather than quietly
@@ -757,7 +774,15 @@ debug and release - with the 8-bit digest gate unchanged.
 | Transparent edges | `sixteen_bit_transparent_patch_edges_do_not_darken_the_destination` |
 | Every deformation / interpolation mode stays native | `every_transform_preview_mode_stays_native_at_sixteen_bits` |
 
+## Known limitation: bilinear transparent edges
+
 The transparent-edge test is nearest-sampled on purpose: it isolates the coverage check (a
-zero-alpha border carrying colour must paint nothing) from interpolation quality. Bilinear
-source interpolation still averages colour and alpha independently, the same as it does at
-8 bits; changing that would move 8-bit output and belongs in its own baseline-first change.
+zero-alpha border carrying colour must paint nothing) from interpolation quality.
+
+**Known limitation:** bilinear source interpolation still averages colour and alpha
+independently, the same as it does at 8 bits. A zero-alpha border whose RGB is not black can
+therefore darken the interpolated destination edge. This is a pre-existing interpolation
+behaviour, not a 16-bit storage gap: fixing it would move 8-bit output and must be its own
+baseline-first change. Until then, use Nearest for hard transparent edges or keep border RGB
+black. It is recorded as a stabilization item rather than part of the 16-bit completion
+claim.

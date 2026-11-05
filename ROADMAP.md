@@ -229,11 +229,33 @@ None of it was the blend maths:
    the same row split applies.
 3. **Stack-local channel table** ? the rejected LUT, retried with the aliasing fixed.
 
+## Stabilization and performance (current phase)
+
+Free transform closed 16-bit feature completeness at `checkpoint/v3.4.0-16bit-complete`
+(`bfa6709`). The next phase is stabilization, not new architecture:
+
+1. **Soak and regression.** Keep the full workspace suite green in debug and release, and run
+   the 16-bit document paths through long editing sessions before any performance work.
+2. **Re-measure the baseline.** The completion measurements are recorded in
+   `docs/PERFORMANCE.md`: gate 2 sparse ratio 0.67 (pass, budget 0.60), general-path composite
+   105.4 MPix/s opaque, and 16-bit brush throughput at parity or better than 8-bit.
+3. **Performance work after correctness.** Optimise the general and sparse paths from that
+   baseline, one measured change at a time; no throughput change is bundled into a correctness
+   fix.
+4. **Known limitation queue.** Bilinear transparent-edge interpolation is the first correctness
+   item in this phase, because it needs an 8-bit baseline before it can move (see
+   `docs/16bit-plan.md`). Until then it stays documented rather than silently changed.
+
+**32-bit floating-point / linear-light editing is deliberately not started.** It changes how
+values combine, invalidates the byte-identical 8-bit oracle and needs its own proposal, gate and
+kill criterion. 16-bit sRGB storage is the completed milestone.
+
 ## Next (ordered)
 
 1. **Mask painting** ? target a mask with the brush, keeping it non-destructive.
-2. **General-path compositing speed** ? 25.7 MPix/s is ~4x slower than the fast path;
-   the per-pixel closure and the offset branch are the cost. Target 60 MPix/s.
+2. **General-path compositing speed** ? the completion baseline is 105.4 MPix/s opaque
+   (slowest blend mode 82.5); the next target is the sparse path and the slowest blend modes,
+   measured against `docs/PERFORMANCE.md` rather than the old 25.7 figure.
 3. **Layer styles** ? stroke, glow, drop shadow as composite-time effects.
 4. **Selection combine modes** ? Replace / Union / Subtract / Intersect for new selections.
 5. **Preferences UI** ? autosave interval, undo budget, JPEG quality, theme.
@@ -243,6 +265,12 @@ None of it was the blend maths:
 ## Designed, not built
 
 ### Colour management / higher bit depth
+
+> **Status: 16-bit sRGB shipped, 32-bit not started.** Native 16-bit storage, editing,
+> compositing, filters, text, selection edits and free transform are complete as of the
+> `checkpoint/v3.4.0-16bit-complete` checkpoint (see `docs/16bit-plan.md`). The text below is
+> kept as the design record; it is no longer a description of missing functionality.
+> Linear-light and 32-bit floating-point editing remain future work and have not been started.
 
 **Step 1 is done (v2.6.1, uncommitted at the time of writing).** `Layer::pixels` is
 private and every caller goes through `as_srgb8()` / `as_srgb8_mut()`, with

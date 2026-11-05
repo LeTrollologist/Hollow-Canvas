@@ -7,7 +7,7 @@
 | OS | Windows 10 / 11, x86-64 |
 | Display | 100–200 % scaling, per-monitor V2 DPI |
 | GPU | Not required; software renderer |
-| Linux/macOS | Not supported in 3.1.0 |
+| Linux/macOS | Not supported in Windows-targeted releases |
 
 ## Formats
 
@@ -22,10 +22,10 @@
 
 ## Application features
 
-| Area | Limits in 3.1.0 |
+| Area | Limits |
 | :--- | :--- |
 | Layers | raster, groups, clipping masks, adjustment layers, text |
-| Pixel formats | 8-bit and 16-bit storage; native 16-bit compositing pending |
+| Pixel formats | native 8-bit and 16-bit sRGB editing, compositing and transforms; the viewport presents an 8-bit image, and mixed-format files load but are not created |
 | Animation | timeline + GIF/sprite/frame export; no video container |
 | Reference images | single dock; not persisted as a library |
 | Workspace | panel toggles persisted; no named workspace presets |

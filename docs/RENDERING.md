@@ -16,8 +16,10 @@ is an implementation goal for specific passes, not a global guarantee.
 
 ## Color
 
-- Working data is 8-bit sRGB for the composite path; 16-bit layers are stored and round-tripped.
-- There is **no ICC/Display P3 color management** in 3.1.0: profiles are not loaded, embedded or
+- Working data follows the document: 8-bit documents composite on the integer fast path, while
+  16-bit documents use the generic working-precision path and are downconverted only at the
+  8-bit presentation boundary.
+- There is **no ICC/Display P3 color management** yet: profiles are not loaded, embedded or
   converted, and untagged images are treated as sRGB.
 - Color management is the highest-priority rendering gap; see `ROADMAP.md`.
 
@@ -31,4 +33,5 @@ same composite, not a second document render.
 
 - Compositing is CPU-bound by canvas area and layer count.
 - Very large canvases are limited by available memory and the 2 GiB per-layer format cap.
-- Native 16-bit compositing is not yet implemented (#15); 16-bit data is preserved on save/load.
+- 16-bit compositing, editing and transforms are native; only the viewport presentation is
+  8-bit, because `egui` 0.28 textures are 8-bit.
