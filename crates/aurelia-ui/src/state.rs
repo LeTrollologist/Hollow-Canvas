@@ -1463,7 +1463,7 @@ impl AppState {
         self.update_transform_preview();
         if let Some(layer) = self.document.active_layer() {
             let before = self.transform_session.original_layer_pixels.clone();
-            let after = layer.as_srgb8_exact().to_vec();
+            let after = layer.storage_bytes();
             if before != after {
                 let mode_name = match self.transform_session.mode {
                     TransformMode::Affine => "Free Transform",
@@ -1516,17 +1516,14 @@ impl AppState {
     }
 
     pub fn fill_selection_active_layer(&mut self) {
-        if !self.require_8bit("Fill Selection") {
-            return;
-        }
         if let Some(mask) = &self.selection {
             let doc_w = self.document.width;
             let doc_h = self.document.height;
             let color = self.brush.primary_color.to_rgba8();
             if let Some(layer) = self.document.active_layer_mut() {
-                let before = layer.as_srgb8_exact().to_vec();
-                mask.fill_selection(layer.as_srgb8_exact_mut(), doc_w, doc_h, color);
-                let after = layer.as_srgb8_exact().to_vec();
+                let before = layer.storage_bytes();
+                mask.fill_selection_on_layer(layer, color);
+                let after = layer.storage_bytes();
                 if before != after {
                     let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Fill Selection", before, after));
                     self.history.push(cmd);
@@ -1537,17 +1534,14 @@ impl AppState {
     }
 
     pub fn clear_selection_active_layer(&mut self) {
-        if !self.require_8bit("Clear Selection") {
-            return;
-        }
         if let Some(mask) = &self.selection {
             let doc_w = self.document.width;
             let doc_h = self.document.height;
             let color = [0, 0, 0, 0];
             if let Some(layer) = self.document.active_layer_mut() {
-                let before = layer.as_srgb8_exact().to_vec();
-                mask.fill_selection(layer.as_srgb8_exact_mut(), doc_w, doc_h, color);
-                let after = layer.as_srgb8_exact().to_vec();
+                let before = layer.storage_bytes();
+                mask.fill_selection_on_layer(layer, color);
+                let after = layer.storage_bytes();
                 if before != after {
                     let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Clear Selection", before, after));
                     self.history.push(cmd);
@@ -1559,9 +1553,6 @@ impl AppState {
 
 
     pub fn stroke_selection_active_layer(&mut self, width: u32, position: u8) {
-        if !self.require_8bit("Stroke Selection") {
-            return;
-        }
         if let Some(mask) = &self.selection {
             let doc_w = self.document.width;
             let doc_h = self.document.height;
@@ -1572,9 +1563,9 @@ impl AppState {
                 _ => StrokePosition::Center,
             };
             if let Some(layer) = self.document.active_layer_mut() {
-                let before = layer.as_srgb8_exact().to_vec();
-                mask.stroke_selection(layer.as_srgb8_exact_mut(), doc_w, doc_h, color, width, pos);
-                let after = layer.as_srgb8_exact().to_vec();
+                let before = layer.storage_bytes();
+                mask.stroke_selection_on_layer(layer, color, width, pos);
+                let after = layer.storage_bytes();
                 if before != after {
                     let cmd = Box::new(aurelia_core::history::LayerPixelsDeltaCommand::new(layer.id, "Stroke Selection", before, after));
                     self.history.push(cmd);
@@ -1586,9 +1577,6 @@ impl AppState {
 
     // ── Floating Mixing Scratchpad Operations ──
     pub fn clear_scratchpad(&mut self, bg_mode: u8) {
-        if !self.require_8bit("Clear Scratchpad") {
-            return;
-        }
         self.scratchpad_bg_mode = bg_mode;
         let fill_color = match bg_mode {
             1 => [255, 255, 255, 255], // Pure White
@@ -2183,29 +2171,26 @@ mod document_format_ui {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
-    /// The last 8-bit-only operations still refuse a 16-bit document, and say so, instead of
-    /// panicking inside `as_srgb8_exact`. Free transform is 8-bit because its session stores an
-    /// 8-bit source patch; selection fill/stroke and the scratchpad composite in 8-bit.
+    /// Free transform is the last operation that refuses a 16-bit document: its session stores
+    /// an 8-bit source patch. Selection fill/stroke are native now and must not be refused.
     #[test]
-    fn the_remaining_eight_bit_operations_refuse_a_sixteen_bit_document() {
+    fn free_transform_refuses_a_sixteen_bit_document_and_selection_fill_does_not() {
         let mut wide = sixteen_bit_state();
         wide.begin_transform_session();
         assert!(!wide.transform_session.is_active, "free transform must not start");
         assert!(wide.status_message.contains("8-bit only"), "{}", wide.status_message);
 
         let mut wide = sixteen_bit_state();
-        wide.clear_selection_active_layer();
-        assert!(wide.status_message.contains("8-bit only"), "{}", wide.status_message);
-
-        let mut wide = sixteen_bit_state();
-        wide.stroke_selection_active_layer(2, 0);
-        assert!(wide.status_message.contains("8-bit only"), "{}", wide.status_message);
-
-        let mut wide = sixteen_bit_state();
+        wide.selection = Some(aurelia_core::selection::SelectionMask::from_mask_vec(4, 4, vec![255u8; 16]));
         wide.fill_selection_active_layer();
-        assert!(wide.status_message.contains("8-bit only"), "{}", wide.status_message);
+        assert!(
+            !wide.status_message.contains("8-bit only"),
+            "selection fill must work on a 16-bit document: {}",
+            wide.status_message
+        );
+        let layer = wide.document.active_layer().expect("layer");
+        assert_eq!(layer.format(), PixelFormat::Srgb16, "format preserved by fill");
 
-        // An 8-bit document is not refused by any of them.
         let mut eight = AppState::new(4, 4);
         eight.begin_transform_session();
         assert!(!eight.status_message.contains("8-bit only"));

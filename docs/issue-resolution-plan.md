@@ -13,7 +13,7 @@ pending. Baseline: `main` @ `3ecf8cd` (v3.2.0), 112 tests passing, 1 ignored.
 | WS-6 (D8, navigator/viewport) | **done** | see below |
 | WS-5 (#13, 16-bit documents in the UI) | **done** | see below |
 
-Workspace tests: **182 passing, 1 ignored** (was 112). The 8-bit compositor oracle and the
+Workspace tests: **185 passing, 1 ignored** (was 112). The 8-bit compositor oracle and the
 digest tests are unchanged.
 
 Scope: issues #20, #15, #14, #13, plus one add-on requested by the maintainer (D8,

@@ -3877,3 +3877,78 @@ mod filter_sixteen_bit {
         lo | (hi << 8)
     }
 }
+
+/// Selection fill and stroke at both storage widths.
+#[cfg(test)]
+mod selection_coverage {
+    use crate::layer::LayerBuffer;
+    use crate::selection::SelectionMask;
+
+    const W: u32 = 2;
+    const H: u32 = 1;
+
+    fn mask(values: [u8; 2]) -> SelectionMask {
+        SelectionMask::from_mask_vec(W, H, values.to_vec())
+    }
+
+    fn eight(values: [u8; 8]) -> crate::layer::Layer {
+        let mut layer = crate::layer::Layer::new(1, "l", W, H);
+        layer.as_srgb8_exact_mut().copy_from_slice(&values);
+        layer
+    }
+
+    /// 8-bit behaviour, by hand: opaque red through a full mask replaces a pixel; a half mask
+    /// over transparent gives half alpha; a zero mask changes nothing.
+    #[test]
+    fn fill_matches_the_expected_eight_bit_values() {
+        let mut layer = eight([0, 0, 255, 255, 0, 0, 0, 0]);
+        mask([255, 128]).fill_selection_on_layer(&mut layer, [255, 0, 0, 255]);
+        assert_eq!(&layer.as_srgb8_exact()[0..4], &[255, 0, 0, 255], "opaque over opaque");
+        assert_eq!(&layer.as_srgb8_exact()[4..8], &[255, 0, 0, 128], "half coverage over transparent");
+
+        let mut untouched = eight([9, 8, 7, 255, 9, 8, 7, 255]);
+        mask([0, 0]).fill_selection_on_layer(&mut untouched, [255, 0, 0, 255]);
+        assert_eq!(untouched.as_srgb8_exact(), &[9, 8, 7, 255, 9, 8, 7, 255]);
+
+        // A fully transparent colour leaves the destination alone even through a full mask.
+        let mut transparent = eight([9, 8, 7, 255, 9, 8, 7, 255]);
+        mask([255, 255]).fill_selection_on_layer(&mut transparent, [255, 0, 0, 0]);
+        assert_eq!(transparent.as_srgb8_exact(), &[9, 8, 7, 255, 9, 8, 7, 255]);
+    }
+
+    /// Native 16-bit fill: the destination's off-lattice alpha makes the blended result
+    /// off-lattice too, which cannot happen if the layer was downconverted on the way in.
+    #[test]
+    fn fill_preserves_sixteen_bit_precision() {
+        let mut layer = crate::layer::Layer::new(1, "l", W, H);
+        let dst = crate::pixel::srgb8_to_srgb16(200) + 128;
+        *layer.buffer_mut() = LayerBuffer::Srgb16(vec![dst, dst, dst, 65535, 0, 0, 0, 0]);
+        assert_eq!(layer.format(), crate::layer::PixelFormat::Srgb16);
+
+        mask([128, 255]).fill_selection_on_layer(&mut layer, [255, 255, 255, 255]);
+
+        let values = layer.as_srgb16().expect("16-bit");
+        assert_eq!(layer.format(), crate::layer::PixelFormat::Srgb16, "format preserved");
+        assert_eq!(&values[4..8], &[65535, 65535, 65535, 65535], "second pixel is opaque white");
+        // Half coverage over 78% alpha: a value the 8-bit lattice cannot hold.
+        assert!(values[0] > dst, "half coverage must lighten the pixel");
+        assert!(values[0] % 257 != 0, "the result must carry sub-8-bit detail");
+        assert_eq!(values[3], 65535, "alpha saturates at the destination's");
+    }
+
+    /// Stroke must run on 16-bit storage and stay in that format.
+    #[test]
+    fn stroke_preserves_sixteen_bit_storage() {
+        let mut layer = crate::layer::Layer::new(1, "l", 4, 4);
+        *layer.buffer_mut() = LayerBuffer::Srgb16(vec![0u16; 4 * 4 * 4]);
+        let selection = SelectionMask::from_mask_vec(4, 4, vec![255u8; 16]);
+
+        selection.stroke_selection_on_layer(&mut layer, [255, 0, 0, 255], 1, crate::selection::StrokePosition::Inside);
+
+        assert_eq!(layer.format(), crate::layer::PixelFormat::Srgb16);
+        assert!(
+            layer.as_srgb16().expect("16-bit").iter().any(|&c| c > 0),
+            "the stroke must paint something"
+        );
+    }
+}

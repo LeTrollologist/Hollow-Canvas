@@ -636,7 +636,7 @@ What the editor can and cannot do with a 16-bit document today:
 | Filters (all 15) and the three adjustment passes | yes (native) as of #28 |
 | Merge down | yes (native; writes into the lower layer's format) |
 | Free transform | **refused with a message** - the session stores an 8-bit source patch (see F11) |
-| Selection fill / stroke, scratchpad | **refused with a message** - they composite in 8-bit |
+| Selection fill / stroke, scratchpad | yes (native) as of this change |
 | Viewport | shows an 8-bit presentation; egui textures are 8-bit |
 
 The refusal message names the operation and the document format, and mutates nothing. That is

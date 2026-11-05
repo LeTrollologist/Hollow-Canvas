@@ -19,7 +19,84 @@ pub struct SelectionMask {
     pub cached_boundary: Vec<(Vec2, Vec2)>,
 }
 
+/// Lifts an 8-bit colour into the channel's own scale.
+#[inline]
+fn colour_in_scale<C: crate::pixel::Channel>(colour: [u8; 4]) -> [f32; 4] {
+    let scale = C::MAX_SCALED as f32 / 255.0;
+    [
+        colour[0] as f32 * scale,
+        colour[1] as f32 * scale,
+        colour[2] as f32 * scale,
+        colour[3] as f32 / 255.0,
+    ]
+}
+/// Composites one selection-weighted source colour onto a destination pixel.
+///
+/// `source` is the fill/stroke colour in the channel's own scale and `weight` already carries
+/// both the mask coverage and the colour's alpha, so the formula is the one this code has always
+/// used - expressed once, for either storage width.
+#[inline]
+fn blend_coverage<C: crate::pixel::Channel>(
+    pixels: &mut [C],
+    idx: usize,
+    source: [f32; 4],
+    weight: f32,
+) {
+    let mx = C::MAX_SCALED as f32;
+    let dst = [
+        pixels[idx].to_scaled_f32(),
+        pixels[idx + 1].to_scaled_f32(),
+        pixels[idx + 2].to_scaled_f32(),
+        pixels[idx + 3].to_scaled_f32(),
+    ];
+    let dst_a = dst[3] / mx;
+    let out_a = weight + dst_a * (1.0 - weight);
+    if out_a <= 0.0 {
+        return;
+    }
+    let out = [
+        (source[0] * weight + dst[0] * dst_a * (1.0 - weight)) / out_a,
+        (source[1] * weight + dst[1] * dst_a * (1.0 - weight)) / out_a,
+        (source[2] * weight + dst[2] * dst_a * (1.0 - weight)) / out_a,
+        out_a * mx,
+    ];
+    pixels[idx] = C::from_scaled_f32(out[0]);
+    pixels[idx + 1] = C::from_scaled_f32(out[1]);
+    pixels[idx + 2] = C::from_scaled_f32(out[2]);
+    pixels[idx + 3] = C::from_scaled_f32(out[3]);
+}
 impl SelectionMask {
+    /// Fills a layer through this selection, at either storage width.
+    pub fn fill_selection_on_layer(&self, layer: &mut crate::layer::Layer, colour: [u8; 4]) {
+        let (width, height) = (layer.width, layer.height);
+        match layer.buffer_mut() {
+            crate::layer::LayerBuffer::Srgb8(pixels) => {
+                self.fill_selection(pixels, width, height, colour)
+            }
+            crate::layer::LayerBuffer::Srgb16(pixels) => {
+                self.fill_selection(pixels, width, height, colour)
+            }
+        }
+    }
+
+    /// Strokes this selection's border onto a layer, at either storage width.
+    pub fn stroke_selection_on_layer(
+        &self,
+        layer: &mut crate::layer::Layer,
+        colour: [u8; 4],
+        stroke_width: u32,
+        position: StrokePosition,
+    ) {
+        let (width, height) = (layer.width, layer.height);
+        match layer.buffer_mut() {
+            crate::layer::LayerBuffer::Srgb8(pixels) => {
+                self.stroke_selection(pixels, width, height, colour, stroke_width, position)
+            }
+            crate::layer::LayerBuffer::Srgb16(pixels) => {
+                self.stroke_selection(pixels, width, height, colour, stroke_width, position)
+            }
+        }
+    }
     pub fn new(width: u32, height: u32) -> Self {
         let size = (width as usize) * (height as usize);
         Self {
@@ -410,38 +487,26 @@ impl SelectionMask {
     }
 
     /// Fills the selected region on a pixel buffer with the given RGBA color
-    pub fn fill_selection(&self, pixels: &mut [u8], width: u32, height: u32, fill_color: [u8; 4]) {
+    pub fn fill_selection<C: crate::pixel::Channel>(
+        &self,
+        pixels: &mut [C],
+        width: u32,
+        height: u32,
+        fill_color: [u8; 4],
+    ) {
         let max_w = width.min(self.width);
         let max_h = height.min(self.height);
 
-        let src_r = fill_color[0] as f32;
-        let src_g = fill_color[1] as f32;
-        let src_b = fill_color[2] as f32;
-        let src_a_base = fill_color[3] as f32 / 255.0;
+        let source = colour_in_scale::<C>(fill_color);
 
         for y in 0..max_h {
             for x in 0..max_w {
                 let mask_val = self.get_value(x, y);
                 if mask_val > 0 {
-                    let weight = (mask_val as f32 / 255.0) * src_a_base;
+                    let weight = (mask_val as f32 / 255.0) * source[3];
                     let idx = (y as usize * width as usize + x as usize) * 4;
                     if idx + 3 < pixels.len() {
-                        let dst_r = pixels[idx] as f32;
-                        let dst_g = pixels[idx + 1] as f32;
-                        let dst_b = pixels[idx + 2] as f32;
-                        let dst_a = pixels[idx + 3] as f32 / 255.0;
-
-                        let out_a = weight + dst_a * (1.0 - weight);
-                        if out_a > 0.0 {
-                            let out_r = (src_r * weight + dst_r * dst_a * (1.0 - weight)) / out_a;
-                            let out_g = (src_g * weight + dst_g * dst_a * (1.0 - weight)) / out_a;
-                            let out_b = (src_b * weight + dst_b * dst_a * (1.0 - weight)) / out_a;
-
-                            pixels[idx] = out_r.round().clamp(0.0, 255.0) as u8;
-                            pixels[idx + 1] = out_g.round().clamp(0.0, 255.0) as u8;
-                            pixels[idx + 2] = out_b.round().clamp(0.0, 255.0) as u8;
-                            pixels[idx + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
-                        }
+                        blend_coverage(pixels, idx, source, weight);
                     }
                 }
             }
@@ -449,9 +514,9 @@ impl SelectionMask {
     }
 
     /// Strokes the selection border onto a pixel buffer with configurable width and position
-    pub fn stroke_selection(
+    pub fn stroke_selection<C: crate::pixel::Channel>(
         &self,
-        pixels: &mut [u8],
+        pixels: &mut [C],
         width: u32,
         height: u32,
         stroke_color: [u8; 4],
@@ -525,10 +590,7 @@ impl SelectionMask {
         }
 
         // 3. Composite stroke onto target pixels
-        let src_r = stroke_color[0] as f32;
-        let src_g = stroke_color[1] as f32;
-        let src_b = stroke_color[2] as f32;
-        let src_a_base = stroke_color[3] as f32 / 255.0;
+        let source = colour_in_scale::<C>(stroke_color);
 
         let max_w = width.min(self.width) as i32;
         let max_h = height.min(self.height) as i32;
@@ -537,25 +599,10 @@ impl SelectionMask {
             for x in 0..max_w {
                 let mask_cov = stroke_mask[(y * w + x) as usize];
                 if mask_cov > 0.0 {
-                    let weight = mask_cov * src_a_base;
+                    let weight = mask_cov * source[3];
                     let idx = (y as usize * width as usize + x as usize) * 4;
                     if idx + 3 < pixels.len() {
-                        let dst_r = pixels[idx] as f32;
-                        let dst_g = pixels[idx + 1] as f32;
-                        let dst_b = pixels[idx + 2] as f32;
-                        let dst_a = pixels[idx + 3] as f32 / 255.0;
-
-                        let out_a = weight + dst_a * (1.0 - weight);
-                        if out_a > 0.0 {
-                            let out_r = (src_r * weight + dst_r * dst_a * (1.0 - weight)) / out_a;
-                            let out_g = (src_g * weight + dst_g * dst_a * (1.0 - weight)) / out_a;
-                            let out_b = (src_b * weight + dst_b * dst_a * (1.0 - weight)) / out_a;
-
-                            pixels[idx] = out_r.round().clamp(0.0, 255.0) as u8;
-                            pixels[idx + 1] = out_g.round().clamp(0.0, 255.0) as u8;
-                            pixels[idx + 2] = out_b.round().clamp(0.0, 255.0) as u8;
-                            pixels[idx + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
-                        }
+                        blend_coverage(pixels, idx, source, weight);
                     }
                 }
             }
