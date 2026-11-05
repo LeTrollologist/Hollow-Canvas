@@ -399,53 +399,37 @@ impl Document {
         }
     }
 
+    /// Mirrors every layer horizontally or vertically.
+    ///
+    /// Format-preserving: the pixels are moved, never interpreted, so a 16-bit layer keeps its
+    /// storage and its off-lattice values.
     pub fn flip(&mut self, horizontal: bool) {
-        let w = self.width;
-        let h = self.height;
-
+        let (w, h) = (self.width, self.height);
         for layer in &mut self.layers {
-            let mut flipped = vec![0u8; layer.as_srgb8_exact().len()];
-            for y in 0..h {
-                for x in 0..w {
-                    let src_idx = ((y * w + x) * 4) as usize;
-                    let dst_x = if horizontal { w - 1 - x } else { x };
-                    let dst_y = if !horizontal { h - 1 - y } else { y };
-                    let dst_idx = ((dst_y * w + dst_x) * 4) as usize;
-
-                    flipped[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8_exact()[src_idx..src_idx + 4]);
-                }
-            }
-            layer.set_pixels(flipped);
+            layer.map_buffer(
+                |bytes| flipped_channels(bytes, w, h, horizontal),
+                |channels| flipped_channels(channels, w, h, horizontal),
+            );
         }
     }
 
+    /// Rotates every layer by 90 degrees, swapping the document's dimensions.
+    ///
+    /// Format-preserving, for the same reason as [`Document::flip`].
     pub fn rotate_90(&mut self, clockwise: bool) {
-        let old_w = self.width;
-        let old_h = self.height;
-        let new_w = old_h;
-        let new_h = old_w;
+        let (old_w, old_h) = (self.width, self.height);
 
         for layer in &mut self.layers {
-            let mut rotated = vec![0u8; (new_w * new_h * 4) as usize];
-            for y in 0..old_h {
-                for x in 0..old_w {
-                    let src_idx = ((y * old_w + x) * 4) as usize;
-                    let (dst_x, dst_y) = if clockwise {
-                        (old_h - 1 - y, x)
-                    } else {
-                        (y, old_w - 1 - x)
-                    };
-                    let dst_idx = ((dst_y * new_w + dst_x) * 4) as usize;
-                    rotated[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8_exact()[src_idx..src_idx + 4]);
-                }
-            }
-            layer.width = new_w;
-            layer.height = new_h;
-            layer.set_pixels(rotated);
+            layer.map_buffer(
+                |bytes| rotated_channels(bytes, old_w, old_h, clockwise),
+                |channels| rotated_channels(channels, old_w, old_h, clockwise),
+            );
+            layer.width = old_h;
+            layer.height = old_w;
         }
 
-        self.width = new_w;
-        self.height = new_h;
+        self.width = old_h;
+        self.height = old_w;
     }
 
     pub fn rotate_180(&mut self) {
@@ -453,36 +437,20 @@ impl Document {
         self.flip(false);
     }
 
-    /// Resize canvas dimensions with an anchor offset
+    /// Resize canvas dimensions with an anchor offset, keeping each layer's storage format.
     pub fn resize_canvas(&mut self, new_w: u32, new_h: u32, offset_x: i32, offset_y: i32) {
         if new_w == 0 || new_h == 0 {
             return;
         }
-        let old_w = self.width as i32;
-        let old_h = self.height as i32;
+        let (old_w, old_h) = (self.width as i32, self.height as i32);
 
         for layer in &mut self.layers {
-            let mut new_pixels = vec![0u8; (new_w * new_h * 4) as usize];
-            for ny in 0..new_h as i32 {
-                let oy = ny - offset_y;
-                if oy < 0 || oy >= old_h {
-                    continue;
-                }
-                for nx in 0..new_w as i32 {
-                    let ox = nx - offset_x;
-                    if ox < 0 || ox >= old_w {
-                        continue;
-                    }
-                    let src_idx = ((oy * old_w + ox) * 4) as usize;
-                    let dst_idx = ((ny * new_w as i32 + nx) * 4) as usize;
-                    if src_idx + 4 <= layer.as_srgb8_exact().len() && dst_idx + 4 <= new_pixels.len() {
-                        new_pixels[dst_idx..dst_idx + 4].copy_from_slice(&layer.as_srgb8_exact()[src_idx..src_idx + 4]);
-                    }
-                }
-            }
+            layer.map_buffer(
+                |bytes| cropped_channels(bytes, old_w, old_h, new_w, new_h, offset_x, offset_y),
+                |channels| cropped_channels(channels, old_w, old_h, new_w, new_h, offset_x, offset_y),
+            );
             layer.width = new_w;
             layer.height = new_h;
-            layer.set_pixels(new_pixels);
         }
 
         self.width = new_w;
@@ -734,6 +702,97 @@ impl Document {
             }
         }
     }
+}
+
+/// Copies one RGBA pixel if both ends are in range.
+///
+/// Structural edits move whole pixels and never read a channel's value, so these helpers are
+/// generic over `Copy + Default` rather than over [`Channel`]: a 16-bit buffer is rearranged
+/// exactly as an 8-bit one, with no arithmetic to round.
+#[inline]
+fn copy_pixel<T: Copy>(source: &[T], src: usize, out: &mut [T], dst: usize) {
+    if src + 4 <= source.len() && dst + 4 <= out.len() {
+        out[dst..dst + 4].copy_from_slice(&source[src..src + 4]);
+    }
+}
+
+/// Mirrors a buffer horizontally or vertically, keeping its dimensions.
+fn flipped_channels<T: Copy + Default>(
+    source: &[T],
+    width: u32,
+    height: u32,
+    horizontal: bool,
+) -> Vec<T> {
+    let mut out = vec![T::default(); (width as usize) * (height as usize) * 4];
+    if width == 0 || height == 0 {
+        return out;
+    }
+    for y in 0..height {
+        for x in 0..width {
+            let src_idx = ((y * width + x) * 4) as usize;
+            let dst_x = if horizontal { width - 1 - x } else { x };
+            let dst_y = if horizontal { y } else { height - 1 - y };
+            let dst_idx = ((dst_y * width + dst_x) * 4) as usize;
+            copy_pixel(source, src_idx, &mut out, dst_idx);
+        }
+    }
+    out
+}
+
+/// Rotates a buffer by 90 degrees, swapping its dimensions.
+fn rotated_channels<T: Copy + Default>(
+    source: &[T],
+    old_w: u32,
+    old_h: u32,
+    clockwise: bool,
+) -> Vec<T> {
+    let (new_w, new_h) = (old_h, old_w);
+    let mut out = vec![T::default(); (new_w as usize) * (new_h as usize) * 4];
+    if old_w == 0 || old_h == 0 {
+        return out;
+    }
+    for y in 0..old_h {
+        for x in 0..old_w {
+            let src_idx = ((y * old_w + x) * 4) as usize;
+            let (dst_x, dst_y) = if clockwise {
+                (old_h - 1 - y, x)
+            } else {
+                (y, old_w - 1 - x)
+            };
+            let dst_idx = ((dst_y * new_w + dst_x) * 4) as usize;
+            copy_pixel(source, src_idx, &mut out, dst_idx);
+        }
+    }
+    out
+}
+
+/// Copies the overlapping region of a buffer into a new canvas size, zero-filling the rest.
+fn cropped_channels<T: Copy + Default>(
+    source: &[T],
+    old_w: i32,
+    old_h: i32,
+    new_w: u32,
+    new_h: u32,
+    offset_x: i32,
+    offset_y: i32,
+) -> Vec<T> {
+    let mut out = vec![T::default(); (new_w as usize) * (new_h as usize) * 4];
+    for ny in 0..new_h as i32 {
+        let oy = ny - offset_y;
+        if oy < 0 || oy >= old_h {
+            continue;
+        }
+        for nx in 0..new_w as i32 {
+            let ox = nx - offset_x;
+            if ox < 0 || ox >= old_w {
+                continue;
+            }
+            let src_idx = ((oy * old_w + ox) * 4) as usize;
+            let dst_idx = ((ny * new_w as i32 + nx) * 4) as usize;
+            copy_pixel(source, src_idx, &mut out, dst_idx);
+        }
+    }
+    out
 }
 
 /// Resamples a layer buffer with nearest-neighbour or bilinear filtering.

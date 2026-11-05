@@ -509,6 +509,27 @@ impl Layer {
         }
     }
 
+    /// Rebuilds the buffer through a format-preserving mapping.
+    ///
+    /// Each closure sees the variant's own channels and returns a buffer of the same channel
+    /// type, so a structural edit (flip, rotate, crop) is written once per storage width and
+    /// never converts. The format is preserved exactly: an `Srgb8` layer stays `Srgb8`, an
+    /// `Srgb16` layer stays `Srgb16`.
+    ///
+    /// The map runs before the assignment, so the closures borrow immutably and the new buffer
+    /// replaces the old one at the end.
+    pub fn map_buffer<F8, F16>(&mut self, narrow: F8, wide: F16)
+    where
+        F8: FnOnce(&[u8]) -> Vec<u8>,
+        F16: FnOnce(&[u16]) -> Vec<u16>,
+    {
+        let next = match &self.buffer {
+            LayerBuffer::Srgb8(bytes) => LayerBuffer::Srgb8(narrow(bytes)),
+            LayerBuffer::Srgb16(channels) => LayerBuffer::Srgb16(wide(channels)),
+        };
+        self.buffer = next;
+    }
+
     /// Replaces the whole pixel buffer.
     #[inline]
     pub fn set_pixels(&mut self, pixels: Vec<u8>) {

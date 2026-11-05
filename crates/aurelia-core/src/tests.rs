@@ -2756,4 +2756,144 @@ mod tests {
         let layer = doc.get_layer(id).expect("layer");
         assert_eq!(layer.storage_bytes(), layer.as_srgb8_exact());
     }
+
+    /// Flip, rotate and crop move pixels without reading them, so they must work on either
+    /// storage width. These are hand-written expectations, not snapshots of the new code: a
+    /// 2x1 fixture makes the mapping checkable by eye.
+    #[test]
+    fn structural_edits_keep_eight_bit_bytes() {
+        fn pixel_doc() -> Document {
+            // 2x1 with two distinguishable pixels.
+            let mut doc = Document::new(2, 1);
+            let id = doc.active_layer_id;
+            if let Some(layer) = doc.get_layer_mut(id) {
+                layer.as_srgb8_exact_mut().copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+            }
+            doc
+        }
+
+        let mut flipped = pixel_doc();
+        flipped.flip(true);
+        assert_eq!(
+            flipped.layers[0].as_srgb8_exact(),
+            &[5, 6, 7, 8, 1, 2, 3, 4],
+            "horizontal flip must mirror whole pixels"
+        );
+
+        let mut vertical = pixel_doc();
+        vertical.layers[0].set_pixels(vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        vertical.flip(false);
+        assert_eq!(
+            vertical.layers[0].as_srgb8_exact(),
+            &[1, 2, 3, 4, 5, 6, 7, 8],
+            "a one-row image is unchanged by a vertical flip"
+        );
+
+        let mut rotated = pixel_doc();
+        rotated.rotate_90(true);
+        assert_eq!((rotated.width, rotated.height), (1, 2));
+        assert_eq!(
+            rotated.layers[0].as_srgb8_exact(),
+            &[1, 2, 3, 4, 5, 6, 7, 8],
+            "clockwise rotation of 2x1 gives the column (A, B)"
+        );
+
+        let mut cropped = pixel_doc();
+        cropped.resize_canvas(4, 3, 1, 1);
+        assert_eq!((cropped.width, cropped.height), (4, 3));
+        assert_eq!(
+            cropped.layers[0].as_srgb8_exact().len(),
+            4 * 3 * 4,
+            "the crop must resize the buffer"
+        );
+        // (0,0) of the source now sits at (1,1) of a 4-wide canvas.
+        let dst = ((1 * 4 + 1) * 4) as usize;
+        assert_eq!(&cropped.layers[0].as_srgb8_exact()[dst..dst + 4], &[1, 2, 3, 4]);
+        assert_eq!(&cropped.layers[0].as_srgb8_exact()[0..4], &[0, 0, 0, 0]);
+    }
+
+    /// The same three edits on a 16-bit layer: storage format is preserved, off-lattice values
+    /// survive untouched, and the geometry is identical to the 8-bit case.
+    #[test]
+    fn structural_edits_preserve_sixteen_bit_storage() {
+        use crate::layer::{LayerBuffer, PixelFormat};
+
+        fn wide(width: u32, height: u32) -> Document {
+            let mut doc = Document::new(width, height);
+            doc.is_transparent = true;
+            let id = doc.active_layer_id;
+            if let Some(layer) = doc.get_layer_mut(id) {
+                let channels: Vec<u16> = (0..(width * height * 4))
+                    .map(|index| (index as u16).wrapping_mul(1237).wrapping_add(11))
+                    .collect();
+                *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+            }
+            doc
+        }
+
+        let sample = |values: &[u16], x: u32, y: u32, width: u32| -> Vec<u16> {
+            let base = ((y * width + x) * 4) as usize;
+            values[base..base + 4].to_vec()
+        };
+
+        // Flip: mirrored exactly, format kept, and its own inverse.
+        let mut doc = wide(4, 3);
+        let id = doc.active_layer_id;
+        let original = doc.get_layer(id).expect("layer").as_srgb16().expect("16-bit").to_vec();
+        assert!(
+            original.iter().any(|&c| c % 257 != 0),
+            "the fixture must contain off-lattice values for this test to mean anything"
+        );
+
+        doc.flip(true);
+        {
+            let layer = doc.get_layer(id).expect("layer");
+            assert_eq!(layer.format(), PixelFormat::Srgb16, "flip must not change storage");
+            let values = layer.as_srgb16().expect("16-bit");
+            assert_eq!(sample(values, 0, 0, 4), sample(&original, 3, 0, 4));
+            assert_eq!(sample(values, 3, 2, 4), sample(&original, 0, 2, 4));
+        }
+        doc.flip(true);
+        assert_eq!(
+            doc.get_layer(id).expect("layer").as_srgb16().expect("16-bit"),
+            original.as_slice(),
+            "flipping twice must restore the exact channels"
+        );
+
+        // Rotate: four quarter turns are the identity, and the document follows.
+        let mut doc = wide(4, 3);
+        let id = doc.active_layer_id;
+        let original = doc.get_layer(id).expect("layer").as_srgb16().expect("16-bit").to_vec();
+        doc.rotate_90(true);
+        assert_eq!((doc.width, doc.height), (3, 4));
+        {
+            let layer = doc.get_layer(id).expect("layer");
+            assert_eq!(layer.format(), PixelFormat::Srgb16, "rotate must not change storage");
+            assert_eq!(layer.as_srgb16().expect("16-bit").len(), 3 * 4 * 4);
+        }
+        for _ in 0..3 {
+            doc.rotate_90(true);
+        }
+        assert_eq!((doc.width, doc.height), (4, 3));
+        assert_eq!(
+            doc.get_layer(id).expect("layer").as_srgb16().expect("16-bit"),
+            original.as_slice(),
+            "four quarter turns must restore the exact channels"
+        );
+
+        // Crop / extend: the overlap is copied, the new band is zero, the format is kept.
+        let mut doc = wide(4, 3);
+        let id = doc.active_layer_id;
+        let original = doc.get_layer(id).expect("layer").as_srgb16().expect("16-bit").to_vec();
+        doc.resize_canvas(6, 5, 1, 2);
+        assert_eq!((doc.width, doc.height), (6, 5));
+        {
+            let layer = doc.get_layer(id).expect("layer");
+            assert_eq!(layer.format(), PixelFormat::Srgb16, "crop must not change storage");
+            let values = layer.as_srgb16().expect("16-bit");
+            assert_eq!(values.len(), 6 * 5 * 4);
+            assert_eq!(sample(values, 1, 2, 6), sample(&original, 0, 0, 4));
+            assert_eq!(sample(values, 0, 0, 6), vec![0u16; 4], "new space must be zero-filled");
+        }
+    }
 }

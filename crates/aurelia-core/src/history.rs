@@ -37,16 +37,18 @@ impl Command for LayerPixelsSnapshotCommand {
 
     fn undo(&mut self, doc: &mut Document) {
         if let Some(layer) = doc.get_layer_mut(self.layer_id) {
-            if layer.as_srgb8_exact().len() == self.before_pixels.len() {
-                layer.as_srgb8_exact_mut().copy_from_slice(&self.before_pixels);
+            if layer.storage_len() == self.before_pixels.len() {
+                // Storage bytes, not 8-bit channels: the snapshot is format-agnostic like the
+                // delta command, so a 16-bit layer restores exactly.
+                layer.write_storage_bytes(0, &self.before_pixels);
             }
         }
     }
 
     fn redo(&mut self, doc: &mut Document) {
         if let Some(layer) = doc.get_layer_mut(self.layer_id) {
-            if layer.as_srgb8_exact().len() == self.after_pixels.len() {
-                layer.as_srgb8_exact_mut().copy_from_slice(&self.after_pixels);
+            if layer.storage_len() == self.after_pixels.len() {
+                layer.write_storage_bytes(0, &self.after_pixels);
             }
         }
     }
@@ -291,7 +293,9 @@ impl Command for FullDocumentSnapshotCommand {
     }
 
     fn cost(&self) -> usize {
-        let sum = |layers: &[Layer]| -> usize { layers.iter().map(|l| l.as_srgb8_exact().len()).sum() };
+        // `storage_len`, not the 8-bit view: this runs on push, and a 16-bit layer would make
+        // `as_srgb8_exact()` panic before the step was ever recorded.
+        let sum = |layers: &[Layer]| -> usize { layers.iter().map(|l| l.storage_len()).sum() };
         sum(&self.before_layers) + sum(&self.after_layers)
     }
 
@@ -414,7 +418,7 @@ impl HistoryStack {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, HistoryStack, LayerPixelsDeltaCommand, LayerPixelsSnapshotCommand};
+    use super::{Command, FullDocumentSnapshotCommand, HistoryStack, LayerPixelsDeltaCommand, LayerPixelsSnapshotCommand};
     use crate::document::Document;
 
     fn pixels_of(doc: &Document, layer_id: u64) -> Vec<u8> {
@@ -660,5 +664,77 @@ mod tests {
         assert_eq!(read_all(&doc), before, "undo of a 16-bit layer must be byte-exact");
         command.redo(&mut doc);
         assert_eq!(read_all(&doc), after, "redo of a 16-bit layer must be byte-exact");
+    }
+
+    /// The whole-buffer snapshot commands are the fallback the delta does not cover. They used
+    /// to read `as_srgb8_exact()`, which panics on 16-bit storage - and `cost()` runs on every
+    /// push, so a structural edit on a 16-bit document would have panicked before being
+    /// recorded. Both now work in storage bytes.
+    #[test]
+    fn snapshots_measure_and_restore_sixteen_bit_layers() {
+        use crate::layer::LayerBuffer;
+
+        let mut doc = Document::new(4, 4);
+        let layer_id = doc.active_layer_id;
+        if let Some(layer) = doc.get_layer_mut(layer_id) {
+            let channels: Vec<u16> = (0..(4 * 4 * 4u16))
+                .map(|index| index.wrapping_mul(4099).wrapping_add(7))
+                .collect();
+            *layer.buffer_mut() = LayerBuffer::Srgb16(channels);
+        }
+
+        let before_bytes = doc.get_layer(layer_id).expect("layer").storage_bytes();
+        let before_layers = doc.layers.clone();
+
+        if let Some(channels) = doc.get_layer_mut(layer_id).and_then(|l| l.as_srgb16_mut()) {
+            for channel in channels.iter_mut().step_by(5) {
+                *channel = channel.wrapping_add(999);
+            }
+        }
+        let after_bytes = doc.get_layer(layer_id).expect("layer").storage_bytes();
+        let after_layers = doc.layers.clone();
+        assert_ne!(before_bytes, after_bytes, "the fixture must change channels");
+
+        let expected_cost = before_layers.iter().map(|l| l.storage_len()).sum::<usize>()
+            + after_layers.iter().map(|l| l.storage_len()).sum::<usize>();
+        assert_eq!(
+            expected_cost,
+            before_bytes.len() + after_bytes.len(),
+            "with one layer, the document cost is its two storage buffers"
+        );
+
+        let mut snapshot = FullDocumentSnapshotCommand {
+            description: "16-bit structural edit",
+            before_layers,
+            after_layers,
+            before_active_id: layer_id,
+            after_active_id: layer_id,
+        };
+        assert_eq!(snapshot.cost(), expected_cost, "cost must count storage bytes");
+
+        snapshot.undo(&mut doc);
+        assert_eq!(
+            doc.get_layer(layer_id).expect("layer").storage_bytes(),
+            before_bytes,
+            "undo of a document snapshot must be byte-exact for a 16-bit layer"
+        );
+        snapshot.redo(&mut doc);
+        assert_eq!(
+            doc.get_layer(layer_id).expect("layer").storage_bytes(),
+            after_bytes,
+            "redo of a document snapshot must be byte-exact for a 16-bit layer"
+        );
+
+        // The single-layer snapshot follows the same rule.
+        let mut single = LayerPixelsSnapshotCommand {
+            layer_id,
+            description: "16-bit layer snapshot",
+            before_pixels: before_bytes.clone(),
+            after_pixels: after_bytes.clone(),
+        };
+        single.undo(&mut doc);
+        assert_eq!(doc.get_layer(layer_id).expect("layer").storage_bytes(), before_bytes);
+        single.redo(&mut doc);
+        assert_eq!(doc.get_layer(layer_id).expect("layer").storage_bytes(), after_bytes);
     }
 }
