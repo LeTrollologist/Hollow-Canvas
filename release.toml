@@ -29,7 +29,7 @@ sign_tags = false
 [commands]
 quality = "cargo test --release --workspace"
 build = "cargo build --release -p aurelia-app"
-package = "python scripts/package_aurelia.py --tag {tag} --version {version} --dist {dist} --exe \"%AURELIA_BUILD_EXE%\" --iscc \"{iscc}\""
+package = "python scripts/package_aurelia.py --tag {tag} --version {version} --dist {dist} --exe \"target/release/aurelia-app.exe\" --iscc \"{iscc}\""
 
 [outputs]
 package = ["dist/{tag}/*.zip", "dist/{tag}/*.exe"]
