@@ -1,225 +1,202 @@
 # Aurelia · Roadmap
 
-**Status:** v3.4.1 shipped (2026-11-05). Native 16-bit editing, compositing, filters, text,
-selection edits and free transform are complete. The next phase is **stabilization, viewport
-correctness and distribution trust**, not another engine feature.
+**Status:** v3.5.0 shipped 2026-11-06. Native 16-bit editing, compositing, filters, text,
+selection edits and free transform are complete. Measurement guides, the straight-edge ruler,
+Move modes, snapping and persisted editor state are shipped.
 
-Legend: Now = current focus · Next = queued · Later = designed, not started · Deferred = out of scope
+The engine is ahead of the product surface. The next work is **viewport truth, project-file
+hardening, release repeatability, and essential editing workflows** — not another engine feature.
 
----
-
-## The short version
-
-Aurelia's engine is ahead of its product surface. The most valuable next work is not another
-pixel feature; it is making the thing users actually see and install trustworthy:
-
-1. **Viewport truth.** The canvas is the product, and it has had recurring visibility/refresh
-   bugs, no visual regression tests, and a 16-bit document is still presented at 8 bits. This is
-   the highest-value code work.
-2. **Distribution integrity.** The installer is unsigned, and that is now a permanent constraint:
-   no public Authenticode path exists and a self-signed certificate would not help SmartScreen.
-   The release must therefore make the artifact verifiable through SHA-256 and Ed25519
-   signatures, and state the unsigned status honestly.
-3. **Release and documentation hygiene.** v3.4.x exposed gaps: `Cargo.lock` is not part of the
-   version stage, issues #15 and #28 are implemented but still open, and this roadmap had drifted
-   three releases behind.
-4. **Measured performance.** Only after correctness: the 16-bit sparse path is at 0.67 against a
-   0.60 budget (pass, little headroom), and the bilinear transparent-edge limitation is still
-   open.
-5. **Then UX gaps**: mask painting, selection combine modes, preferences, history panel.
-
-**Not now:** 32-bit floating-point / linear-light editing, a custom GUI framework to replace
-egui, or a cross-platform rewrite. Each is a separate proposal with its own gate and kill
-criterion.
+**Legend:** Now = current focus · Next = queued · Later = designed, not started · Deferred = out of scope
 
 ---
 
-## What changed since the last roadmap
+## How this roadmap is organized
 
-| Release | Change |
+Every workstream is planned in four columns:
+
+| Column | Question |
 | :--- | :--- |
-| v3.2.0-v3.4.0 development | 16-bit documents in the editor (#13), native 16-bit text (#14), native compositing output (#15), 16-bit filters (#28), adjustment layers, merge-visible / merge-down, selection fill/stroke, navigator |
-| v3.4.0 | Free transform made native at both storage widths; 16-bit editing complete at `checkpoint/v3.4.0-16bit-complete` (`bfa6709`) |
-| v3.4.1 | Live Navigator during strokes; paper/background/transparency invalidation; release verification fix |
+| **Feature** | What does the user get? |
+| **Implementation** | What code/architecture changes make it real? |
+| **Hardening** | What failure, security and compatibility cases must it survive? |
+| **Testing** | What deterministic evidence proves it works? |
 
-Current measurements are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md), the 16-bit record is in
-[docs/16bit-plan.md](docs/16bit-plan.md), and release mechanics are in
-[RELEASE_PROCESS.md](RELEASE_PROCESS.md).
-
----
-
-## Now — P0: viewport truth
-
-**Why first:** issue #16 ("Canvas Not Visible in Main Viewport") has been reported once and
-fixed once, and the v3.4.x Navigator work showed the same class of bug can return. Users judge
-every engine improvement through this surface. A broken viewport makes a correct 16-bit
-compositor irrelevant.
-
-Actions:
-
-1. **Add a viewport regression harness.** State/renderer tests for an empty 8-bit document, an
-   empty 16-bit document, a transparent document, a dark-paper document, DPI-scaled layouts,
-   zoom/pan round trips, and the Navigator framing box. Prefer a small deterministic rendered
-   fixture over a screenshot service.
-2. **Audit the paper/background model.** One source of truth for `background_value`,
-   `is_transparent`, theme paper and the rendered framebuffer. A black canvas must be an explicit
-   background choice, never a default that looks like a broken renderer.
-3. **Keep the Navigator live and cheap.** Current per-frame updates are correct but should get a
-   measured cost budget; coalesce uploads if the downsample becomes visible in frame timing.
-4. **Decide the 16-bit presentation question with a timeboxed spike.** Prototype one RGBA16
-   texture path through a custom paint callback or native surface. Do not fork egui and do not
-   rewrite the UI. The spike succeeds only if it keeps the existing viewport tests green and
-   costs no measurable frame rate.
-
-Progress:
-
-- The viewport and Navigator now share `Document::paper_rgb8()` and
-  `Document::transparency_checker_rgb8()`; the renderer, thumbnail and UI cannot disagree about
-  paper or transparency.
-- Deterministic tests now cover empty 8-bit and 16-bit paper, dark paper, the checkerboard,
-  zoom/pan bounds, DPI point/pixel conversion, viewport-fraction mapping and dock clamping.
-- The Navigator budget is measured: 1.62 ms per refresh at 1080p and 2.72 ms at 4K. Live
-  rebuilds are capped at ~30 Hz during a stroke, with an immediate final refresh on mouse-up.
-- The 16-bit presentation decision is written:
-  [docs/16BIT_PRESENTATION.md](docs/16BIT_PRESENTATION.md). It is deferred behind a 10-bit/HDR
-  output proposal, not implemented by adding a texture.
-
-Status: **code complete; observation continues.** The remaining item is the two-release window
-with no canvas-invisible/black-viewport report.
-
-Exit criteria:
-
-- [ ] No canvas-invisible/black-viewport report across two consecutive patch releases.
-- [x] Viewport tests run in the normal local suite, not only by hand.
-- [x] A written decision on 16-bit presentation: adopt, defer with a date, or reject with evidence.
+A phase is complete only when all four columns have evidence. A feature with no hardening or
+test work is not done.
 
 ---
 
-## Now — P0: distribution integrity and release hygiene
+## Release baseline
 
-**Why now:** Authenticode is not available for this project. A self-signed certificate is worse
-than useless for SmartScreen because it does not chain to a trusted CA. Unsigned distribution is
-therefore a **permanent product constraint**, not a pending task. The production bar is not
-"make SmartScreen green"; it is "make the artifact verifiable, the warning honest, and the release
-repeatable."
-
-Actions:
-
-1. **Keep the existing Ed25519 artifact signatures and `SHA256SUMS.txt`.** Publish the public-key
-   fingerprint and the exact verification command in every release note. This is the integrity
-   boundary; it is independent of Windows code signing.
-2. **Keep VirusTotal scanning advisory.** Do not gate a release on heuristic/ML detections that
-   routinely fire on unsigned software. Provide a false-positive reporting path.
-3. **Close implemented issues.** #15 (native 16-bit output) and #28 (16-bit filters) are shipped;
-   verify the acceptance criteria, comment with the tests/commits, and close them. Re-scope #5
-   (Authenticode) as **won't fix — no public certificate path**, with the unsigned policy linked.
-4. **Fix the version-stage gap.** `Cargo.lock` is updated by quality/build after the release
-   commit and currently lands in a post-release commit. Add it to `version_files` (or to the
-   version stage explicitly) so a release leaves a clean tree without a follow-up commit.
-5. **Add failure-injection tests** for the release journal: killed upload, tag pushed but release
-   creation failed, draft digest mismatch, interrupted version commit, remote tag drift. The
-   happy path is tested; the failure path is still described as "needed" in RELEASE_PROCESS.md.
-6. **Keep release notes and version examples current.** Every release should update README
-   examples and release notes in the version commit, not by hand afterwards.
-
-Progress:
-
-- The version stage now includes `Cargo.lock` automatically; the git-profile end-to-end test
-  asserts the release commit owns the lock and leaves a clean tree.
-- The journal's status is no longer sticky: a failed verification that passes on resume now
-  reports `published`/`verified`, and `last_error` clears.
-- Failure injection covers partial upload resume, digest mismatch, release-creation failure,
-  remote tag drift, interrupted operation, and post-publication draft verification.
-- #15 and #28 are closed. #5 is out of scope by policy, not blocked on engineering.
-
-Remaining:
-
-- Cut one release through the full pipeline with the unsigned policy in its notes, and verify
-  the published hashes and Ed25519 signatures end to end.
-- Add the partial-journal-append, compensation-failure and clean-clone rehearsal cases.
-- Prove the next release leaves `main` clean (the lock fix is in place but not yet exercised by
-  a release).
-- Document the additive `AED1` editor-state section in `docs/PROJECT_FORMAT.md`.
-
-Exit criteria:
-
-- Unsigned status and the SHA-256/Ed25519 verification path are stated in README, installer
-  notes and release notes.
-- Published assets verify against the published hashes and signatures.
-- A release run leaves `main` clean with no manual post-release commit.
-- #15 and #28 closed; #5 explicitly re-scoped as won't-fix.
-- Failure-injection suite covers the listed crash points.
+- **v3.5.0** is the current release. Assets, SHA-256 manifests and Ed25519 signatures verify;
+  the installer is unsigned by permanent policy.
+- **223 tests pass, 1 ignored**; clippy is clean.
+- Sparse 16-bit composite ratio is **0.70** against the **0.60** budget.
+- The bilinear transparent-edge behavior is pinned as an accepted limitation; it is not silently
+  changing.
+- The viewport is still an **8-bit presentation** of 16-bit documents. This is a known display
+  limitation, not a storage limitation.
+- **Process debt:** v3.5.0 release notes were written after the tag because the pipeline does not
+  require them. The next release must fail preflight when `release-notes/<tag>.md` is absent, and
+  the standard VirusTotal block must be part of that file.
 
 ---
 
-## Next — P1: stabilization and performance
+## Now — Phase 0: v3.5.1 viewport and file-trust hardening
 
-**Why:** 16-bit is complete but the remaining performance headroom is thin, and one interpolation
-limitation is still documented rather than fixed.
+**Goal:** no new editing features. Make the canvas trustworthy and make crafted project files
+safe to open.
 
-1. **Soak the 16-bit paths.** Long editing sessions across paint, filters, transform, undo/redo,
-   save/load, and animation frames. Measure memory, retained history and time-to-first-frame.
-2. **Pin bilinear transparent-edge behavior first.** The sampler averages colour and alpha
-   independently; a zero-alpha border with non-black RGB can darken interpolated edges. Add a
-   regression test that captures the current 8-bit and 16-bit output before changing anything.
-   Fix it if the smallest correct change is safe; otherwise record a formal accepted-limitation
-   decision with the test, user guidance and a follow-up issue. This is the first P1 item.
-3. **Sparse 16-bit throughput.** Current gate-2 ratio is **0.67** against a **0.60** budget.
-   Preserve the budget and add regression coverage for sparse 16-bit workloads. The 0.75 target
-   remains a goal, not a v3.5.0 gate; record paired rounds in PERFORMANCE.md. Do not bundle
-   throughput changes with correctness fixes.
-4. **General-path tail.** Slowest blend mode is Luminosity at 82.5 MPix/s; the opaque general path
-   is 105.4. Optimise only with a benchmark and a rollback number.
-5. **Memory.** Keep the delta-history budget honest at 1080p and 4K; measure, do not infer.
+### 0.1 Viewport regression harness
 
-Exit criteria:
+| | |
+| :--- | :--- |
+| **Feature** | None; this is a reliability release. |
+| **Implementation** | Add deterministic rendered fixtures for: empty 8-bit paper, empty 16-bit paper, transparent canvas, dark paper, zoom/pan round trips, DPI-scaled layouts, Navigator framing. Centralize paper/background invalidation so the renderer and thumbnail cannot disagree. |
+| **Hardening** | Treat a black viewport as an explicit background value, never a default. Cover dock-width and monitor-DPI changes. No silent fallback to an unpainted buffer. |
+| **Testing** | Pixel-level fixtures with stable dimensions and color values; state tests for zoom/pan and DPI conversion; a manual matrix for 100%/125%/150%/200% scaling and two monitors. |
 
-- Bilinear edge fixed, or formally accepted with a pinned regression test and user guidance.
-- Sparse ratio stays at or above the 0.60 budget with regression coverage.
-- Soak results recorded with the machine and build.
+### 0.2 Project-file allocation and parsing audit
+
+| | |
+| :--- | :--- |
+| **Feature** | None. |
+| **Implementation** | Cap every file-controlled allocation before allocating: text content (8 MiB, shipped), font-family length, layer names, masks, decompressed payloads, preview PNG, `AED1` payload. Reject oversized saves as well as oversized loads. |
+| **Hardening** | Add a malformed-file corpus: truncated length claims, huge claims, invalid UTF-8, unknown tags, corrupt editor sections, decompression bombs. Keep unknown format tags a hard error; keep optional `AED1` sections defaulting safely. |
+| **Testing** | Regression tests for each length field, including “claim is rejected before payload read”; fuzz the AUR/HCV readers with a seeded corpus; verify no panic and bounded memory on malformed input. |
+
+### 0.3 Release-process closure
+
+| | |
+| :--- | :--- |
+| **Feature** | None. |
+| **Implementation** | Require release notes before `run`; include the standard `virustotal:begin/end` block, artifact table, engine count, report links and SHA-256 values. Keep `SECURITY.md` in the version set. |
+| **Hardening** | Clean-clone rehearsal; failure injection for journal append, compensation, tag drift and upload interruption; idempotent resume; no secret in repo or logs. |
+| **Testing** | `doctor`, `plan`, `run`, `verify`; independently download assets and check hashes/signatures; confirm `main` is clean afterward and the tag is the release commit. |
+
+### 0.4 Quality guard
+
+| | |
+| :--- | :--- |
+| **Feature** | None. |
+| **Implementation** | Keep `cargo test --release --workspace` and clippy as release gates. Keep `gate_2_throughput_and_memory` as an ignored measurement that asserts the 0.60 budget. |
+| **Hardening** | Do not trade correctness for throughput. Any performance change needs a before/after number and a rollback. |
+| **Testing** | Unit + integration suite; sparse benchmark; no new ignored tests without a written reason. |
+
+**Exit criteria**
+
+- [ ] Viewport fixtures pass in the normal suite and cover 8-bit, 16-bit, transparent, dark-paper, DPI, zoom/pan and Navigator cases.
+- [ ] Every file-controlled allocation is bounded and has a rejection test.
+- [ ] A clean clone can run the full release process and leave `main` clean.
+- [ ] `release-notes/v3.5.1.md` exists before the tag and includes the standard VirusTotal block.
+- [ ] No P0/P1 security or viewport regression is open.
 
 ---
 
-## Next — P2: UX and editing gaps
+## Next — Phase 1: v3.6.0 editing workflows
 
-These are user-visible gaps, not architecture changes. They are **not** v3.5.0 release gates
-unless they regress an existing workflow; the release gate is in
-[RELEASE_PROCESS.md](RELEASE_PROCESS.md#9-v350-production-gate).
+**Goal:** close the workflow gaps that make the editor feel incomplete without changing the
+rendering architecture.
 
-| Item | Why it matters | Notes |
-| :--- | :--- | :--- |
-| **Mask painting** | Masks can be created but not brushed; non-destructive workflow is incomplete | Route freehand strokes at a mask target, preserving pixel layers |
-| **Selection combine modes** | Replace / Union / Subtract / Intersect is expected in any editor with selections | Extend `SelectionMask` and the Select menu |
-| **Preferences UI** | Autosave interval, undo budget, JPEG quality and theme are file-only today | No new backend; expose existing state |
-| **History panel** | Undo is invisible; users cannot see what will be undone or how much memory it holds | Read-only list with a memory readout |
-| **Navigator/viewport polish** | Fit/centre/zoom now behave; add explicit tests for DPI and dock-width changes | Follows the P0 harness |
-| **Measurement guides** | Move the cutting-mat workflow into the viewport | **Shipped:** drag guides out of the rulers, move the grid origin, `+ H` / `+ V` / `Clear`, Move-tool **Selected layer / Full move** modes, per-source snapping to guides/layers/canvas, selection snapping, `Alt` bypass, `Lock guides`, movable/rotatable/stretchable straight-edge ruler with draw-along-ruler strokes and length/angle readout, and AUR persistence of guides/grid origin/ruler |
+| Workstream | Feature | Implementation | Hardening | Testing |
+| :--- | :--- | :--- | :--- | :--- |
+| **Mask painting** | Brush directly on a mask, not only create/delete it | Route freehand stroke targets to `LayerMask`; preserve pixel layer and mask alpha; dedicated mask overlay | Alpha lock, selection intersection, undo/redo, 16-bit behavior | Mask pixel invariants, undo/redo, selection + mask composition |
+| **Selection combine modes** | Replace / Union / Subtract / Intersect, discoverable in the Select menu | Extend `SelectionMask` operations and UI state; preview before commit | Empty result, fully selected result, antialiased edges, undo | Geometry oracles, boolean-operation tests, edge cases |
+| **Preferences UI** | Autosave interval, undo budget, JPEG quality, theme | Bind existing persisted fields; no new backend | Invalid values, migration, defaults, save failure | Settings round-trip, boundary values, restart persistence |
+| **History panel** | Show undo entries and memory use | Read-only history API; memory readout | Bounded history eviction, 16-bit snapshots, large documents | Entry ordering, memory arithmetic, undo/redo after eviction |
+| **Guides/ruler polish** | Ruler as a snap target; clearer guide handles | Reuse snap candidate model; add angled-ruler intersection cases | Locked guides, empty ruler, off-canvas handles | Snap-target tests, ruler/guide interaction tests |
+
+**Exit criteria**
+
+- Every listed workflow has a feature path, an undo path and a test.
+- No workflow requires a hidden modifier or a file edit to use.
+- UX work does not regress brush, selection, Move, guide or ruler behavior.
+
+---
+
+## Next — Phase 2: v3.7.0 viewport fidelity
+
+**Goal:** decide and, only if justified, implement a higher-fidelity display path.
+
+| | |
+| :--- | :--- |
+| **Feature** | A 16-bit document should not be presented as if it were 8-bit, when the display path can support it. |
+| **Implementation** | Timeboxed spike for one RGBA16 presentation path; keep the GDI framebuffer and existing UI. No egui fork, no renderer rewrite. Fall back to 8-bit presentation if the path cannot be measured. |
+| **Hardening** | Keep the current path selectable; no document-format change; no silent color conversion; verify startup on unsupported hardware. |
+| **Testing** | Pixel-diff fixtures at 8-bit and 16-bit, frame-time budget, DPI/scale matrix, fallback test. |
+| **Kill criterion** | The spike fails if it destabilizes viewport tests or adds measurable frame cost without a visible fidelity gain. |
+
+Also here: Navigator DPI/dock polish, multi-monitor framing, and any remaining viewport
+regressions from Phase 0.
+
+---
+
+## Parallel — stabilization and performance
+
+These are continuous, but only one correctness item is active at a time.
+
+1. **Bilinear transparent edges.** The behavior is pinned by
+   `bilinear_transparent_edge_is_pinned_as_known_limitation`. Keep that test; if fixing it, capture
+   the 8-bit baseline first and do not bundle the fix with throughput work.
+2. **Sparse 16-bit throughput.** Current 0.70 against 0.60. Preserve the budget, add regression
+   coverage, and target 0.75 only with paired measurements. Do not chase the target at the cost of
+   correctness.
+3. **General-path tail.** Luminosity is the slowest mode; optimize only with a benchmark and a
+   rollback number.
+4. **Memory and soak.** Long 16-bit sessions across paint, filters, transform, undo/redo,
+   save/load and animation frames; record machine, build and retained history.
+5. **Undo/redo integrity.** Verify bounded history, 16-bit snapshots and selection/mask operations
+   under eviction.
+
+**Exit criteria**
+
+- Bilinear behavior is either fixed or explicitly accepted with the pinned test and user guidance.
+- Sparse ratio remains ≥0.60 with regression coverage.
+- Soak results are recorded; no unbounded memory growth is observed.
 
 ---
 
 ## Later — P3: larger bets
 
-Only after the P0/P1 exit criteria:
+Only after Phase 0/1 exit criteria and a written proposal:
 
 - **Layer styles**: stroke, glow, drop shadow as composite-time effects.
-- **16-bit presentation**: adopt only if the P0 spike proves it without destabilising the viewport.
-- **Multi-document tabs**: `DocumentSession` refactor, per-document history/path/pan/zoom.
-- **Colour management**: ICC profile reference, working-space conversion, soft proofing.
+- **Multi-document tabs**: `DocumentSession` refactor with per-document history/path/pan/zoom.
+- **Colour management**: ICC profile reference, working-space conversion and soft proofing.
 - **PSD import/export, animated WebP/MP4**: third-party codecs; separate scoping.
+- **GPU acceleration**: only if measured CPU limits block real workflows.
 - **Cross-platform port**: `eframe`/`winit`/`wgpu` front-end swap; not a small port while the
   renderer is GDI-hosted.
 
 ---
 
-## Deferred / explicitly not started
+## Testing strategy
 
-- **32-bit floating-point / linear-light editing.** It changes how values combine, invalidates
-  the byte-identical 8-bit oracle and needs its own proposal, gate and kill criterion. 16-bit
-  sRGB storage is the completed milestone.
-- **Forking or replacing egui.** The viewport is a GDI framebuffer path, not an egui texture
-  limitation. A custom UI framework is not justified by the current bug class.
+| Layer | What it proves | Runs |
+| :--- | :--- | :--- |
+| **Unit / integration** | Core algorithms, format round-trips, state machines, UI-independent behavior | Every change |
+| **Golden raster fixtures** | Viewport paper, compositing, transforms, 8/16-bit parity and accepted limitations | Every viewport/rendering change |
+| **Fuzz / malformed corpus** | AUR/HCV parser safety, allocation bounds, no panic on crafted input | Every format/parser change; scheduled corpus run |
+| **Soak** | Memory, history retention, save/load stability over long sessions | Before a stability release |
+| **Performance** | Sparse 16-bit budget, Navigator cost, general-path tail | Every performance change; release record |
+| **Release rehearsal** | Clean clone, idempotency, failure injection, signatures, published assets | Every release |
+| **Manual hardware** | Pen pressure/tilt, 100–200% DPI, two monitors, install/uninstall | Before a release candidate |
+
+A test is not “coverage” unless it can fail for the bug it claims to prevent. Pixel tests need
+stable fixtures; timing tests need paired rounds and recorded machine/build context.
+
+---
+
+## Explicitly not now
+
+- **32-bit floating-point / linear-light editing.** It changes how values combine and invalidates
+  the byte-identical 8-bit oracle; it needs its own proposal, gate and kill criterion.
+- **Forking or replacing egui.** The viewport is a GDI framebuffer path; a custom UI framework is
+  not justified by the current bug class.
+- **Authenticode.** No public certificate path exists; self-signing does not establish SmartScreen
+  trust. Ed25519 artifact signatures and SHA-256 manifests are the integrity boundary.
 - **A 16-bit fast path.** No evidence it is needed before the sparse-path work is measured.
-- **Authenticode is not deferred**; it is P0 above.
 
 ---
 
@@ -228,24 +205,26 @@ Only after the P0/P1 exit criteria:
 | Area | State |
 | :--- | :--- |
 | 16-bit sRGB documents | Storage, editing, compositing, filters, text, selection, transforms, merge, save/load |
-| Free transform | Affine, quad, mesh, TPS; native at both widths; observational-invariance tests |
-| Paint / erase / fill / gradient / shapes | Native 8-bit and 16-bit |
-| Layers | Groups, masks, clipping, alpha lock, adjustment layers, text, animation timeline |
-| Release engineering | Journaled `tools/release`, Ed25519 signatures, draft/verify/publish, installer + portable zip |
+| Measurement tools | Guides, grid origin, straight-edge ruler, Move modes, snapping, `AED1` persistence |
+| Project-file safety | Text-content allocation bound; oversized save rejection |
+| Release engineering | Journaled release tool, Ed25519 signatures, SHA-256, VirusTotal advisory scan, installer + portable zip |
 | Platform | Windows 10/11 x86-64, per-monitor V2 DPI, Win32 + GDI |
 
-The detailed historical performance work (v2.5-v2.7 compositor optimisations) is preserved in
-[docs/PERFORMANCE.md](docs/PERFORMANCE.md) rather than repeated here.
+Detailed measurements are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md); the 16-bit record is in
+[docs/16bit-plan.md](docs/16bit-plan.md); release mechanics and the production gate are in
+[RELEASE_PROCESS.md](RELEASE_PROCESS.md#9-v350-production-gate).
 
 ---
 
 ## Working rules
 
-1. **Correctness before throughput.** No optimisation is bundled into a correctness change; no
-   correctness fix is hidden inside a performance change.
-2. **A test or it did not happen.** New viewport, release and 16-bit claims need a deterministic
-   test or a recorded measurement.
+1. **Correctness before throughput.** No optimization bundled with a correctness change; no fix
+   hidden inside a performance change.
+2. **A test or it did not happen.** Viewport, release and 16-bit claims need a deterministic test
+   or a recorded measurement.
 3. **One source of truth.** Version numbers, release notes, issue state and roadmap status move
    together in the release commit.
-4. **No silent fallback.** An unsupported format or operation refuses with a message; it never
-   downconverts behind the user's back.
+4. **No silent fallback.** Unsupported formats and operations refuse with a message; they never
+   downconvert behind the user's back.
+5. **Unsigned is disclosed, not hidden.** Every release states the unsigned status and the
+   verification path.
