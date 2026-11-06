@@ -639,11 +639,7 @@ impl AureliaDesktopApp {
     /// The left edge retains a small resize strip: the vertical ruler starts 6 px inside the
     /// viewport, leaving the panel's 5 px grab radius usable.
     fn begin_ruler_guide_drag(&mut self, screen_pos: Vec2) -> bool {
-        if !self.state.show_rulers
-            || self.state.guides_locked
-            || self.state.brush.tool != ToolType::Move
-            || self.egui_ctx.is_pointer_over_area()
-        {
+        if !self.state.show_rulers || self.state.guides_locked {
             return false;
         }
         let win_w = self.win_w as f32;
@@ -659,8 +655,9 @@ impl AureliaDesktopApp {
         }
 
         let ruler = aurelia_ui::design::RULER_PX;
-        // Keep the panel's resize grab radius (5 points, scaled by DPI) usable.
-        let resize_margin = 6.0 * self.state.ui_ppp.max(1.0);
+        // Keep a minimal resize strip at the panel edge. Dragging the visible ruler should
+        // create a guide in any tool; only the first two scaled pixels remain panel-resize.
+        let resize_margin = 2.0 * self.state.ui_ppp.max(1.0);
         let orientation = if screen_pos.y >= vy0 + 1.0
             && screen_pos.y <= vy0 + ruler
             && screen_pos.x <= vx1
