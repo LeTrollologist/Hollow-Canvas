@@ -51,6 +51,35 @@ what the layers happen to hold:
 - 16-bit layers round-trip byte-exactly, and native 16-bit compositing output is available
   through `Document::composite_layers_srgb16` (#15).
 
+## Editor state section (`AED1`)
+
+AUR v3 optionally appends an editor-state section **after** the preview PNG. The preview and this
+section are outside the pixel/layer payload, so old readers stop after the layers and ignore them.
+
+```text
+magic           4 bytes   "AED1"
+payload_len     u32 LE    <= 1 MiB
+payload:
+  version       u8        1
+  guide_count   u32 LE    <= 4096
+  guides        guide_count * (vertical u8, position f32 LE)
+  grid_origin   f32 LE x, f32 LE y
+  ruler_flag    u8        0 = absent, 1 = present
+  ruler         if present: origin x/y f32 LE, angle_rad f32 LE, length f32 LE
+```
+
+Semantics:
+
+- `vertical = 1` is a vertical guide; `0` is horizontal. Positions are canvas pixels.
+- The section is optional and additive. Files written before it load with an empty guide list,
+  zero grid origin and no straight-edge ruler.
+- The reader skips the preview by its length, then reads `AED1` if present. A missing section,
+  trailing EOF, unknown magic or unknown payload version is treated as **no editor state**; it
+  is not a corrupt-project error. A section longer than 1 MiB, more than 4096 guides, or
+  non-finite coordinates is ignored and defaults are used.
+- The section does not affect pixel/layer round-trip guarantees and does not bump the container
+  version. Older readers that ignore trailing bytes remain compatible.
+
 ## Round-trip policy
 
 `load → save → load` must preserve layer order, names, masks, blend modes, offsets, adjustment

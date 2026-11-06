@@ -780,10 +780,11 @@ debug and release - with the 8-bit digest gate unchanged.
 The transparent-edge test is nearest-sampled on purpose: it isolates the coverage check (a
 zero-alpha border carrying colour must paint nothing) from interpolation quality.
 
-**Known limitation:** bilinear source interpolation still averages colour and alpha
-independently, the same as it does at 8 bits. A zero-alpha border whose RGB is not black can
-therefore darken the interpolated destination edge. This is a pre-existing interpolation
-behaviour, not a 16-bit storage gap: fixing it would move 8-bit output and must be its own
-baseline-first change. Until then, use Nearest for hard transparent edges or keep border RGB
-black. It is recorded as a stabilization item rather than part of the 16-bit completion
-claim.
+**Accepted limitation:** bilinear source interpolation averages colour and alpha independently,
+the same as it does at 8 bits. A transparent black neighbour darkens the interpolated edge; a
+transparent coloured neighbour tints it. `bilinear_transparent_edge_is_pinned_as_known_limitation`
+pins both results. This is a pre-existing interpolation behaviour, not a 16-bit storage gap:
+fixing it would move 8-bit output and must be its own baseline-first change. Until then, use
+Nearest for hard transparent edges, or keep the RGB under zero-alpha border pixels black. It is
+recorded as an accepted stabilization limitation rather than part of the 16-bit completion
+claim; the follow-up belongs to P1, not v3.5.0.

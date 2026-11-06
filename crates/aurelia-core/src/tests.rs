@@ -1825,6 +1825,10 @@ mod tests {
             if sparse_ratio >= 0.6 { "PASS (provisional)" } else { "FAIL" }
         );
         println!("  absolute thresholds are recorded as context only, per the approved change");
+        assert!(
+            sparse_ratio >= 0.60,
+            "sparse 16-bit throughput ratio {sparse_ratio:.2} is below the 0.60 release budget"
+        );
 
         // Memory: arithmetic, so it is asserted rather than reported.
         let per_layer_8 = W as usize * H as usize * 4;
@@ -4369,6 +4373,27 @@ mod transform_matrix {
                 assert!(eight_dst.iter().all(|&c| c == 0), "a zero-alpha 8-bit source must paint nothing");
             }
         }
+    }
+
+    /// Pins the accepted bilinear transparent-edge limitation. The sampler averages colour
+    /// and alpha independently: a transparent black neighbour darkens the edge, while a
+    /// transparent coloured neighbour tints it. Changing either result is a deliberate
+    /// rendering change, not an incidental refactor.
+    #[test]
+    fn bilinear_transparent_edge_is_pinned_as_known_limitation() {
+        let dark_neighbour = [255u8, 0, 0, 255, 0, 0, 0, 0]; // opaque red | transparent black
+        assert_eq!(
+            crate::transform::sample_bilinear(&dark_neighbour, 2, 1, 0.5, 0.0),
+            (128, 0, 0, 128),
+            "transparent black must darken the bilinear edge"
+        );
+
+        let coloured_neighbour = [255u8, 0, 0, 255, 0, 255, 0, 0]; // opaque red | transparent green
+        assert_eq!(
+            crate::transform::sample_bilinear(&coloured_neighbour, 2, 1, 0.5, 0.0),
+            (128, 128, 0, 128),
+            "transparent colour must tint the bilinear edge"
+        );
     }
 
     /// Partial source alpha over a transparent destination keeps the colour and halves the
