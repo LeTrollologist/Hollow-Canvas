@@ -22,6 +22,8 @@ use aurelia_core::layer::LayerId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LayerCommand {
     Delete(LayerId),
+    MoveUp(LayerId),
+    MoveDown(LayerId),
     Ungroup(LayerId),
     AddChild(LayerId),
     Duplicate(LayerId),
@@ -697,6 +699,19 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             if ui.checkbox(&mut state.show_rulers, "📏 Toggle Rulers (Ctrl+R)").clicked() {
                                 ui.close_menu();
                             }
+                            let ruler_label = if state.straight_ruler.is_some() {
+                                "📐 Remove straight-edge ruler"
+                            } else {
+                                "📐 Add straight-edge ruler"
+                            };
+                            if ui.button(ruler_label).clicked() {
+                                if state.straight_ruler.is_some() {
+                                    state.remove_straight_ruler();
+                                } else {
+                                    state.add_straight_ruler();
+                                }
+                                ui.close_menu();
+                            }
                             if ui.checkbox(&mut state.timeline.is_enabled, "🎞 Animation Timeline").clicked() {
                                 ui.close_menu();
                             }
@@ -780,6 +795,19 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             ui.checkbox(&mut state.show_grid, "Canvas grid  (Ctrl+')");
                             ui.checkbox(&mut state.show_rulers, "Pixel rulers  (Ctrl+R)");
                             ui.checkbox(&mut state.show_navigator, "Navigator panel");
+                            let ruler_label = if state.straight_ruler.is_some() {
+                                "Remove straight-edge ruler"
+                            } else {
+                                "Add straight-edge ruler"
+                            };
+                            if ui.button(ruler_label).clicked() {
+                                if state.straight_ruler.is_some() {
+                                    state.remove_straight_ruler();
+                                } else {
+                                    state.add_straight_ruler();
+                                }
+                                ui.close_menu();
+                            }
                             ui.separator();
                             ui.checkbox(&mut state.show_ref_window, "Reference studio");
                             ui.checkbox(&mut state.show_scratchpad, "Mixing scratchpad  (F4)");
@@ -1001,12 +1029,25 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .default_width(268.0)
             .min_width(250.0)
             .max_width(340.0)
-            .resizable(true)
+            .resizable(!state.left_panel_locked)
             .frame(crate::design::panel_frame(crate::design::INK_PANEL))
             .show(ctx, |ui| {
                 state.left_panel_w = (ui.max_rect().width() + 2.0 * design::PANEL_PAD) * state.ui_ppp;
                 let panel_rect = ui.max_rect();
                 design::vgradient(ui.painter(), panel_rect, design::INK_PANEL_TOP, design::INK_PANEL_BOTTOM);
+                ui.horizontal(|ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let label = if state.left_panel_locked { "🔒 Locked" } else { "🔓 Unlocked" };
+                        if ui
+                            .small_button(label)
+                            .on_hover_text("Lock the tool panel width")
+                            .clicked()
+                        {
+                            state.left_panel_locked = !state.left_panel_locked;
+                            state.save_preferences();
+                        }
+                    });
+                });
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     let content_w = ui.available_width().clamp(220.0, 320.0);
                     ui.set_min_width(content_w);
@@ -1598,12 +1639,25 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             .default_width(324.0)
             .min_width(300.0)
             .max_width(420.0)
-            .resizable(true)
+            .resizable(!state.right_panel_locked)
             .frame(crate::design::panel_frame(crate::design::INK_PANEL))
             .show(ctx, |ui| {
                 state.right_panel_w = (ui.max_rect().width() + 2.0 * design::PANEL_PAD) * state.ui_ppp;
                 let panel_rect = ui.max_rect();
                 design::vgradient(ui.painter(), panel_rect, design::INK_PANEL_TOP, design::INK_PANEL_BOTTOM);
+                ui.horizontal(|ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let label = if state.right_panel_locked { "🔒 Locked" } else { "🔓 Unlocked" };
+                        if ui
+                            .small_button(label)
+                            .on_hover_text("Lock the layers/color panel width")
+                            .clicked()
+                        {
+                            state.right_panel_locked = !state.right_panel_locked;
+                            state.save_preferences();
+                        }
+                    });
+                });
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     // A stable content width keeps rows from pushing the panel
                     // out to its maximum width (which used to clip the controls).
@@ -2051,6 +2105,13 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                         if ui.button(vis_icon).clicked() {
                                             state.document.layers[i].visible = !state.document.layers[i].visible;
                                         }
+                                        if ui
+                                            .selectable_label(is_active, "◉")
+                                            .on_hover_text("Select this layer for editing")
+                                            .clicked()
+                                        {
+                                            state.document.active_layer_id = layer_id;
+                                        }
 
                                         if is_group {
                                             // Folder collapse/expand toggle
@@ -2131,6 +2192,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                                     layer_commands.push(LayerCommand::AddChild(layer_id));
                                                 }
                                             } else {
+                                                if ui.small_button("↑").on_hover_text("Move Layer Up").clicked() {
+                                                    layer_commands.push(LayerCommand::MoveUp(layer_id));
+                                                }
+                                                if ui.small_button("↓").on_hover_text("Move Layer Down").clicked() {
+                                                    layer_commands.push(LayerCommand::MoveDown(layer_id));
+                                                }
                                                 if ui.button("🗑").on_hover_text("Delete Layer").clicked() {
                                                     layer_commands.push(LayerCommand::Delete(layer_id));
                                                 }
@@ -2312,6 +2379,32 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         match command {
                             LayerCommand::Delete(id) => {
                                 state.document.delete_layer(id);
+                            }
+                            LayerCommand::MoveUp(id) | LayerCommand::MoveDown(id) => {
+                                let Some(from_index) = state
+                                    .document
+                                    .layers
+                                    .iter()
+                                    .position(|layer| layer.id == id)
+                                else {
+                                    continue;
+                                };
+                                let to_index = if matches!(command, LayerCommand::MoveUp(_)) {
+                                    (from_index + 1).min(state.document.layers.len() - 1)
+                                } else {
+                                    from_index.saturating_sub(1)
+                                };
+                                if from_index != to_index {
+                                    let command = Box::new(
+                                        aurelia_core::history::MoveLayerCommand {
+                                            layer_id: id,
+                                            from_index,
+                                            to_index,
+                                        },
+                                    );
+                                    state.history.push(command);
+                                    state.document.move_layer(id, to_index as i32 - from_index as i32);
+                                }
                             }
                             LayerCommand::Ungroup(id) => {
                                 state.document.ungroup(id);
@@ -4784,7 +4877,7 @@ fn paint_guides(ctx: &egui::Context, state: &AppState) {
     }
 
     let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
+        egui::Order::Background,
         egui::Id::new("measurement_guides"),
     ));
     let painter = painter.with_clip_rect(clip);
@@ -4847,7 +4940,7 @@ fn paint_guides(ctx: &egui::Context, state: &AppState) {
             ];
             let ruler_painter = ctx
                 .layer_painter(egui::LayerId::new(
-                    egui::Order::Foreground,
+                    egui::Order::Background,
                     egui::Id::new("straight_edge_ruler"),
                 ))
                 .with_clip_rect(viewport);
@@ -5147,7 +5240,7 @@ fn paint_ruler_numbers(ctx: &egui::Context, state: &AppState) {
     let number_colour = Color32::from_rgb(212, 188, 152);
 
     let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
+        egui::Order::Background,
         egui::Id::new("aurelia_ruler_numbers"),
     ));
 

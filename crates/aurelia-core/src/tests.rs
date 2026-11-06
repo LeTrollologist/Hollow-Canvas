@@ -982,6 +982,27 @@ mod tests {
     }
 
     #[test]
+    fn move_layer_command_reorders_and_undoes() {
+        let mut doc = Document::new(4, 4);
+        let bottom = doc.active_layer_id;
+        let top = doc.add_layer(Some("Top".into()));
+        assert_eq!(doc.layers.iter().map(|l| l.id).collect::<Vec<_>>(), vec![bottom, top]);
+
+        doc.move_layer(top, -1);
+        assert_eq!(doc.layers.iter().map(|l| l.id).collect::<Vec<_>>(), vec![top, bottom]);
+        let mut history = crate::history::HistoryStack::new(10);
+        history.push(Box::new(crate::history::MoveLayerCommand {
+            layer_id: top,
+            from_index: 1,
+            to_index: 0,
+        }));
+        history.undo(&mut doc);
+        assert_eq!(doc.layers.iter().map(|l| l.id).collect::<Vec<_>>(), vec![bottom, top]);
+        history.redo(&mut doc);
+        assert_eq!(doc.layers.iter().map(|l| l.id).collect::<Vec<_>>(), vec![top, bottom]);
+    }
+
+    #[test]
     fn test_selection_intersect_and_layer_alpha() {
         let mut left = SelectionMask::from_rect(16, 16, Vec2::new(0.0, 0.0), Vec2::new(8.0, 16.0));
         let right = SelectionMask::from_rect(16, 16, Vec2::new(4.0, 0.0), Vec2::new(16.0, 16.0));

@@ -281,6 +281,9 @@ pub struct AppState {
     /// Chrome metrics written by the UI each frame, so canvas math follows the docks.
     pub left_panel_w: f32,
     pub right_panel_w: f32,
+    /// Persisted side-panel width locks. Locked panels cannot be resized by dragging.
+    pub left_panel_locked: bool,
+    pub right_panel_locked: bool,
     pub header_h: f32,
     pub footer_h: f32,
     /// egui pixels-per-point for the current frame. Panel sizes above and all
@@ -535,6 +538,8 @@ impl AppState {
             flip_view_horizontal: false,
             left_panel_w: 268.0,
             right_panel_w: 324.0,
+            left_panel_locked: false,
+            right_panel_locked: false,
             header_h: 38.0,
             footer_h: 30.0,
             ui_ppp: 1.0,
@@ -1978,6 +1983,8 @@ impl AppState {
                     }
                 }
                 "autosave" => self.autosave_enabled = value != "0",
+                "left_panel_locked" => self.left_panel_locked = value == "1",
+                "right_panel_locked" => self.right_panel_locked = value == "1",
                 "discord_presence" => self.discord_presence = value == "1",
                 "discord_show_project" => self.discord_show_project_name = value == "1",
                 "autosave_interval" => {
@@ -2009,6 +2016,14 @@ impl AppState {
         out.push_str(&format!("theme={}\n", theme));
         out.push_str(&format!("jpeg_quality={}\n", self.jpeg_quality));
         out.push_str(&format!("autosave={}\n", if self.autosave_enabled { 1 } else { 0 }));
+        out.push_str(&format!(
+            "left_panel_locked={}\n",
+            if self.left_panel_locked { 1 } else { 0 }
+        ));
+        out.push_str(&format!(
+            "right_panel_locked={}\n",
+            if self.right_panel_locked { 1 } else { 0 }
+        ));
         out.push_str(&format!(
             "discord_presence={}\n",
             if self.discord_presence { 1 } else { 0 }

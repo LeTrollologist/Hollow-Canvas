@@ -251,6 +251,41 @@ impl Command for DeleteLayerCommand {
     }
 }
 
+/// Moves one layer to a new position in the document stack. The IDs and pixels are
+/// unchanged; only ordering moves, so undo/redo is an exact index swap.
+#[derive(Debug)]
+pub struct MoveLayerCommand {
+    pub layer_id: u64,
+    pub from_index: usize,
+    pub to_index: usize,
+}
+
+impl Command for MoveLayerCommand {
+    fn name(&self) -> &'static str {
+        "Reorder Layer"
+    }
+
+    fn undo(&mut self, doc: &mut Document) {
+        move_layer_to(doc, self.layer_id, self.from_index);
+    }
+
+    fn redo(&mut self, doc: &mut Document) {
+        move_layer_to(doc, self.layer_id, self.to_index);
+    }
+}
+
+fn move_layer_to(doc: &mut Document, layer_id: u64, target: usize) {
+    let Some(current) = doc.layers.iter().position(|layer| layer.id == layer_id) else {
+        return;
+    };
+    let target = target.min(doc.layers.len().saturating_sub(1));
+    if current == target {
+        return;
+    }
+    let layer = doc.layers.remove(current);
+    doc.layers.insert(target, layer);
+}
+
 #[derive(Debug)]
 pub struct TranslateLayerCommand {
     pub layer_id: u64,
