@@ -16,8 +16,10 @@ pixel feature; it is making the thing users actually see and install trustworthy
 1. **Viewport truth.** The canvas is the product, and it has had recurring visibility/refresh
    bugs, no visual regression tests, and a 16-bit document is still presented at 8 bits. This is
    the highest-value code work.
-2. **Distribution trust.** The installer is unsigned, so SmartScreen and generic AV heuristics
-   still fire. Authenticode is the highest-value non-code change left.
+2. **Distribution integrity.** The installer is unsigned, and that is now a permanent constraint:
+   no public Authenticode path exists and a self-signed certificate would not help SmartScreen.
+   The release must therefore make the artifact verifiable through SHA-256 and Ed25519
+   signatures, and state the unsigned status honestly.
 3. **Release and documentation hygiene.** v3.4.x exposed gaps: `Cargo.lock` is not part of the
    version stage, issues #15 and #28 are implemented but still open, and this roadmap had drifted
    three releases behind.
@@ -93,22 +95,24 @@ Exit criteria:
 
 ---
 
-## Now — P0: distribution trust and release hygiene
+## Now — P0: distribution integrity and release hygiene
 
-**Why now:** the installer is unsigned, and the engine's quality is undermined by a SmartScreen
-warning and generic heuristic detections. This is issue #5 and it is explicitly the highest-value
-integrity upgrade.
+**Why now:** Authenticode is not available for this project. A self-signed certificate is worse
+than useless for SmartScreen because it does not chain to a trusted CA. Unsigned distribution is
+therefore a **permanent product constraint**, not a pending task. The production bar is not
+"make SmartScreen green"; it is "make the artifact verifiable, the warning honest, and the release
+repeatable."
 
 Actions:
 
-1. **Authenticode-sign the installer and executable** as part of the release pipeline, with the
-   certificate kept outside the repository and a documented rotation/lost-key procedure. This is
-   a release gate, not a post-release step.
-2. **Configure VirusTotal scanning** with a real API key in the release environment; keep
-   `advisory` while signing is being established, then decide whether `threshold` should block.
+1. **Keep the existing Ed25519 artifact signatures and `SHA256SUMS.txt`.** Publish the public-key
+   fingerprint and the exact verification command in every release note. This is the integrity
+   boundary; it is independent of Windows code signing.
+2. **Keep VirusTotal scanning advisory.** Do not gate a release on heuristic/ML detections that
+   routinely fire on unsigned software. Provide a false-positive reporting path.
 3. **Close implemented issues.** #15 (native 16-bit output) and #28 (16-bit filters) are shipped;
-   verify the acceptance criteria, comment with the tests/commits, and close them. Remove stale
-   claims from the issue tracker rather than letting the backlog lie.
+   verify the acceptance criteria, comment with the tests/commits, and close them. Re-scope #5
+   (Authenticode) as **won't fix — no public certificate path**, with the unsigned policy linked.
 4. **Fix the version-stage gap.** `Cargo.lock` is updated by quality/build after the release
    commit and currently lands in a post-release commit. Add it to `version_files` (or to the
    version stage explicitly) so a release leaves a clean tree without a follow-up commit.
@@ -126,20 +130,24 @@ Progress:
   reports `published`/`verified`, and `last_error` clears.
 - Failure injection covers partial upload resume, digest mismatch, release-creation failure,
   remote tag drift, interrupted operation, and post-publication draft verification.
-- #15 and #28 are closed; the only open issue is Authenticode (#5).
+- #15 and #28 are closed. #5 is out of scope by policy, not blocked on engineering.
 
 Remaining:
 
-- Authenticode signing and a real VirusTotal key are still external/pending.
+- Cut one release through the full pipeline with the unsigned policy in its notes, and verify
+  the published hashes and Ed25519 signatures end to end.
 - Add the partial-journal-append, compensation-failure and clean-clone rehearsal cases.
 - Prove the next release leaves `main` clean (the lock fix is in place but not yet exercised by
   a release).
+- Document the additive `AED1` editor-state section in `docs/PROJECT_FORMAT.md`.
 
 Exit criteria:
 
-- Signed installer and executable; SmartScreen/AV report improves and is recorded per release.
+- Unsigned status and the SHA-256/Ed25519 verification path are stated in README, installer
+  notes and release notes.
+- Published assets verify against the published hashes and signatures.
 - A release run leaves `main` clean with no manual post-release commit.
-- #15 and #28 closed or explicitly re-scoped.
+- #15 and #28 closed; #5 explicitly re-scoped as won't-fix.
 - Failure-injection suite covers the listed crash points.
 
 ---

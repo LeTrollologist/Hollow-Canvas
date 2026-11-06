@@ -32,8 +32,10 @@ every instruction executing in the process is memory-safe; the Win32/CRT/FFI lay
 
 - Artifacts and `SHA256SUMS.txt` are Ed25519-signed; the public key is published in the repo and
   with the release.
-- The installer is **not Authenticode-signed**; SmartScreen reputation is separate from artifact
-  signatures.
+- The installer is **not Authenticode-signed**. This is a permanent distribution constraint, not
+  a pending release task: no public certificate path is available, and a self-signed certificate
+  would not establish SmartScreen trust. SmartScreen reputation is therefore separate from the
+  Ed25519 artifact signature.
 - VirusTotal is advisory. Unsigned binaries frequently trigger heuristic/ML detections; a clean
   scan is not proof of safety.
 - The private signing key is local and gitignored; see

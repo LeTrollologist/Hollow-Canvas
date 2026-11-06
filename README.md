@@ -170,7 +170,7 @@ Aurelia/
 | Layer features | Raster, groups, masks, adjustment layers, text, clipping | Animation is timeline-only; no video export |
 | Exports | PNG, JPEG, WebP, GIF, sprite sheets, frame sequences | Color profiles are not embedded yet; no ICC/Display P3 workflow |
 | Rich Presence | Optional Discord IPC | Off by default; no artwork previews; Windows Discord desktop only |
-| Distribution | Portable zip + per-user Inno installer | Installer is unsigned; artifacts are Ed25519-signed |
+| Distribution | Portable zip + per-user Inno installer | Unsigned by policy (no Authenticode path); artifacts are Ed25519-signed and SHA-256 verified |
 
 Authoritative details: [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) and [`docs/PROJECT_FORMAT.md`](docs/PROJECT_FORMAT.md).
 
@@ -232,9 +232,11 @@ for name in ("Aurelia-v3.4.1-win64.zip", "Aurelia-Setup-3.4.1.exe", "SHA256SUMS.
 print("signatures verified")
 ```
 
-The installer is **not Authenticode-signed**, so Windows SmartScreen may still warn. VirusTotal
-results are advisory: unsigned software often trips heuristic/ML engines. A clean scan is not a
-proof of safety; a matching Ed25519 signature is the integrity boundary. See
+The installer is **not Authenticode-signed** and this is a permanent distribution constraint:
+no public certificate path is available, and a self-signed certificate would not establish
+SmartScreen trust. Windows may warn; verify the SHA-256 and Ed25519 signature before running.
+VirusTotal results are advisory: unsigned software often trips heuristic/ML engines. A clean scan
+is not proof of safety; a matching Ed25519 signature is the integrity boundary. See
 [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md).
 
 ---
