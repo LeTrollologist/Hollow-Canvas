@@ -162,3 +162,37 @@ The suite now covers the failure modes that exercise the journal's recovery path
 Still worth adding: a killed process during the journal append itself (partial final line), a
 compensation that fails partway, and a clean-clone rehearsal against a throwaway remote. The
 orchestrator is now tested for the resume paths it depends on, not only the happy path.
+
+---
+
+## 9. v3.5.0 production gate
+
+Feature-completeness gaps (mask painting, selection combine modes, preferences, history panel)
+are **not** release blockers. The gate is correctness, release engineering and distribution
+integrity. Existing workflows must still pass a smoke test.
+
+| Item | Severity | Gate requirement |
+| :--- | :--- | :--- |
+| Unshipped changes | Critical | Version bump, release notes, tag and assets published |
+| `AED1` format documentation | High | Versioning, compatibility and malformed-section behavior documented |
+| Transparent-edge limitation | Medium | Behavior pinned by a regression test; limitation formally accepted or fixed |
+| Sparse 16-bit performance | Low | 0.60 budget preserved; regression coverage records the ratio |
+| UX gaps | Medium | Not a gate; no regression to existing brush/selection workflows |
+| Release pipeline validation | Critical | Clean clone, failure injection, interrupted recovery, idempotency |
+| Distribution | Critical | SHA-256 manifests and Ed25519 signatures verify against the published fingerprint |
+| Release acceptance | Critical | Full release run published and verified; `main` clean afterward |
+
+Acceptance commands/evidence to keep with the release record:
+
+```powershell
+cargo test --release --workspace
+cargo test -p aurelia-core gate_2 --release -- --ignored --nocapture
+python -m aurelia_release --repo . doctor
+python -m aurelia_release --repo . plan v3.5.0
+python -m aurelia_release --repo . run v3.5.0
+python -m aurelia_release --repo . verify v3.5.0
+git status --short
+```
+
+The release is not accepted until the downloaded assets verify independently and the working
+tree is clean after publishing.

@@ -159,28 +159,32 @@ limitation is still documented rather than fixed.
 
 1. **Soak the 16-bit paths.** Long editing sessions across paint, filters, transform, undo/redo,
    save/load, and animation frames. Measure memory, retained history and time-to-first-frame.
-2. **Fix bilinear transparent edges with a baseline first.** The current sampler averages colour
-   and alpha independently; a zero-alpha border with non-black RGB can darken interpolated edges.
-   Capture the 8-bit output baseline before changing it, then make the smallest correct change.
-   This remains the first correctness item in the stabilization phase.
-3. **Sparse 16-bit throughput.** Current gate-2 ratio is **0.67** against a 0.60 budget. Set a
-   target of **>= 0.75** (or justify why 0.67 is the practical floor), measure paired rounds, and
-   record the result in PERFORMANCE.md. Do not bundle throughput changes with correctness fixes.
+2. **Pin bilinear transparent-edge behavior first.** The sampler averages colour and alpha
+   independently; a zero-alpha border with non-black RGB can darken interpolated edges. Add a
+   regression test that captures the current 8-bit and 16-bit output before changing anything.
+   Fix it if the smallest correct change is safe; otherwise record a formal accepted-limitation
+   decision with the test, user guidance and a follow-up issue. This is the first P1 item.
+3. **Sparse 16-bit throughput.** Current gate-2 ratio is **0.67** against a **0.60** budget.
+   Preserve the budget and add regression coverage for sparse 16-bit workloads. The 0.75 target
+   remains a goal, not a v3.5.0 gate; record paired rounds in PERFORMANCE.md. Do not bundle
+   throughput changes with correctness fixes.
 4. **General-path tail.** Slowest blend mode is Luminosity at 82.5 MPix/s; the opaque general path
    is 105.4. Optimise only with a benchmark and a rollback number.
 5. **Memory.** Keep the delta-history budget honest at 1080p and 4K; measure, do not infer.
 
 Exit criteria:
 
-- Bilinear edge fixed or explicitly re-scoped with a test that pins the intended behaviour.
-- Sparse ratio target met or a written decision to stop.
+- Bilinear edge fixed, or formally accepted with a pinned regression test and user guidance.
+- Sparse ratio stays at or above the 0.60 budget with regression coverage.
 - Soak results recorded with the machine and build.
 
 ---
 
 ## Next — P2: UX and editing gaps
 
-These are user-visible gaps, not architecture changes:
+These are user-visible gaps, not architecture changes. They are **not** v3.5.0 release gates
+unless they regress an existing workflow; the release gate is in
+[RELEASE_PROCESS.md](RELEASE_PROCESS.md#9-v350-production-gate).
 
 | Item | Why it matters | Notes |
 | :--- | :--- | :--- |
