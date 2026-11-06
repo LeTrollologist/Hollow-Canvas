@@ -1705,6 +1705,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
         WM_LBUTTONDOWN => {
             app.is_pointer_down = true;
             app.moving_layer = None;
+            // A lost mouse-up (focus change, capture loss) must not leave a guide/ruler
+            // drag consuming every subsequent move.
+            app.guide_drag = None;
             app.state.snap_markers.clear();
 
             let raw_x = (lparam as u32 & 0xFFFF) as i16 as f32;
