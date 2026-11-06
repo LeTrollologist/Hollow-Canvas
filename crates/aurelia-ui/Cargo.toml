@@ -1,13 +1,13 @@
 [package]
 name = "aurelia-ui"
-version = "3.5.0"
+version = "3.5.1"
 edition = "2021"
 description = "Immediate-mode user interface, studio panels, palette docks, and modals for Aurelia"
 
 [dependencies]
-aurelia-core = { path = "../aurelia-core", version = "3.5.0" }
-aurelia-render = { path = "../aurelia-render", version = "3.5.0" }
-aurelia-io = { path = "../aurelia-io", version = "3.5.0" }
+aurelia-core = { path = "../aurelia-core", version = "3.5.1" }
+aurelia-render = { path = "../aurelia-render", version = "3.5.1" }
+aurelia-io = { path = "../aurelia-io", version = "3.5.1" }
 egui = { workspace = true }
 rfd = { workspace = true }
 glam = { workspace = true }
