@@ -182,6 +182,13 @@ def _preflight(ctx: Context) -> dict[str, Any]:
             "in ISCC/INNO_ISCC, PATH, Program Files, or %LOCALAPPDATA%\\Programs\\Inno"
         )
 
+    if ctx.profile == "full":
+        notes = ctx.repo / "release-notes" / f"{ctx.tag}.md"
+        if not notes.is_file():
+            raise PreflightError(
+                f"release notes are missing: release-notes/{ctx.tag}.md"
+            )
+
     problems = _current_versions_problem(ctx)
     if problems:
         raise PreflightError("version declarations are inconsistent:\n  " + "\n  ".join(problems))
@@ -770,6 +777,7 @@ def _scan(ctx: Context) -> dict[str, Any]:
                 "file": path.name,
                 "sha256": digest,
                 "detections": decision.detections,
+                "engines_reporting": len(stats),
                 "engines": list(decision.engines),
                 "allowed": decision.allowed,
                 "reason": decision.reason,
@@ -795,6 +803,71 @@ def _scan_verify(ctx: Context, outputs: dict[str, Any]) -> dict[str, Any]:
         if not decision.allowed:
             raise VerificationError(f"{scan['file']}: {decision.reason}")
     return {"scans": len(meta.get("scans", []))}
+
+
+def _virustotal_block(scans: list[dict[str, Any]]) -> str:
+    lines = [
+        "<!-- virustotal:begin -->",
+        "",
+        "## 🛡️ VirusTotal verification",
+        "",
+        "Artifacts were submitted to the VirusTotal API v3 by the release pipeline; verdicts below",
+        "are what the engines reported at scan time.",
+        "",
+        "| Artifact | Detections | Engines reporting | Report |",
+        "| :--- | :--- | :--- | :--- |",
+    ]
+    for scan in scans:
+        name = scan["file"]
+        digest = scan["sha256"]
+        marker = "🟢" if scan["detections"] == 0 else "🔴"
+        engines = scan.get("engines_reporting", 0)
+        lines.append(
+            f"| `{name}` | {marker} {scan['detections']} | {engines} | "
+            f"[VirusTotal](https://www.virustotal.com/gui/file/{digest}) |"
+        )
+    lines.extend(["", "SHA-256 of the scanned artifacts:", ""])
+    for scan in scans:
+        lines.append(f"- `{scan['sha256']}` — `{scan['file']}`")
+    lines.extend(["", "<!-- virustotal:end -->"])
+    return "\n".join(lines)
+
+
+def _notes_update(ctx: Context) -> dict[str, Any]:
+    notes_rel = f"release-notes/{ctx.tag}.md"
+    notes = ctx.repo / notes_rel
+    if not notes.is_file():
+        raise PreflightError(f"release notes are missing: {notes_rel}")
+    text = notes.read_text(encoding="utf-8")
+    scans = (
+        ctx.journal.state()
+        .get("scan", OpState("", "", ""))
+        .outputs.get("meta", {})
+        .get("scans", [])
+    )
+    block = _virustotal_block(scans)
+    begin, end = "<!-- virustotal:begin -->", "<!-- virustotal:end -->"
+    if begin in text and end in text:
+        before, rest = text.split(begin, 1)
+        _, after = rest.split(end, 1)
+        text = before + block + after
+    else:
+        text = text.rstrip() + "\n\n" + block + "\n"
+    notes.write_text(text, encoding="utf-8")
+    if ctx.git.status_porcelain():
+        ctx.git.add([notes_rel])
+        ctx.git.commit(f"docs(release): record VirusTotal results for {ctx.tag}")
+    return {"path": notes_rel, "scans": len(scans)}
+
+
+def _notes_verify(ctx: Context, outputs: dict[str, Any]) -> dict[str, Any]:
+    notes = ctx.repo / outputs["meta"]["path"]
+    text = notes.read_text(encoding="utf-8")
+    if "<!-- virustotal:begin -->" not in text or "<!-- virustotal:end -->" not in text:
+        raise VerificationError("release notes lost the VirusTotal block")
+    if ctx.git.status_porcelain():
+        raise VerificationError("release notes update left a dirty tree")
+    return {"path": str(notes.relative_to(ctx.repo))}
 
 
 def build_operations(ctx: Context) -> list[Operation]:
@@ -853,6 +926,15 @@ def build_operations(ctx: Context) -> list[Operation]:
                     "threshold": cfg.scan.threshold,
                     "allowlist": cfg.scan.allowlist,
                 },
+            )
+        )
+        operations.append(
+            Operation(
+                name="notes",
+                stage="notes",
+                description="write the VirusTotal table into the release notes",
+                run=_notes_update,
+                verify=_notes_verify,
             )
         )
 

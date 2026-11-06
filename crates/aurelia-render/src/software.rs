@@ -1415,6 +1415,19 @@ mod viewport_tests {
         assert_eq!(px(&buffer, 40, 28, 12), 0xFF1C_1C1C);
     }
 
+    /// An empty 16-bit document must render the same paper as an empty 8-bit document; a blank
+    /// viewport is never an acceptable fallback for a format the editor supports.
+    #[test]
+    fn empty_sixteen_bit_document_renders_paper() {
+        let doc = Document::new_with_format(
+            32,
+            32,
+            aurelia_core::layer::PixelFormat::Srgb16,
+        );
+        let buffer = render(&doc, 40, Vec2::ZERO, 1.0);
+        assert_eq!(px(&buffer, 40, 20, 20), 0xFFFF_FFFF);
+    }
+
     /// The paper value is data, not a theme constant: a dark paper renders dark.
     #[test]
     fn dark_paper_renders_its_document_value() {

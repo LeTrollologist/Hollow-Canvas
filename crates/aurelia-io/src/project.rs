@@ -978,6 +978,18 @@ mod tests {
     }
 
     #[test]
+    fn oversized_preview_and_editor_claims_are_ignored() {
+        let mut huge_preview = Cursor::new(u32::MAX.to_le_bytes().to_vec());
+        assert!(read_editor_state(&mut huge_preview).is_none());
+
+        let mut huge_editor = Vec::new();
+        huge_editor.extend_from_slice(&0u32.to_le_bytes()); // no preview
+        huge_editor.extend_from_slice(b"AED1");
+        huge_editor.extend_from_slice(&(EDITOR_MAX_BYTES + 1).to_le_bytes());
+        assert!(read_editor_state(&mut Cursor::new(huge_editor)).is_none());
+    }
+
+    #[test]
     fn saving_an_oversized_text_layer_is_rejected() {
         let mut doc = Document::new(1, 1);
         let layer = &mut doc.layers[0];
