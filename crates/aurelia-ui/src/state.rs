@@ -225,6 +225,15 @@ pub struct StraightRuler {
     pub length: f32,
 }
 
+impl StraightRuler {
+    /// Projects a canvas point onto the ruler's centerline, clamped to its endpoints.
+    pub fn constrain(&self, point: Vec2) -> Vec2 {
+        let dir = Vec2::new(self.angle_rad.cos(), self.angle_rad.sin());
+        let along = (point - self.origin).dot(dir).clamp(0.0, self.length);
+        self.origin + dir * along
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Guide {
     pub orientation: GuideOrientation,
@@ -264,6 +273,8 @@ pub struct AppState {
     pub snap_to_layers: bool,
     pub snap_markers: Vec<SnapMarker>,
     pub straight_ruler: Option<StraightRuler>,
+    /// Freehand strokes are projected onto the straight-edge ruler while enabled.
+    pub ruler_draw: bool,
     pub show_rulers: bool,
     pub show_navigator: bool,
     pub flip_view_horizontal: bool,
@@ -518,6 +529,7 @@ impl AppState {
             snap_to_layers: true,
             snap_markers: Vec::new(),
             straight_ruler: None,
+            ruler_draw: false,
             show_rulers: true,
             show_navigator: true,
             flip_view_horizontal: false,
@@ -1187,11 +1199,13 @@ impl AppState {
             angle_rad: 0.0,
             length: length.max(50.0),
         });
+        self.ruler_draw = false;
         self.mark_editor_dirty();
     }
 
     pub fn remove_straight_ruler(&mut self) {
         self.straight_ruler = None;
+        self.ruler_draw = false;
         self.mark_editor_dirty();
     }
 
@@ -2019,7 +2033,7 @@ impl Default for AppState {
 
 #[cfg(test)]
 mod viewport_geometry {
-    use super::{AppState, GuideOrientation, MoveMode};
+    use super::{AppState, GuideOrientation, MoveMode, StraightRuler};
 
     /// Panel-free window so the viewport is the whole window, which makes the numbers
     /// checkable by hand.
@@ -2155,6 +2169,18 @@ mod viewport_geometry {
         assert_eq!(restored.guides, state.guides);
         assert_eq!(restored.grid_origin, state.grid_origin);
         assert_eq!(restored.straight_ruler, state.straight_ruler);
+    }
+
+    #[test]
+    fn straight_ruler_constrains_points_to_its_segment() {
+        let ruler = StraightRuler {
+            origin: glam::Vec2::new(10.0, 20.0),
+            angle_rad: 0.0,
+            length: 100.0,
+        };
+        assert_eq!(ruler.constrain(glam::Vec2::new(60.0, 80.0)), glam::Vec2::new(60.0, 20.0));
+        assert_eq!(ruler.constrain(glam::Vec2::new(500.0, 20.0)), glam::Vec2::new(110.0, 20.0));
+        assert_eq!(ruler.constrain(glam::Vec2::new(-50.0, 20.0)), glam::Vec2::new(10.0, 20.0));
     }
 
     /// Docks larger than the window must collapse to an empty rect, not invert it.

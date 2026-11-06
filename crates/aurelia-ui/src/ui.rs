@@ -1364,6 +1364,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 if ui.button("Remove straight-edge ruler").clicked() {
                                     state.remove_straight_ruler();
                                 }
+                                ui.checkbox(&mut state.ruler_draw, "Draw along ruler");
+                                ui.label(
+                                    RichText::new("Drag body to move; drag end to rotate/stretch (Shift 15°).")
+                                        .size(8.5)
+                                        .color(Color32::from_rgb(172, 161, 130)),
+                                );
                                 let mut changed = false;
                                 if let Some(ruler) = &mut state.straight_ruler {
                                     let mut degrees = ruler.angle_rad.to_degrees();
@@ -4875,6 +4881,14 @@ fn paint_guides(ctx: &egui::Context, state: &AppState) {
                 tick += 50.0;
             }
             let handle_color = Color32::from_rgb(246, 196, 90);
+            let midpoint = origin + direction * 0.5;
+            ruler_painter.text(
+                midpoint + normal * (half + 20.0),
+                egui::Align2::CENTER_CENTER,
+                format!("{:.0} px · {:.1}°", ruler.length, ruler.angle_rad.to_degrees()),
+                egui::FontId::proportional(10.0),
+                Color32::from_rgb(255, 224, 150),
+            );
             ruler_painter.circle_stroke(end, 5.0, Stroke::new(1.5, handle_color));
             ruler_painter.circle_stroke(origin, 3.0, Stroke::new(1.0, handle_color));
         }

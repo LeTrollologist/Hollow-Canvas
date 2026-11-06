@@ -863,6 +863,18 @@ impl AureliaDesktopApp {
         snapped
     }
 
+    /// Projects a freehand point onto the straight-edge ruler's centerline when
+    /// "Draw along ruler" is enabled.
+    fn constrain_to_ruler(&self, point: Vec2) -> Vec2 {
+        if !self.state.ruler_draw {
+            return point;
+        }
+        let Some(ruler) = self.state.straight_ruler else {
+            return point;
+        };
+        ruler.constrain(point)
+    }
+
     /// Snaps a guide position to the cached targets and records the indicator.
     fn snap_guide_value(&mut self, vertical: bool, value: f32) -> f32 {
         self.state.snap_markers.clear();
@@ -1335,6 +1347,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                                 angle = (angle / step).round() * step;
                             }
                             ruler.angle_rad = angle;
+                            // The end handle both rotates and stretches: pulling it farther
+                            // from the origin changes the measured length.
+                            ruler.length = delta.length().clamp(50.0, 4000.0);
                         }
                     }
                 }
@@ -1552,6 +1567,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     } else {
                         canvas_pos
                     };
+                    let effective_canvas_pos = app.constrain_to_ruler(effective_canvas_pos);
 
                     let now = Instant::now();
                     let dt = now.duration_since(app.last_point_time).as_secs_f32().max(0.001);
@@ -1751,13 +1767,18 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
             app.stroke_perspective_axis = None;
             app.last_point_time = Instant::now();
             app.current_velocity = 0.0;
-            app.last_canvas_pos = Some(canvas_pos);
+            let tool = app.state.brush.tool;
+            let stroke_start = if tool.is_freehand_stroke_tool() {
+                app.constrain_to_ruler(canvas_pos)
+            } else {
+                canvas_pos
+            };
+            app.last_canvas_pos = Some(stroke_start);
             app.last_pan_screen_pos = Some(screen_pos);
             app.stroke_points.clear();
-            app.stroke_points.push(BrushPoint::new(canvas_pos, 1.0));
+            app.stroke_points.push(BrushPoint::new(stroke_start, 1.0));
 
             let is_alt = (GetKeyState(0x12) as i32 & 0x8000) != 0; // VK_MENU (Alt)
-            let tool = app.state.brush.tool;
 
             if is_alt {
                 let flat = app.state.document.composite_layers(false);
@@ -2151,7 +2172,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     if end_dist >= 0.5 {
                         let last_pressure = app.stroke_points.last().map(|p| p.pressure).unwrap_or(1.0);
                         let p = last_pressure * 0.75; // gentle release taper
-                        app.stroke_points.push(BrushPoint::new(canvas_pos, p));
+                        let release_pos = app.constrain_to_ruler(canvas_pos);
+                        app.stroke_points.push(BrushPoint::new(release_pos, p));
                     }
 
                     let n = app.stroke_points.len();
