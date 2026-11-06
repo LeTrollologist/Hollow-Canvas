@@ -182,7 +182,7 @@ def _preflight(ctx: Context) -> dict[str, Any]:
             "in ISCC/INNO_ISCC, PATH, Program Files, or %LOCALAPPDATA%\\Programs\\Inno"
         )
 
-    if ctx.profile == "full":
+    if ctx.profile == "full" and ctx.tag != "v0.0.0":
         notes = ctx.repo / "release-notes" / f"{ctx.tag}.md"
         if not notes.is_file():
             raise PreflightError(
@@ -931,7 +931,7 @@ def build_operations(ctx: Context) -> list[Operation]:
         operations.append(
             Operation(
                 name="notes",
-                stage="notes",
+                stage="scan",
                 description="write the VirusTotal table into the release notes",
                 run=_notes_update,
                 verify=_notes_verify,
