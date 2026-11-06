@@ -1,6 +1,6 @@
 [package]
 name = "aurelia-app"
-version = "3.5.1"
+version = "3.5.2"
 edition = "2021"
 description = "Aurelia - local-first raster illustration, animation and painting studio (Windows)"
 
@@ -10,11 +10,11 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
-aurelia-core = { path = "../aurelia-core", version = "3.5.1" }
-aurelia-io = { path = "../aurelia-io", version = "3.5.1" }
-aurelia-ui = { path = "../aurelia-ui", version = "3.5.1" }
-aurelia-render = { path = "../aurelia-render", version = "3.5.1" }
-aurelia-presence = { path = "../aurelia-presence", version = "3.5.1" }
+aurelia-core = { path = "../aurelia-core", version = "3.5.2" }
+aurelia-io = { path = "../aurelia-io", version = "3.5.2" }
+aurelia-ui = { path = "../aurelia-ui", version = "3.5.2" }
+aurelia-render = { path = "../aurelia-render", version = "3.5.2" }
+aurelia-presence = { path = "../aurelia-presence", version = "3.5.2" }
 egui = { workspace = true }
 glam = { workspace = true }
 log = { workspace = true }
