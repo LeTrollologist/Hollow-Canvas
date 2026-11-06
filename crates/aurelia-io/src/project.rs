@@ -3,7 +3,7 @@ use flate2::write::DeflateEncoder;
 use flate2::Compression;
 use aurelia_core::blend::BlendMode;
 use aurelia_core::color::ThemeMode;
-use aurelia_core::document::Document;
+use aurelia_core::document::{Document, EditorState, GuideLine, StraightRulerState};
 use aurelia_core::layer::Layer;
 use image::{ImageBuffer, ImageFormat, Rgba};
 use std::fs::File;
@@ -31,6 +31,10 @@ const HCV_MAGIC_V2: &[u8; 4] = b"HCV\x02";
 const HCV_MAGIC_V3: &[u8; 4] = b"HCV\x03";
 const HCV_MAGIC_V4: &[u8; 4] = b"HCV\x04";
 const HCV_MAGIC_V5: &[u8; 4] = b"HCV\x05";
+/// Optional editor-state section appended after the preview. Older readers stop at the
+/// preview, so this is an additive trailing section rather than another container version.
+const EDITOR_MAGIC: &[u8; 4] = b"AED1";
+const EDITOR_MAX_BYTES: u32 = 1024 * 1024;
 
 #[derive(Error, Debug)]
 pub enum ProjectError {
@@ -288,7 +292,129 @@ pub(crate) fn write_project_version<W: Write>(
     writer.write_all(&thumb_len.to_le_bytes())?;
     writer.write_all(thumb_ref)?;
 
+    write_editor_state(&doc.editor, &mut writer)?;
     Ok(())
+}
+
+fn write_editor_state<W: Write>(editor: &EditorState, writer: &mut W) -> Result<(), ProjectError> {
+    let mut payload = Vec::new();
+    payload.push(1u8); // editor-state payload version
+    payload.extend_from_slice(&(editor.guides.len() as u32).to_le_bytes());
+    for guide in &editor.guides {
+        payload.push(u8::from(guide.vertical));
+        payload.extend_from_slice(&guide.position.to_le_bytes());
+    }
+    payload.extend_from_slice(&editor.grid_origin[0].to_le_bytes());
+    payload.extend_from_slice(&editor.grid_origin[1].to_le_bytes());
+    match &editor.straight_ruler {
+        Some(ruler) => {
+            payload.push(1u8);
+            payload.extend_from_slice(&ruler.origin[0].to_le_bytes());
+            payload.extend_from_slice(&ruler.origin[1].to_le_bytes());
+            payload.extend_from_slice(&ruler.angle_rad.to_le_bytes());
+            payload.extend_from_slice(&ruler.length.to_le_bytes());
+        }
+        None => payload.push(0u8),
+    }
+    writer.write_all(EDITOR_MAGIC)?;
+    writer.write_all(&(payload.len() as u32).to_le_bytes())?;
+    writer.write_all(&payload)?;
+    Ok(())
+}
+
+/// Skips the preview PNG and reads the optional trailing editor section. Older files have
+/// nothing after the preview, and unreadable/absent sections simply leave editor defaults.
+fn read_editor_state<R: Read>(reader: &mut R) -> Option<EditorState> {
+    let mut preview_len = [0u8; 4];
+    if reader.read_exact(&mut preview_len).is_err() {
+        return None;
+    }
+    let preview_len = u32::from_le_bytes(preview_len);
+    if preview_len > 256 * 1024 * 1024 {
+        return None;
+    }
+    if std::io::copy(
+        &mut reader.by_ref().take(preview_len as u64),
+        &mut std::io::sink(),
+    )
+    .ok()? != preview_len as u64
+    {
+        return None;
+    }
+
+    let mut magic = [0u8; 4];
+    if reader.read_exact(&mut magic).is_err() || &magic != EDITOR_MAGIC {
+        return None;
+    }
+    let mut length = [0u8; 4];
+    reader.read_exact(&mut length).ok()?;
+    let length = u32::from_le_bytes(length);
+    if length > EDITOR_MAX_BYTES {
+        return None;
+    }
+    let mut payload = vec![0u8; length as usize];
+    reader.read_exact(&mut payload).ok()?;
+    parse_editor_payload(&payload)
+}
+
+fn parse_editor_payload(payload: &[u8]) -> Option<EditorState> {
+    let mut cursor = Cursor::new(payload);
+    let mut byte = [0u8; 1];
+    cursor.read_exact(&mut byte).ok()?;
+    if byte[0] != 1 {
+        return None;
+    }
+    let mut count = [0u8; 4];
+    cursor.read_exact(&mut count).ok()?;
+    let count = u32::from_le_bytes(count);
+    if count > 4096 {
+        return None;
+    }
+    let mut editor = EditorState::default();
+    for _ in 0..count {
+        cursor.read_exact(&mut byte).ok()?;
+        let vertical = byte[0] != 0;
+        let mut position = [0u8; 4];
+        cursor.read_exact(&mut position).ok()?;
+        let position = f32::from_le_bytes(position);
+        if !position.is_finite() {
+            return None;
+        }
+        editor.guides.push(GuideLine {
+            vertical,
+            position,
+        });
+    }
+    let mut origin = [0u8; 8];
+    cursor.read_exact(&mut origin).ok()?;
+    editor.grid_origin = [
+        f32::from_le_bytes(origin[0..4].try_into().ok()?),
+        f32::from_le_bytes(origin[4..8].try_into().ok()?),
+    ];
+    if !editor.grid_origin.iter().all(|value| value.is_finite()) {
+        return None;
+    }
+    cursor.read_exact(&mut byte).ok()?;
+    if byte[0] != 0 {
+        let mut numbers = [0u8; 16];
+        cursor.read_exact(&mut numbers).ok()?;
+        let ruler = StraightRulerState {
+            origin: [
+                f32::from_le_bytes(numbers[0..4].try_into().ok()?),
+                f32::from_le_bytes(numbers[4..8].try_into().ok()?),
+            ],
+            angle_rad: f32::from_le_bytes(numbers[8..12].try_into().ok()?),
+            length: f32::from_le_bytes(numbers[12..16].try_into().ok()?),
+        };
+        if !ruler.origin.iter().all(|value| value.is_finite())
+            || !ruler.angle_rad.is_finite()
+            || !ruler.length.is_finite()
+        {
+            return None;
+        }
+        editor.straight_ruler = Some(ruler);
+    }
+    Some(editor)
 }
 
 /// Writes a project file atomically: the stream is written to a sibling
@@ -772,6 +898,8 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         layers.push(layer);
     }
 
+    let editor = read_editor_state(&mut reader).unwrap_or_default();
+
     Ok(Document {
         width,
         height,
@@ -784,6 +912,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
         // The tag is authoritative for new layers; per-layer tags above resolved to their own
         // formats, so a mixed file still loads exactly as it was saved.
         pixel_format: document_format,
+        editor,
     })
 }
 

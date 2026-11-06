@@ -4,7 +4,9 @@ use std::time::Instant;
 use aurelia_core::blend::BlendMode;
 use aurelia_core::brush::BrushSettings;
 use aurelia_core::color::{Color, DEFAULT_PALETTE};
-use aurelia_core::document::Document;
+use aurelia_core::document::{
+    Document, EditorState, GuideLine, StraightRulerState,
+};
 use aurelia_core::history::HistoryStack;
 use aurelia_core::layer::{Layer, LayerBuffer, PixelFormat};
 use aurelia_core::selection::{SelectionMask, StrokePosition};
@@ -192,7 +194,7 @@ pub enum WindowAction {
     Close,
 }
 
-/// A session-only measurement guide in canvas coordinates.
+/// A persisted measurement guide in canvas coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuideOrientation {
     Horizontal,
@@ -213,6 +215,14 @@ pub enum MoveMode {
 pub struct SnapMarker {
     pub vertical: bool,
     pub position: f32,
+}
+
+/// A movable, rotatable straight-edge measurement ruler in canvas coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StraightRuler {
+    pub origin: Vec2,
+    pub angle_rad: f32,
+    pub length: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -253,6 +263,7 @@ pub struct AppState {
     pub snap_to_guides: bool,
     pub snap_to_layers: bool,
     pub snap_markers: Vec<SnapMarker>,
+    pub straight_ruler: Option<StraightRuler>,
     pub show_rulers: bool,
     pub show_navigator: bool,
     pub flip_view_horizontal: bool,
@@ -330,6 +341,9 @@ pub struct AppState {
     pub last_autosave: Instant,
     /// Set when an autosave snapshot has been written and not yet cleared by a real save.
     pub autosave_pending: bool,
+    /// Guide/ruler/grid changes are persisted, so they must participate in dirty tracking
+    /// even though they do not create history entries.
+    pub editor_dirty: bool,
     // ── Discord Rich Presence ──
     /// Opt-in. Off by default; nothing is sent to Discord until enabled.
     pub discord_presence: bool,
@@ -503,6 +517,7 @@ impl AppState {
             snap_to_guides: true,
             snap_to_layers: true,
             snap_markers: Vec::new(),
+            straight_ruler: None,
             show_rulers: true,
             show_navigator: true,
             flip_view_horizontal: false,
@@ -568,6 +583,7 @@ impl AppState {
             autosave_interval_secs: 120,
             last_autosave: Instant::now(),
             autosave_pending: false,
+            editor_dirty: false,
             discord_presence: false,
             discord_presence_configured: false,
             discord_show_project_name: false,
@@ -945,7 +961,51 @@ impl AppState {
         let (w, h) = (doc.width, doc.height);
         let mut s = Self::new(w, h);
         s.document = doc;
+        s.sync_editor_from_document();
         s
+    }
+
+    /// Copies the UI-only guide/ruler layout into the document immediately before saving.
+    pub fn sync_editor_to_document(&mut self) {
+        self.document.editor = EditorState {
+            guides: self
+                .guides
+                .iter()
+                .map(|guide| GuideLine {
+                    vertical: guide.orientation == GuideOrientation::Vertical,
+                    position: guide.position,
+                })
+                .collect(),
+            grid_origin: [self.grid_origin.x, self.grid_origin.y],
+            straight_ruler: self.straight_ruler.map(|ruler| StraightRulerState {
+                origin: [ruler.origin.x, ruler.origin.y],
+                angle_rad: ruler.angle_rad,
+                length: ruler.length,
+            }),
+        };
+    }
+
+    /// Restores the persisted guide/ruler layout after a document load.
+    pub fn sync_editor_from_document(&mut self) {
+        let editor = self.document.editor.clone();
+        self.guides = editor
+            .guides
+            .iter()
+            .map(|guide| Guide {
+                orientation: if guide.vertical {
+                    GuideOrientation::Vertical
+                } else {
+                    GuideOrientation::Horizontal
+                },
+                position: guide.position,
+            })
+            .collect();
+        self.grid_origin = Vec2::new(editor.grid_origin[0], editor.grid_origin[1]);
+        self.straight_ruler = editor.straight_ruler.map(|ruler| StraightRuler {
+            origin: Vec2::new(ruler.origin[0], ruler.origin[1]),
+            angle_rad: ruler.angle_rad,
+            length: ruler.length,
+        });
     }
 
     pub fn reset_view(&mut self) {
@@ -1108,14 +1168,36 @@ impl AppState {
             GuideOrientation::Vertical => self.document.width as f32 * 0.5,
         };
         self.guides.push(Guide { orientation, position });
+        self.mark_editor_dirty();
     }
 
     pub fn clear_guides(&mut self) {
         self.guides.clear();
+        self.mark_editor_dirty();
+    }
+
+    pub fn add_straight_ruler(&mut self) {
+        let length = self.document.width.min(self.document.height) as f32 * 0.65;
+        let origin = Vec2::new(
+            (self.document.width as f32 - length) * 0.5,
+            self.document.height as f32 * 0.5,
+        );
+        self.straight_ruler = Some(StraightRuler {
+            origin,
+            angle_rad: 0.0,
+            length: length.max(50.0),
+        });
+        self.mark_editor_dirty();
+    }
+
+    pub fn remove_straight_ruler(&mut self) {
+        self.straight_ruler = None;
+        self.mark_editor_dirty();
     }
 
     pub fn reset_grid_origin(&mut self) {
         self.grid_origin = Vec2::ZERO;
+        self.mark_editor_dirty();
     }
 
     pub fn canvas_to_screen(&self, canvas_pos: Vec2, win_w: f32, win_h: f32) -> Vec2 {
@@ -1730,12 +1812,18 @@ impl AppState {
     /// Derived from the history generation counter, so it covers strokes,
     /// filters, layer operations and undo/redo without touching every call site.
     pub fn is_dirty(&self) -> bool {
-        self.history.generation() != self.saved_generation
+        self.history.generation() != self.saved_generation || self.editor_dirty
+    }
+
+    /// Marks guide/ruler/grid changes as unsaved without touching pixel history.
+    pub fn mark_editor_dirty(&mut self) {
+        self.editor_dirty = true;
     }
 
     /// Records the current history generation as "written to disk".
     pub fn mark_saved(&mut self) {
         self.saved_generation = self.history.generation();
+        self.editor_dirty = false;
         self.autosave_pending = false;
     }
 
@@ -1766,6 +1854,7 @@ impl AppState {
         // Snapshot the recovery path before the document gains its real name, so an
         // untitled document's snapshot is also cleaned up after "Save As".
         let previous_autosave = self.autosave_path();
+        self.sync_editor_to_document();
         aurelia_io::save_project_file(&self.document, path).map_err(|e| e.to_string())?;
         self.document_path = Some(path.to_path_buf());
         self.mark_saved();
@@ -1780,6 +1869,7 @@ impl AppState {
     /// Forces the dirty state (used when restoring a crash-recovery snapshot).
     pub fn mark_dirty(&mut self) {
         self.saved_generation = u64::MAX;
+        self.editor_dirty = true;
     }
 
     /// Saves to the already-known path without prompting. False when there is no path yet.
@@ -1824,6 +1914,7 @@ impl AppState {
                 return false;
             }
         }
+        self.sync_editor_to_document();
         if aurelia_io::save_project_file(&self.document, &path).is_ok() {
             self.autosave_pending = true;
             self.set_status(format!("Auto-saved recovery snapshot: {}", path.display()));
@@ -2047,6 +2138,23 @@ mod viewport_geometry {
 
         state.clear_guides();
         assert!(state.guides.is_empty());
+    }
+
+    #[test]
+    fn editor_layout_survives_document_sync() {
+        let mut state = AppState::new(64, 64);
+        state.add_guide(GuideOrientation::Vertical);
+        state.add_guide(GuideOrientation::Horizontal);
+        state.guides[0].position = 21.0;
+        state.grid_origin = glam::Vec2::new(8.0, 13.0);
+        state.add_straight_ruler();
+
+        state.sync_editor_to_document();
+        let restored = AppState::from_document(state.document.clone());
+
+        assert_eq!(restored.guides, state.guides);
+        assert_eq!(restored.grid_origin, state.grid_origin);
+        assert_eq!(restored.straight_ruler, state.straight_ruler);
     }
 
     /// Docks larger than the window must collapse to an empty rect, not invert it.

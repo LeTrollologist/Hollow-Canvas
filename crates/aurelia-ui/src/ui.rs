@@ -1359,6 +1359,42 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     .size(8.5)
                                     .color(Color32::from_rgb(172, 161, 130)),
                             );
+                            ui.separator();
+                            if state.straight_ruler.is_some() {
+                                if ui.button("Remove straight-edge ruler").clicked() {
+                                    state.remove_straight_ruler();
+                                }
+                                let mut changed = false;
+                                if let Some(ruler) = &mut state.straight_ruler {
+                                    let mut degrees = ruler.angle_rad.to_degrees();
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut degrees)
+                                                .speed(1.0)
+                                                .suffix("°")
+                                                .prefix("Angle "),
+                                        )
+                                        .changed()
+                                    {
+                                        ruler.angle_rad = degrees.to_radians();
+                                        changed = true;
+                                    }
+                                    changed |= ui
+                                        .add(
+                                            egui::DragValue::new(&mut ruler.length)
+                                                .speed(1.0)
+                                                .suffix(" px")
+                                                .prefix("Length ")
+                                                .range(50.0..=4000.0),
+                                        )
+                                        .changed();
+                                }
+                                if changed {
+                                    state.mark_editor_dirty();
+                                }
+                            } else if ui.button("Add straight-edge ruler").clicked() {
+                                state.add_straight_ruler();
+                            }
                         }
                         ToolType::Transform => {
                             if !state.transform_session.is_active {
@@ -1506,24 +1542,32 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     if state.show_grid {
                         ui.add(egui::Slider::new(&mut state.grid_size, 8..=128).text("Cell Size"));
                         ui.add(egui::Slider::new(&mut state.grid_opacity, 0.05..=0.8).text("Grid Alpha"));
+                        let mut origin_changed = false;
                         ui.horizontal(|ui| {
                             ui.label("Origin");
-                            ui.add(
-                                egui::DragValue::new(&mut state.grid_origin.x)
-                                    .speed(1.0)
-                                    .prefix("X ")
-                                    .max_decimals(0),
-                            );
-                            ui.add(
-                                egui::DragValue::new(&mut state.grid_origin.y)
-                                    .speed(1.0)
-                                    .prefix("Y ")
-                                    .max_decimals(0),
-                            );
+                            origin_changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut state.grid_origin.x)
+                                        .speed(1.0)
+                                        .prefix("X ")
+                                        .max_decimals(0),
+                                )
+                                .changed();
+                            origin_changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut state.grid_origin.y)
+                                        .speed(1.0)
+                                        .prefix("Y ")
+                                        .max_decimals(0),
+                                )
+                                .changed();
                             if ui.small_button("Reset").clicked() {
                                 state.reset_grid_origin();
                             }
                         });
+                        if origin_changed {
+                            state.mark_editor_dirty();
+                        }
                     }
 
                     ui.horizontal(|ui| {
@@ -4701,7 +4745,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
 /// Session measurement guides and the draggable grid-origin handle.
 fn paint_guides(ctx: &egui::Context, state: &AppState) {
-    if state.guides.is_empty() && !state.show_grid && state.snap_markers.is_empty() {
+    if state.guides.is_empty()
+        && !state.show_grid
+        && state.snap_markers.is_empty()
+        && state.straight_ruler.is_none()
+    {
         return;
     }
     let ppp = ctx.pixels_per_point().max(0.01);
@@ -4767,6 +4815,68 @@ fn paint_guides(ctx: &egui::Context, state: &AppState) {
                     text_color,
                 );
             }
+        }
+    }
+
+    if let Some(ruler) = state.straight_ruler {
+        let origin_v = state.canvas_to_ui(ruler.origin, win_w, win_h);
+        let origin = egui::pos2(origin_v.x, origin_v.y);
+        let end_canvas = ruler.origin
+            + glam::Vec2::new(ruler.angle_rad.cos(), ruler.angle_rad.sin()) * ruler.length;
+        let end_v = state.canvas_to_ui(end_canvas, win_w, win_h);
+        let end = egui::pos2(end_v.x, end_v.y);
+        let direction = end - origin;
+        let length = direction.length();
+        if length > 1.0 {
+            let dir = direction / length;
+            let normal = egui::vec2(-dir.y, dir.x);
+            let half = 9.0;
+            let body_fill = Color32::from_rgba_unmultiplied(32, 41, 54, 225);
+            let body_stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(236, 208, 128, 220));
+            let corners = vec![
+                origin + normal * half,
+                end + normal * half,
+                end - normal * half,
+                origin - normal * half,
+            ];
+            let ruler_painter = ctx
+                .layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::new("straight_edge_ruler"),
+                ))
+                .with_clip_rect(viewport);
+            ruler_painter.add(egui::Shape::convex_polygon(
+                corners,
+                body_fill,
+                body_stroke,
+            ));
+            let tick_color = Color32::from_rgb(236, 208, 128);
+            let mut tick = 0.0;
+            while tick <= ruler.length {
+                let canvas = ruler.origin
+                    + glam::Vec2::new(ruler.angle_rad.cos(), ruler.angle_rad.sin()) * tick;
+                let p_v = state.canvas_to_ui(canvas, win_w, win_h);
+                let p = egui::pos2(p_v.x, p_v.y);
+                let major = (tick as i32) % 100 == 0;
+                let extent = if major { half } else { half * 0.45 };
+                ruler_painter.line_segment(
+                    [p + normal * extent, p - normal * extent],
+                    Stroke::new(1.0, tick_color),
+                );
+                if major {
+                    ruler_painter.text(
+                        p + normal * (half + 8.0),
+                        egui::Align2::CENTER_CENTER,
+                        format!("{tick:.0}"),
+                        egui::FontId::proportional(8.0),
+                        tick_color,
+                    );
+                }
+                tick += 50.0;
+            }
+            let handle_color = Color32::from_rgb(246, 196, 90);
+            ruler_painter.circle_stroke(end, 5.0, Stroke::new(1.5, handle_color));
+            ruler_painter.circle_stroke(origin, 3.0, Stroke::new(1.0, handle_color));
         }
     }
 

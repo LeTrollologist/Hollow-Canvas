@@ -30,6 +30,44 @@ mod tests {
     }
 
     #[test]
+    fn editor_guides_ruler_and_grid_origin_roundtrip() {
+        use aurelia_core::document::{GuideLine, StraightRulerState};
+
+        let mut doc = Document::new(32, 24);
+        doc.editor.guides = vec![
+            GuideLine { vertical: true, position: 12.5 },
+            GuideLine { vertical: false, position: 7.0 },
+        ];
+        doc.editor.grid_origin = [3.25, 9.5];
+        doc.editor.straight_ruler = Some(StraightRulerState {
+            origin: [4.0, 6.0],
+            angle_rad: 0.75,
+            length: 180.0,
+        });
+
+        let mut bytes = Vec::new();
+        save_project_to_writer(&doc, &mut bytes).expect("save");
+        let loaded = load_project_from_reader(&bytes[..]).expect("load");
+        assert_eq!(loaded.editor, doc.editor);
+    }
+
+    #[test]
+    fn old_projects_without_an_editor_section_load_with_defaults() {
+        let doc = Document::new(16, 16);
+        let mut bytes = Vec::new();
+        save_project_to_writer(&doc, &mut bytes).expect("save");
+        let marker = bytes
+            .windows(4)
+            .position(|window| window == b"AED1")
+            .expect("editor marker");
+        bytes.truncate(marker); // exactly the old file layout: preview is the final section
+
+        let loaded = load_project_from_reader(&bytes[..]).expect("load old layout");
+        assert_eq!(loaded.width, 16);
+        assert_eq!(loaded.editor, aurelia_core::document::EditorState::default());
+    }
+
+    #[test]
     fn test_binary_hcv_folder_group_roundtrip() {
         let mut doc = Document::new(32, 32);
         let group_id = doc.add_group(Some("Art Folder".to_string()));

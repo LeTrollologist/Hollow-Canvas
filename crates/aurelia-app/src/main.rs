@@ -343,6 +343,8 @@ static mut GLOBAL_APP_PTR: *mut AureliaDesktopApp = std::ptr::null_mut();
 enum GuideDrag {
     Existing(usize),
     GridOrigin,
+    RulerBody,
+    RulerRotate,
 }
 
 struct AureliaDesktopApp {
@@ -363,6 +365,7 @@ struct AureliaDesktopApp {
     moving_layer: Option<u64>,
     moving_bounds: Option<(u32, u32, u32, u32)>,
     move_start_canvas: Option<Vec2>,
+    ruler_drag_offset: Vec2,
     snap_x: Vec<f32>,
     snap_y: Vec<f32>,
     is_space_down: bool,
@@ -898,6 +901,31 @@ impl AureliaDesktopApp {
             return false;
         }
 
+        // Straight-edge ruler: body drag and end-handle rotation.
+        if let Some(ruler) = self.state.straight_ruler {
+            let canvas = self.state.screen_to_canvas(screen_pos, win_w, win_h);
+            let dir = Vec2::new(ruler.angle_rad.cos(), ruler.angle_rad.sin());
+            let normal = Vec2::new(-dir.y, dir.x);
+            let delta = canvas - ruler.origin;
+            let along = delta.dot(dir);
+            let perpendicular = delta.dot(normal);
+            let zoom = self.state.zoom.max(0.01);
+            let end = ruler.origin + dir * ruler.length;
+            if (canvas - end).length() <= 12.0 / zoom {
+                self.guide_drag = Some(GuideDrag::RulerRotate);
+                self.state.mark_editor_dirty();
+                self.is_drawing_on_canvas = false;
+                return true;
+            }
+            if along >= 0.0 && along <= ruler.length && perpendicular.abs() <= 18.0 / zoom {
+                self.guide_drag = Some(GuideDrag::RulerBody);
+                self.ruler_drag_offset = canvas - ruler.origin;
+                self.state.mark_editor_dirty();
+                self.is_drawing_on_canvas = false;
+                return true;
+            }
+        }
+
         // Existing guide takes priority over painting, with a forgiving 5 px hit band.
         if !self.state.guides_locked {
             for (index, guide) in self.state.guides.iter().enumerate() {
@@ -915,6 +943,7 @@ impl AureliaDesktopApp {
                 };
                 if distance <= 5.0 {
                     self.guide_drag = Some(GuideDrag::Existing(index));
+                    self.state.mark_editor_dirty();
                     self.is_drawing_on_canvas = false;
                     self.rebuild_snap_targets(None, Some(index));
                     return true;
@@ -928,6 +957,7 @@ impl AureliaDesktopApp {
                 .canvas_to_screen(self.state.grid_origin, win_w, win_h);
             if (origin - screen_pos).length() <= 8.0 {
                 self.guide_drag = Some(GuideDrag::GridOrigin);
+                self.state.mark_editor_dirty();
                 self.is_drawing_on_canvas = false;
                 return true;
             }
@@ -1290,6 +1320,22 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             canvas_pos.x.clamp(0.0, doc_w),
                             canvas_pos.y.clamp(0.0, doc_h),
                         );
+                    }
+                    GuideDrag::RulerBody => {
+                        if let Some(ruler) = &mut app.state.straight_ruler {
+                            ruler.origin = canvas_pos - app.ruler_drag_offset;
+                        }
+                    }
+                    GuideDrag::RulerRotate => {
+                        if let Some(ruler) = &mut app.state.straight_ruler {
+                            let delta = canvas_pos - ruler.origin;
+                            let mut angle = delta.y.atan2(delta.x);
+                            if unsafe { (GetKeyState(0x10) as i32 & 0x8000) != 0 } {
+                                let step = 15.0_f32.to_radians();
+                                angle = (angle / step).round() * step;
+                            }
+                            ruler.angle_rad = angle;
+                        }
                     }
                 }
                 InvalidateRect(hwnd, std::ptr::null(), 0);
@@ -2899,6 +2945,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             }
                         }
                         app.state.document = doc;
+                    app.state.sync_editor_from_document();
                         app.state.mark_canvas_dirty();
                         app.state.history.clear();
                         app.state.selection = None;
@@ -2940,6 +2987,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             match load_project_file(&path) {
                                 Ok(doc) => {
                                     app.state.document = doc;
+                    app.state.sync_editor_from_document();
                                     app.state.mark_canvas_dirty();
                                     app.state.history.clear();
                                     app.state.document_path = Some(path.clone());
@@ -3004,6 +3052,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     match load_project_file(&path) {
                         Ok(doc) => {
                             app.state.document = doc;
+                    app.state.sync_editor_from_document();
                             app.state.mark_canvas_dirty();
                             app.state.history.clear();
                             app.state.document_path = Some(path.clone());
@@ -3025,6 +3074,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         layer.set_pixels(rgba.into_raw());
                     }
                     app.state.document = doc;
+                    app.state.sync_editor_from_document();
                     app.state.mark_canvas_dirty();
                     app.state.history.clear();
                     app.state.document_path = None;
@@ -3329,6 +3379,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         moving_layer: None,
         moving_bounds: None,
         move_start_canvas: None,
+        ruler_drag_offset: Vec2::ZERO,
         snap_x: Vec::new(),
         snap_y: Vec::new(),
         is_space_down: false,

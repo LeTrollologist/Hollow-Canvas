@@ -14,6 +14,29 @@ pub enum CompositeError {
     Unrepresentable,
 }
 
+/// A persisted measurement guide. Canvas coordinates, editor-only.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GuideLine {
+    pub vertical: bool,
+    pub position: f32,
+}
+
+/// A persisted straight-edge ruler.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct StraightRulerState {
+    pub origin: [f32; 2],
+    pub angle_rad: f32,
+    pub length: f32,
+}
+
+/// Editor-only layout that belongs with the document but not with its pixels.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct EditorState {
+    pub guides: Vec<GuideLine>,
+    pub grid_origin: [f32; 2],
+    pub straight_ruler: Option<StraightRulerState>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     pub width: u32,
@@ -33,6 +56,8 @@ pub struct Document {
     /// so that deleting the last 16-bit layer does not silently turn the document 8-bit.
     #[serde(default)]
     pub pixel_format: PixelFormat,
+    #[serde(default)]
+    pub editor: EditorState,
 }
 
 impl Document {
@@ -55,6 +80,7 @@ impl Document {
             theme: ThemeMode::Dawn,
             next_layer_id: 2,
             pixel_format: format,
+            editor: EditorState::default(),
         }
     }
 
