@@ -538,15 +538,19 @@ def _signing_operation(cfg: ReleaseConfig) -> Operation:
 
 def _release_draft(ctx: Context) -> dict[str, Any]:
     client = _github(ctx)
+    notes = ctx.repo / "release-notes" / f"{ctx.tag}.md"
+    body = notes.read_text(encoding="utf-8") if notes.is_file() else ""
     existing = client.get_release(ctx.tag)
     if existing:
+        if body and existing.get("body") != body:
+            client.update_release(existing["id"], body=body)
         return {
             "release_id": existing["id"],
             "draft": bool(existing.get("draft")),
             "created": False,
         }
     release = client.create_release(
-        ctx.tag, name=ctx.tag, body="", draft=True
+        ctx.tag, name=ctx.tag, body=body, draft=True
     )
     return {
         "release_id": release["id"],
