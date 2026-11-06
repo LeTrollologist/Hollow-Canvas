@@ -746,7 +746,9 @@ def _scan(ctx: Context) -> dict[str, Any]:
     if cfg.scan.mode == "off":
         return {"scans": [], "skipped": "scanning disabled"}
 
-    assets = _release_assets(ctx)
+    # Detached signatures and the checksum manifest are not PE/archive payloads; VirusTotal
+    # cannot produce a useful analysis for them and may leave them queued indefinitely.
+    assets = _signable_assets(ctx)
     if not assets:
         raise PreflightError(f"scan: no files matched {cfg.publish.assets!r}")
 

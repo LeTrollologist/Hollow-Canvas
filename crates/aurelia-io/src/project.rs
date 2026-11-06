@@ -35,6 +35,10 @@ const HCV_MAGIC_V5: &[u8; 4] = b"HCV\x05";
 /// preview, so this is an additive trailing section rather than another container version.
 const EDITOR_MAGIC: &[u8; 4] = b"AED1";
 const EDITOR_MAX_BYTES: u32 = 1024 * 1024;
+/// Text content is an in-memory string, not pixel data. Bound the file's claim before
+/// allocating; 8 MiB is far beyond any practical text layer and rejects a malicious 4 GiB
+/// length before the allocation happens.
+const MAX_TEXT_CONTENT_BYTES: u32 = 8 * 1024 * 1024;
 
 #[derive(Error, Debug)]
 pub enum ProjectError {
@@ -48,6 +52,29 @@ pub enum ProjectError {
     CorruptData,
     #[error("This project version cannot represent the document's storage format")]
     UnsupportedFormat,
+    #[error("text layer content is {len} bytes; maximum is {max}")]
+    TextTooLarge { len: usize, max: usize },
+    #[error("{field} is {len} bytes; maximum is {max}")]
+    TextFieldTooLong {
+        field: &'static str,
+        len: usize,
+        max: usize,
+    },
+}
+
+fn read_text_content<R: Read>(reader: &mut R) -> Result<String, ProjectError> {
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)?;
+    let len = u32::from_le_bytes(buf);
+    if len > MAX_TEXT_CONTENT_BYTES {
+        return Err(ProjectError::TextTooLarge {
+            len: len as usize,
+            max: MAX_TEXT_CONTENT_BYTES as usize,
+        });
+    }
+    let mut bytes = vec![0u8; len as usize];
+    reader.read_exact(&mut bytes)?;
+    Ok(String::from_utf8(bytes).unwrap_or_default())
 }
 
 pub fn save_project_to_writer<W: Write>(doc: &Document, writer: W) -> Result<(), ProjectError> {
@@ -124,10 +151,23 @@ pub(crate) fn write_project_version<W: Write>(
         // If text layer, serialize text configuration
         if let Some(txt) = &layer.text {
             let content_bytes = txt.content.as_bytes();
+            if content_bytes.len() > MAX_TEXT_CONTENT_BYTES as usize {
+                return Err(ProjectError::TextTooLarge {
+                    len: content_bytes.len(),
+                    max: MAX_TEXT_CONTENT_BYTES as usize,
+                });
+            }
             writer.write_all(&(content_bytes.len() as u32).to_le_bytes())?;
             writer.write_all(content_bytes)?;
 
             let font_bytes = txt.font_family.as_bytes();
+            if font_bytes.len() > u16::MAX as usize {
+                return Err(ProjectError::TextFieldTooLong {
+                    field: "text font family",
+                    len: font_bytes.len(),
+                    max: u16::MAX as usize,
+                });
+            }
             writer.write_all(&(font_bytes.len() as u16).to_le_bytes())?;
             writer.write_all(font_bytes)?;
 
@@ -582,11 +622,7 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
                     aurelia_core::layer::LayerKind::Adjustment
                 }
                 3 => {
-                    reader.read_exact(&mut buf4)?;
-                    let content_len = u32::from_le_bytes(buf4) as usize;
-                    let mut content_vec = vec![0u8; content_len];
-                    reader.read_exact(&mut content_vec)?;
-                    let content = String::from_utf8(content_vec).unwrap_or_default();
+                    let content = read_text_content(&mut reader)?;
 
                     reader.read_exact(&mut buf2)?;
                     let font_len = u16::from_le_bytes(buf2) as usize;
@@ -919,4 +955,50 @@ pub fn load_project_from_reader<R: Read>(mut reader: R) -> Result<Document, Proj
 pub fn load_project_file(path: impl AsRef<Path>) -> Result<Document, ProjectError> {
     let file = File::open(path)?;
     load_project_from_reader(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurelia_core::brush::TextAlign;
+    use aurelia_core::layer::{LayerKind, TextLayerConfig};
+
+    #[test]
+    fn oversized_text_claim_is_rejected_before_reading_the_payload() {
+        let mut cursor = Cursor::new((MAX_TEXT_CONTENT_BYTES + 1).to_le_bytes().to_vec());
+        assert!(matches!(
+            read_text_content(&mut cursor),
+            Err(ProjectError::TextTooLarge { .. })
+        ));
+        assert_eq!(
+            cursor.position(),
+            4,
+            "only the length should be consumed before the bound check"
+        );
+    }
+
+    #[test]
+    fn saving_an_oversized_text_layer_is_rejected() {
+        let mut doc = Document::new(1, 1);
+        let layer = &mut doc.layers[0];
+        layer.kind = LayerKind::Text;
+        layer.text = Some(TextLayerConfig {
+            content: "x".repeat(MAX_TEXT_CONTENT_BYTES as usize + 1),
+            font_family: "sans".into(),
+            font_size: 12.0,
+            color: [0, 0, 0, 255],
+            align: TextAlign::Left,
+            line_spacing: 1.0,
+            letter_spacing: 0.0,
+            box_w: 1.0,
+            box_h: 1.0,
+            pos_x: 0.0,
+            pos_y: 0.0,
+        });
+        let mut out = Vec::new();
+        assert!(matches!(
+            save_project_to_writer(&doc, &mut out),
+            Err(ProjectError::TextTooLarge { .. })
+        ));
+    }
 }

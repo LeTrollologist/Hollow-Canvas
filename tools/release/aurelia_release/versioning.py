@@ -23,6 +23,7 @@ DECLARATION_RULES: list[tuple[re.Pattern[str], str]] = [
         r"\g<1>{v}\g<2>",
     ),
     (re.compile(r"(Release-v)\d+\.\d+\.\d+"), r"\g<1>{v}"),
+    (re.compile(r"(releases/tag/v)\d+\.\d+\.\d+"), r"\g<1>{v}"),
     (re.compile(r"(Aurelia-v)\d+\.\d+\.\d+(-win64)"), r"\g<1>{v}\g<2>"),
     (re.compile(r"(Aurelia-Setup-)\d+\.\d+\.\d+"), r"\g<1>{v}"),
     (re.compile(r"(TAG \?= v)\d+\.\d+\.\d+"), r"\g<1>{v}"),
@@ -37,6 +38,7 @@ DECLARATION_PATTERNS: list[re.Pattern[str]] = [
         r'path\s*=\s*"[^"]*"\s*,\s*version\s*=\s*"(\d+\.\d+\.\d+)"'
     ),
     re.compile(r"Release-v(\d+\.\d+\.\d+)"),
+    re.compile(r"releases/tag/v(\d+\.\d+\.\d+)"),
     re.compile(r"Aurelia-v(\d+\.\d+\.\d+)-win64"),
     re.compile(r"Aurelia-Setup-(\d+\.\d+\.\d+)"),
     re.compile(r"TAG \?= v(\d+\.\d+\.\d+)"),
