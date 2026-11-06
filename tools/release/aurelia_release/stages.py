@@ -29,7 +29,12 @@ from .signing import (
     write_checksums,
 )
 from .util import expand_globs, find_iscc, run_command, sha256_file
-from .versioning import bump_files, check_files, declared_versions
+from .versioning import (
+    _cargo_lock_versions,
+    bump_files,
+    check_files,
+    declared_versions,
+)
 
 VERSION_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 
@@ -94,13 +99,19 @@ def _current_versions_problem(ctx: Context) -> list[str]:
 
     problems: list[str] = []
     per_file: dict[str, set[str]] = {}
+    packages = _workspace_package_names(ctx)
     for rel in _version_files(ctx):
         path = ctx.repo / rel
         if not path.is_file():
             problems.append(f"{rel}: missing")
             continue
         with open(path, "r", encoding="utf-8", newline="") as handle:
-            found = declared_versions(handle.read())
+            text = handle.read()
+        found = (
+            _cargo_lock_versions(text, packages)
+            if rel == "Cargo.lock"
+            else declared_versions(text)
+        )
         if not found:
             # The workspace root manifest has no package version; a file with no
             # declaration is simply not part of the consistency check.
