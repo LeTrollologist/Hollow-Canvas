@@ -3,7 +3,7 @@
 ## Supported versions
 
 Security fixes are provided for the latest release only. The current release is
-[v3.1.0](https://github.com/LeTrollologist/Aurelia/releases/tag/v3.1.0).
+[v3.4.1](https://github.com/LeTrollologist/Aurelia/releases/tag/v3.4.1).
 
 ## Reporting a vulnerability
 
@@ -23,11 +23,12 @@ You should receive an acknowledgement within 48 hours.
 - The public key is committed at `keys/aurelia-publisher-2026.pub` and attached to releases.
 - The private key is local, gitignored, and never committed. Rotation and loss procedures are in
   [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md).
-- The installer is **not Authenticode-signed**, so SmartScreen reputation is independent of the
-  artifact signature.
+- The installer is **not Authenticode-signed**. This is a permanent distribution constraint:
+  no public certificate path is available, and a self-signed certificate would not establish
+  SmartScreen trust. SmartScreen reputation is independent of the artifact signature.
 
 ```powershell
-certutil -hashfile Aurelia-Setup-3.1.0.exe SHA256
+certutil -hashfile Aurelia-Setup-3.4.1.exe SHA256
 Get-Content SHA256SUMS.txt
 ```
 
