@@ -61,11 +61,36 @@ def _version_files(ctx: Context) -> list[str]:
     return files
 
 
+def _workspace_package_names(ctx: Context) -> set[str]:
+    """Cargo package names that belong to this workspace.
+
+    Cargo.lock also contains every dependency's version; the release bump must only touch
+    the project's own package blocks.
+    """
+    names: set[str] = set()
+    for rel in ctx.cfg.version_files:
+        if not rel.endswith("Cargo.toml"):
+            continue
+        path = ctx.repo / rel
+        if not path.is_file():
+            continue
+        with open(path, "r", encoding="utf-8") as handle:
+            match = re.search(r'(?m)^name\s*=\s*"([^"]+)"', handle.read())
+        if match:
+            names.add(match.group(1))
+    return names
+
+
 def _current_versions_problem(ctx: Context) -> list[str]:
     states = ctx.journal.state()
     bump = states.get("version.bump")
     if bump and bump.status == "ok":
-        return check_files(ctx.repo, _version_files(ctx), ctx.version)
+        return check_files(
+            ctx.repo,
+            _version_files(ctx),
+            ctx.version,
+            _workspace_package_names(ctx),
+        )
 
     problems: list[str] = []
     per_file: dict[str, set[str]] = {}
@@ -159,13 +184,20 @@ def _preflight(ctx: Context) -> dict[str, Any]:
 
 
 def _version_bump(ctx: Context) -> dict[str, Any]:
-    changed = bump_files(ctx.repo, _version_files(ctx), ctx.version)
+    changed = bump_files(
+        ctx.repo,
+        _version_files(ctx),
+        ctx.version,
+        _workspace_package_names(ctx),
+    )
     return {"paths": changed}
 
 
 def _version_bump_verify(ctx: Context, outputs: dict[str, Any]) -> dict[str, Any]:
     files = _version_files(ctx)
-    problems = check_files(ctx.repo, files, ctx.version)
+    problems = check_files(
+        ctx.repo, files, ctx.version, _workspace_package_names(ctx)
+    )
     if problems:
         raise VerificationError("; ".join(problems))
     return {"files": len(files)}
@@ -207,7 +239,12 @@ def _version_commit_verify(ctx: Context, outputs: dict[str, Any]) -> dict[str, A
     subject = ctx.git.commit_subject("HEAD")
     if subject != outputs.get("meta", {}).get("message", f"chore(release): {ctx.tag}"):
         raise VerificationError(f"HEAD is {subject!r}, not the release commit")
-    problems = check_files(ctx.repo, _version_files(ctx), ctx.version)
+    problems = check_files(
+        ctx.repo,
+        _version_files(ctx),
+        ctx.version,
+        _workspace_package_names(ctx),
+    )
     if problems:
         raise VerificationError("; ".join(problems))
     return {"head": ctx.git.head()}

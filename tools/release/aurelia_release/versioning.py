@@ -53,6 +53,39 @@ def declared_versions(text: str) -> set[str]:
     return versions
 
 
+def _cargo_lock_versions(text: str, package_names: set[str]) -> set[str]:
+    """Versions of workspace packages only, never dependency versions."""
+    versions: set[str] = set()
+    for block in text.split("[[package]]")[1:]:
+        name = re.search(r'(?m)^name = "([^"]+)"', block)
+        version = re.search(r'(?m)^version = "(\d+\.\d+\.\d+)"', block)
+        if name and version and name.group(1) in package_names:
+            versions.add(version.group(1))
+    return versions
+
+
+def _rewrite_cargo_lock(text: str, version: str, package_names: set[str]) -> tuple[str, int]:
+    """Rewrite only workspace package blocks in Cargo.lock.
+
+    A blanket ``version =`` rewrite would change every dependency in the lockfile.
+    """
+    parts = text.split("[[package]]")
+    changed = 0
+    out = [parts[0]]
+    for block in parts[1:]:
+        name = re.search(r'(?m)^name = "([^"]+)"', block)
+        if name and name.group(1) in package_names:
+            block, count = re.subn(
+                r'(?m)^version = "\d+\.\d+\.\d+"',
+                f'version = "{version}"',
+                block,
+                count=1,
+            )
+            changed += count
+        out.append(block)
+    return "[[package]]".join(out), changed
+
+
 def normalize_text(text: str, version: str) -> tuple[str, int]:
     """Return the text with all declarations at `version`, plus replacements made."""
     changed = 0
@@ -75,7 +108,12 @@ def _write(path: Path, text: str) -> None:
         handle.write(text)
 
 
-def check_files(repo: Path, files: Iterable[str], version: str) -> list[str]:
+def check_files(
+    repo: Path,
+    files: Iterable[str],
+    version: str,
+    cargo_lock_packages: set[str] | None = None,
+) -> list[str]:
     """Return human-readable inconsistencies; empty means every file agrees."""
     problems: list[str] = []
     for rel in files:
@@ -85,7 +123,10 @@ def check_files(repo: Path, files: Iterable[str], version: str) -> list[str]:
         except PreflightError as exc:
             problems.append(str(exc))
             continue
-        found = declared_versions(text)
+        if rel == "Cargo.lock" and cargo_lock_packages is not None:
+            found = _cargo_lock_versions(text, cargo_lock_packages)
+        else:
+            found = declared_versions(text)
         if not found:
             # Some configured manifests (for example the workspace root) legitimately
             # carry no package version; they are normalised when they do have one.
@@ -95,13 +136,23 @@ def check_files(repo: Path, files: Iterable[str], version: str) -> list[str]:
     return problems
 
 
-def bump_files(repo: Path, files: Iterable[str], version: str) -> list[str]:
+def bump_files(
+    repo: Path,
+    files: Iterable[str],
+    version: str,
+    cargo_lock_packages: set[str] | None = None,
+) -> list[str]:
     """Normalise every declaration to `version`; return the paths written."""
     changed: list[str] = []
     for rel in files:
         path = repo / rel
         text = _read(path)
-        updated, replacements = normalize_text(text, version)
+        if rel == "Cargo.lock" and cargo_lock_packages is not None:
+            updated, replacements = _rewrite_cargo_lock(
+                text, version, cargo_lock_packages
+            )
+        else:
+            updated, replacements = normalize_text(text, version)
         if replacements and updated != text:
             _write(path, updated)
             changed.append(Path(rel).as_posix())
