@@ -316,6 +316,83 @@ impl Default for BrushSettings {
 }
 
 impl BrushSettings {
+    /// Restores the shared brush shape/dynamics (#42), leaving the active tool, the tool's
+    /// own parameters and both colours alone.
+    ///
+    /// "Shared" means every painting tool reads these: tip size, opacity, hardness, spacing,
+    /// smoothing, velocity dynamics, calligraphy and wet-edge shaping, and stabilisation.
+    /// Colours are excluded because they are a global paint choice, not a brush setting:
+    /// resetting a brush must not change what the user is painting with.
+    pub fn reset_brush(&mut self) {
+        let defaults = Self::default();
+        self.size = defaults.size;
+        self.opacity = defaults.opacity;
+        self.smoothing = defaults.smoothing;
+        self.hardness = defaults.hardness;
+        self.spacing = defaults.spacing;
+        self.velocity_dynamics = defaults.velocity_dynamics;
+        self.velocity_taper_strength = defaults.velocity_taper_strength;
+        self.velocity_min_size = defaults.velocity_min_size;
+        self.calligraphy_angle = defaults.calligraphy_angle;
+        self.calligraphy_weight = defaults.calligraphy_weight;
+        self.tilt_size_gain = defaults.tilt_size_gain;
+        self.wet_edge_strength = defaults.wet_edge_strength;
+        self.wet_edge_fringe_width = defaults.wet_edge_fringe_width;
+        self.stabilization_level = defaults.stabilization_level;
+    }
+
+    /// Restores the active tool's settings to the values it is created with (#42).
+    ///
+    /// Only the parameters the tool actually exposes are touched, so resetting the eraser
+    /// cannot silently change the gradient or the shape outline another tool uses. Returns
+    /// `false` for tools with no adjustable parameters, so the UI can say so instead of
+    /// pretending something happened.
+    pub fn reset_tool(&mut self) -> bool {
+        let defaults = Self::default();
+        match self.tool {
+            ToolType::Brush | ToolType::Pencil => {
+                self.reset_brush();
+            }
+            ToolType::Eraser => {
+                self.reset_brush();
+                self.eraser_mode = defaults.eraser_mode;
+                self.color_erase_tolerance = defaults.color_erase_tolerance;
+                self.eraser_to_background = defaults.eraser_to_background;
+            }
+            ToolType::Watercolor => {
+                self.reset_brush();
+                self.watercolor_wetness = defaults.watercolor_wetness;
+                self.wet_edge_strength = defaults.wet_edge_strength;
+                self.wet_edge_fringe_width = defaults.wet_edge_fringe_width;
+            }
+            ToolType::Chalk => {
+                self.reset_brush();
+                self.chalk_grain = defaults.chalk_grain;
+            }
+            ToolType::Spray => {
+                self.reset_brush();
+                self.spray_density = defaults.spray_density;
+            }
+            ToolType::Smudge => {
+                self.reset_brush();
+                self.smudge_strength = defaults.smudge_strength;
+            }
+            ToolType::Line | ToolType::Rect | ToolType::Ellipse | ToolType::Polygon => {
+                self.reset_brush();
+                self.shape_fill_mode = defaults.shape_fill_mode;
+                self.corner_radius = defaults.corner_radius;
+            }
+            ToolType::Gradient => {
+                self.gradient_type = defaults.gradient_type;
+                self.gradient_dither = defaults.gradient_dither;
+            }
+            // Wand/fill/selection/move tools keep their settings elsewhere; text keeps its
+            // TextSettings. Neither has a brush parameter to reset.
+            _ => return false,
+        }
+        true
+    }
+
     pub fn effective_size(&self, pressure: f32) -> f32 {
         match self.tool {
             ToolType::Pencil => (self.size * 0.5 * (0.3 + pressure * 0.9)).max(1.0),
@@ -593,4 +670,90 @@ pub fn tilt_size_scale(tilt_x_deg: f32, tilt_y_deg: f32, gain: f32) -> f32 {
     let magnitude = (tilt_x_deg * tilt_x_deg + tilt_y_deg * tilt_y_deg).sqrt();
     let normalised = (magnitude / 90.0).clamp(0.0, 1.0);
     1.0 + gain * normalised
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::{BrushSettings, EraserMode, GradientType, ToolType};
+
+    /// The brush reset exists so a user can get a known tip back. It must restore every shared
+    /// shape/dynamics parameter and nothing else: colours stay, the tool stays, and the
+    /// tool's own parameters stay.
+    #[test]
+    fn reset_brush_restores_only_shared_shape_and_dynamics() {
+        let mut brush = BrushSettings {
+            tool: ToolType::Gradient,
+            size: 240.0,
+            opacity: 0.12,
+            hardness: 0.02,
+            spacing: 3.0,
+            smoothing: 0.0,
+            velocity_dynamics: false,
+            velocity_taper_strength: 0.0,
+            velocity_min_size: 1.0,
+            calligraphy_angle: 170.0,
+            calligraphy_weight: 1.0,
+            tilt_size_gain: 1.0,
+            wet_edge_strength: 1.0,
+            stabilization_level: 7,
+            gradient_type: GradientType::Radial,
+            gradient_dither: false,
+            ..BrushSettings::default()
+        };
+        let primary = brush.primary_color;
+        let secondary = brush.secondary_color;
+
+        brush.reset_brush();
+
+        let default = BrushSettings::default();
+        assert_eq!(brush.size, default.size);
+        assert_eq!(brush.opacity, default.opacity);
+        assert_eq!(brush.hardness, default.hardness);
+        assert_eq!(brush.spacing, default.spacing);
+        assert_eq!(brush.smoothing, default.smoothing);
+        assert_eq!(brush.velocity_dynamics, default.velocity_dynamics);
+        assert_eq!(brush.calligraphy_angle, default.calligraphy_angle);
+        assert_eq!(brush.stabilization_level, default.stabilization_level);
+        assert_eq!(brush.wet_edge_strength, default.wet_edge_strength);
+
+        assert_eq!(brush.tool, ToolType::Gradient, "the active tool must not change");
+        assert_eq!(brush.primary_color, primary, "reset must not change the paint colour");
+        assert_eq!(brush.secondary_color, secondary);
+        assert_eq!(brush.gradient_type, GradientType::Radial, "tool settings are not brush settings");
+        assert!(!brush.gradient_dither);
+    }
+
+    /// Resetting a tool must be scoped: the eraser's reset cannot reach the gradient or the
+    /// watercolour controls, and a tool with no parameters reports that honestly.
+    #[test]
+    fn reset_tool_is_scoped_to_the_active_tool() {
+        let mut brush = BrushSettings {
+            tool: ToolType::Eraser,
+            eraser_mode: EraserMode::ColorErase,
+            color_erase_tolerance: 120,
+            eraser_to_background: true,
+            gradient_type: GradientType::Radial,
+            spray_density: 1.9,
+            size: 300.0,
+            ..BrushSettings::default()
+        };
+        assert!(brush.reset_tool());
+        assert_eq!(brush.eraser_mode, EraserMode::Soft);
+        assert_eq!(brush.color_erase_tolerance, BrushSettings::default().color_erase_tolerance);
+        assert!(!brush.eraser_to_background);
+        assert_eq!(brush.size, BrushSettings::default().size);
+        assert_eq!(brush.gradient_type, GradientType::Radial, "unrelated tool untouched");
+        assert_eq!(brush.spray_density, 1.9, "unrelated tool untouched");
+
+        brush.tool = ToolType::Gradient;
+        assert!(brush.reset_tool());
+        assert_eq!(brush.gradient_type, GradientType::Linear);
+        assert!(brush.gradient_dither);
+        assert_eq!(brush.eraser_mode, EraserMode::Soft, "eraser stays as it was");
+
+        brush.tool = ToolType::Move;
+        assert!(!brush.reset_tool(), "a tool with no settings must say so");
+        brush.tool = ToolType::Text;
+        assert!(!brush.reset_tool());
+    }
 }

@@ -164,6 +164,68 @@ pub struct NewCanvasSpec {
     pub format: PixelFormat,
 }
 
+/// Inclusive bounds for the values the Preferences dialog accepts.
+pub const AUTOSAVE_INTERVAL_RANGE: (u64, u64) = (15, 3600);
+pub const UNDO_BUDGET_MB_RANGE: (u32, u32) = (16, 4096);
+
+/// A working copy of the persisted editor preferences.
+///
+/// The dialog edits this, validates it, and only then writes it back to [`AppState`], so a
+/// cancelled or invalid edit cannot leave half-applied settings behind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreferencesDraft {
+    pub autosave_enabled: bool,
+    pub autosave_interval_secs: u64,
+    pub undo_budget_mb: u32,
+    pub jpeg_quality: u8,
+    pub theme: aurelia_core::color::ThemeMode,
+}
+
+impl Default for PreferencesDraft {
+    fn default() -> Self {
+        Self {
+            autosave_enabled: true,
+            autosave_interval_secs: 120,
+            undo_budget_mb: (HistoryStack::DEFAULT_MAX_BYTES / (1024 * 1024)) as u32,
+            jpeg_quality: 90,
+            theme: aurelia_core::color::ThemeMode::Dawn,
+        }
+    }
+}
+
+impl PreferencesDraft {
+    pub fn from_state(state: &AppState) -> Self {
+        Self {
+            autosave_enabled: state.autosave_enabled,
+            autosave_interval_secs: state.autosave_interval_secs,
+            undo_budget_mb: state.undo_budget_mb,
+            jpeg_quality: state.jpeg_quality,
+            theme: state.document.theme,
+        }
+    }
+
+    /// Rejects out-of-range values with a message naming the field and its accepted range.
+    /// Every control already clamps, so this guards text entry, future controls and tests.
+    pub fn validate(&self) -> Result<(), String> {
+        let (min_interval, max_interval) = AUTOSAVE_INTERVAL_RANGE;
+        if !(min_interval..=max_interval).contains(&self.autosave_interval_secs) {
+            return Err(format!(
+                "Autosave interval must be between {min_interval} and {max_interval} seconds."
+            ));
+        }
+        let (min_budget, max_budget) = UNDO_BUDGET_MB_RANGE;
+        if !(min_budget..=max_budget).contains(&self.undo_budget_mb) {
+            return Err(format!(
+                "Undo budget must be between {min_budget} and {max_budget} MiB."
+            ));
+        }
+        if !(1..=100).contains(&self.jpeg_quality) {
+            return Err("JPEG quality must be between 1 and 100.".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveFilterModal {
     None,
@@ -277,6 +339,8 @@ pub struct AppState {
     pub ruler_draw: bool,
     pub show_rulers: bool,
     pub show_navigator: bool,
+    /// Read-only undo/redo history section in the right dock (#38).
+    pub show_history_panel: bool,
     pub flip_view_horizontal: bool,
     /// Chrome metrics written by the UI each frame, so canvas math follows the docks.
     pub left_panel_w: f32,
@@ -355,6 +419,12 @@ pub struct AppState {
     pub last_autosave: Instant,
     /// Set when an autosave snapshot has been written and not yet cleared by a real save.
     pub autosave_pending: bool,
+    /// Retained-memory ceiling for undo history, in MiB. Persisted with the other preferences.
+    pub undo_budget_mb: u32,
+    // ── Preferences dialog (#37) ──
+    pub show_preferences_dialog: bool,
+    pub preferences_draft: PreferencesDraft,
+    pub preferences_error: Option<String>,
     /// Guide/ruler/grid changes are persisted, so they must participate in dirty tracking
     /// even though they do not create history entries.
     pub editor_dirty: bool,
@@ -535,6 +605,7 @@ impl AppState {
             ruler_draw: false,
             show_rulers: true,
             show_navigator: true,
+            show_history_panel: true,
             flip_view_horizontal: false,
             left_panel_w: 268.0,
             right_panel_w: 324.0,
@@ -600,6 +671,10 @@ impl AppState {
             autosave_interval_secs: 120,
             last_autosave: Instant::now(),
             autosave_pending: false,
+            undo_budget_mb: (HistoryStack::DEFAULT_MAX_BYTES / (1024 * 1024)) as u32,
+            show_preferences_dialog: false,
+            preferences_draft: PreferencesDraft::default(),
+            preferences_error: None,
             editor_dirty: false,
             discord_presence: false,
             discord_presence_configured: false,
@@ -1158,6 +1233,40 @@ impl AppState {
     pub fn swap_colors(&mut self) {
         std::mem::swap(&mut self.brush.primary_color, &mut self.brush.secondary_color);
         self.set_status("Swapped primary and secondary colors");
+    }
+
+    /// Restores the shared brush shape and dynamics to their defaults (#42).
+    pub fn reset_brush_settings(&mut self) {
+        self.brush.reset_brush();
+        self.set_status("Brush settings reset to defaults");
+    }
+
+    /// Restores the active tool's settings to their defaults (#42).
+    ///
+    /// Wand and fill keep their tolerance in `AppState`, so they are reset here rather than in
+    /// `BrushSettings`. Tools with nothing to reset report that instead of a false success.
+    pub fn reset_current_tool_settings(&mut self) {
+        let tool = self.brush.tool;
+        let resettable = self.brush.reset_tool();
+        match tool {
+            aurelia_core::brush::ToolType::Wand | aurelia_core::brush::ToolType::Marquee
+            | aurelia_core::brush::ToolType::Lasso => {
+                self.wand_tolerance = 24;
+                self.wand_contiguous = true;
+                self.wand_sample_all_layers = false;
+                self.set_status(format!("{} settings reset to defaults", tool.label()));
+            }
+            aurelia_core::brush::ToolType::Fill => {
+                self.wand_tolerance = 24;
+                self.set_status("Fill settings reset to defaults");
+            }
+            _ if resettable => {
+                self.set_status(format!("{} settings reset to defaults", tool.label()));
+            }
+            _ => {
+                self.set_status(format!("{} has no adjustable settings to reset", tool.label()));
+            }
+        }
     }
 
     pub fn push_color_history(&mut self, color: Color) {
@@ -1953,6 +2062,40 @@ impl AppState {
     // Preferences (theme / JPEG quality / autosave / recent files)
     // ─────────────────────────────────────────────────────────────────────
 
+    /// Opens the Preferences dialog with a fresh copy of the effective settings.
+    pub fn open_preferences(&mut self) {
+        self.preferences_draft = PreferencesDraft::from_state(self);
+        self.preferences_error = None;
+        self.show_preferences_dialog = true;
+    }
+
+    /// Validates the draft, applies it and persists it.
+    ///
+    /// Returns an error and changes nothing when the draft is invalid. If the values applied
+    /// but the file could not be written, the error says so: the settings stay live for this
+    /// session and the user is not told they were saved when they were not.
+    pub fn apply_preferences(&mut self) -> Result<(), String> {
+        let draft = self.preferences_draft;
+        draft.validate()?;
+        self.apply_preferences_values();
+
+        self.try_save_preferences()
+            .map_err(|error| format!("Settings applied for this session, but saving failed: {error}"))
+    }
+
+    /// Writes the validated draft into the live state. Split from [`apply_preferences`] so the
+    /// setting mapping is testable without touching the user's preferences file.
+    fn apply_preferences_values(&mut self) {
+        let draft = self.preferences_draft;
+        self.autosave_enabled = draft.autosave_enabled;
+        self.autosave_interval_secs = draft.autosave_interval_secs;
+        self.undo_budget_mb = draft.undo_budget_mb;
+        self.history
+            .set_max_bytes(draft.undo_budget_mb as usize * 1024 * 1024);
+        self.jpeg_quality = draft.jpeg_quality;
+        self.document.theme = draft.theme;
+    }
+
     pub fn preferences_path() -> PathBuf {
         Self::autosave_dir()
             .parent()
@@ -1961,9 +2104,17 @@ impl AppState {
     }
 
     pub fn load_preferences(&mut self) {
-        let Ok(text) = std::fs::read_to_string(Self::preferences_path()) else {
-            return;
-        };
+        if let Ok(text) = std::fs::read_to_string(Self::preferences_path()) {
+            self.apply_preferences_text(&text);
+        }
+    }
+
+    /// Applies a preferences file body.
+    ///
+    /// Unknown keys and unparseable values are ignored so a newer or damaged file cannot stop
+    /// startup, and every numeric field is clamped to the range the dialog exposes. Missing
+    /// keys keep the defaults the state was constructed with.
+    pub fn apply_preferences_text(&mut self, text: &str) {
         for line in text.lines() {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
@@ -1989,7 +2140,16 @@ impl AppState {
                 "discord_show_project" => self.discord_show_project_name = value == "1",
                 "autosave_interval" => {
                     if let Ok(secs) = value.parse::<u64>() {
-                        self.autosave_interval_secs = secs.clamp(15, 3600);
+                        let (min, max) = AUTOSAVE_INTERVAL_RANGE;
+                        self.autosave_interval_secs = secs.clamp(min, max);
+                    }
+                }
+                "undo_budget_mb" => {
+                    if let Ok(mb) = value.parse::<u32>() {
+                        let (min, max) = UNDO_BUDGET_MB_RANGE;
+                        self.undo_budget_mb = mb.clamp(min, max);
+                        self.history
+                            .set_max_bytes(self.undo_budget_mb as usize * 1024 * 1024);
                     }
                 }
                 "recent" => {
@@ -2002,11 +2162,9 @@ impl AppState {
         }
     }
 
-    pub fn save_preferences(&self) {
-        let path = Self::preferences_path();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
+    /// The full preferences file body. Pure, so tests can round-trip it without touching the
+    /// user's real preferences.
+    pub fn preferences_text(&self) -> String {
         let theme = match self.document.theme {
             aurelia_core::color::ThemeMode::Dusk => 1,
             aurelia_core::color::ThemeMode::Ember => 2,
@@ -2033,10 +2191,25 @@ impl AppState {
             if self.discord_show_project_name { 1 } else { 0 }
         ));
         out.push_str(&format!("autosave_interval={}\n", self.autosave_interval_secs));
+        out.push_str(&format!("undo_budget_mb={}\n", self.undo_budget_mb));
         for recent in &self.recent_files {
             out.push_str(&format!("recent={}\n", recent.display()));
         }
-        let _ = std::fs::write(&path, out);
+        out
+    }
+
+    /// Persists preferences, surfacing the I/O error for the dialog to report.
+    pub fn try_save_preferences(&self) -> std::io::Result<()> {
+        let path = Self::preferences_path();
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&path, self.preferences_text())
+    }
+
+    /// Fire-and-forget save for the many call sites where a failed write is not actionable.
+    pub fn save_preferences(&self) {
+        let _ = self.try_save_preferences();
     }
 }
 
@@ -2697,5 +2870,137 @@ mod document_format_ui {
         );
         let layer = wide.document.active_layer().expect("layer");
         assert_eq!(layer.format(), PixelFormat::Srgb16, "format preserved by fill");
+    }
+}
+
+#[cfg(test)]
+mod preferences_dialog {
+    use super::{AppState, PreferencesDraft, AUTOSAVE_INTERVAL_RANGE, UNDO_BUDGET_MB_RANGE};
+    use aurelia_core::color::ThemeMode;
+
+    #[test]
+    fn preferences_round_trip_through_the_file_format() {
+        let mut source = AppState::new(8, 8);
+        source.autosave_enabled = false;
+        source.autosave_interval_secs = 45;
+        source.undo_budget_mb = 64;
+        source.jpeg_quality = 77;
+        source.document.theme = ThemeMode::Ember;
+        source.left_panel_locked = true;
+        source.recent_files = vec![std::path::PathBuf::from("C:/work/a.aur")];
+        let text = source.preferences_text();
+
+        let mut loaded = AppState::new(8, 8);
+        loaded.apply_preferences_text(&text);
+        assert!(!loaded.autosave_enabled);
+        assert_eq!(loaded.autosave_interval_secs, 45);
+        assert_eq!(loaded.undo_budget_mb, 64);
+        assert_eq!(loaded.jpeg_quality, 77);
+        assert_eq!(loaded.document.theme, ThemeMode::Ember);
+        assert!(loaded.left_panel_locked);
+        assert_eq!(loaded.recent_files.len(), 1);
+        assert_eq!(
+            loaded.history.max_bytes(),
+            64 * 1024 * 1024,
+            "loading the budget must apply it to the live history stack"
+        );
+
+        // Writing what was loaded reproduces the same file, so a restart is lossless.
+        assert_eq!(loaded.preferences_text(), text);
+    }
+
+    #[test]
+    fn missing_keys_keep_defaults_and_out_of_range_values_are_clamped() {
+        let defaults = AppState::new(8, 8);
+        let mut loaded = AppState::new(8, 8);
+        loaded.apply_preferences_text(
+            "autosave_interval=1\nundo_budget_mb=999999\njpeg_quality=0\ntheme=bogus\nnot_a_key=7\n",
+        );
+        assert_eq!(loaded.autosave_interval_secs, AUTOSAVE_INTERVAL_RANGE.0);
+        assert_eq!(loaded.undo_budget_mb, UNDO_BUDGET_MB_RANGE.1);
+        assert_eq!(loaded.jpeg_quality, 1);
+        assert_eq!(loaded.document.theme, ThemeMode::Dawn);
+        assert_eq!(
+            loaded.autosave_enabled, defaults.autosave_enabled,
+            "a missing key must not flip an unrelated setting"
+        );
+    }
+
+    #[test]
+    fn invalid_drafts_are_rejected_before_anything_changes() {
+        let mut state = AppState::new(8, 8);
+        let interval = state.autosave_interval_secs;
+        state.preferences_draft = PreferencesDraft {
+            autosave_interval_secs: 1,
+            ..PreferencesDraft::default()
+        };
+        assert!(state.preferences_draft.validate().is_err());
+        assert!(state.apply_preferences().is_err(), "invalid draft must not be applied");
+        assert_eq!(state.autosave_interval_secs, interval);
+
+        for (draft, field) in [
+            (
+                PreferencesDraft {
+                    undo_budget_mb: 0,
+                    ..PreferencesDraft::default()
+                },
+                "undo budget",
+            ),
+            (
+                PreferencesDraft {
+                    jpeg_quality: 0,
+                    ..PreferencesDraft::default()
+                },
+                "jpeg quality",
+            ),
+        ] {
+            let error = draft.validate().expect_err(field);
+            assert!(error.to_lowercase().contains(field), "{error}");
+        }
+        assert!(PreferencesDraft::default().validate().is_ok());
+    }
+
+    #[test]
+    fn applying_a_draft_updates_bound_controls_and_leaves_others_alone() {
+        let mut state = AppState::new(8, 8);
+        state.left_panel_locked = true;
+        state.preferences_draft = PreferencesDraft {
+            autosave_enabled: false,
+            autosave_interval_secs: 30,
+            undo_budget_mb: 32,
+            jpeg_quality: 55,
+            theme: ThemeMode::Dusk,
+        };
+        state.apply_preferences_values();
+
+        assert!(!state.autosave_enabled);
+        assert_eq!(state.autosave_interval_secs, 30);
+        assert_eq!(state.undo_budget_mb, 32);
+        assert_eq!(state.history.max_bytes(), 32 * 1024 * 1024);
+        assert_eq!(state.jpeg_quality, 55);
+        assert_eq!(state.document.theme, ThemeMode::Dusk);
+        assert!(state.left_panel_locked, "unrelated persisted settings must survive");
+    }
+
+    #[test]
+    fn opening_the_dialog_copies_the_effective_settings() {
+        let mut state = AppState::new(8, 8);
+        state.autosave_interval_secs = 90;
+        state.undo_budget_mb = 128;
+        state.jpeg_quality = 61;
+        state.document.theme = ThemeMode::Ember;
+        state.open_preferences();
+        assert!(state.show_preferences_dialog);
+        assert!(state.preferences_error.is_none());
+        assert_eq!(
+            state.preferences_draft,
+            PreferencesDraft {
+                autosave_enabled: state.autosave_enabled,
+                autosave_interval_secs: 90,
+                undo_budget_mb: 128,
+                jpeg_quality: 61,
+                theme: ThemeMode::Ember,
+            }
+        );
     }
 }

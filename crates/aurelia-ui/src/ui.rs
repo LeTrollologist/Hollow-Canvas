@@ -157,6 +157,52 @@ fn restore_and_preview(state: &mut AppState, apply: impl Fn(&mut aurelia_core::l
 
 /// The largest rect with the given aspect ratio that fits inside `available`, centred.
 ///
+/// Human-readable byte count for the history panel's memory readout.
+fn format_bytes(bytes: usize) -> String {
+    const KIB: f64 = 1024.0;
+    let value = bytes as f64;
+    if value >= KIB * KIB * KIB {
+        format!("{:.2} GiB", value / (KIB * KIB * KIB))
+    } else if value >= KIB * KIB {
+        format!("{:.1} MiB", value / (KIB * KIB))
+    } else if value >= KIB {
+        format!("{:.0} KiB", value / KIB)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// One retained history step. Undo entries are numbered from the oldest; redo entries are
+/// dimmed and unnumbered because they are not part of the current document state.
+fn history_row(ui: &mut egui::Ui, index: usize, label: &str, bytes: usize, redo: bool) {
+    ui.horizontal(|ui| {
+        let prefix = if redo {
+            "  ↻".to_string()
+        } else {
+            format!("{:>3}.", index)
+        };
+        ui.label(
+            RichText::new(prefix)
+                .size(9.5)
+                .family(fonts::display())
+                .color(if redo { design::TEXT_DIM } else { design::TEXT_MUTED }),
+        );
+        ui.label(
+            RichText::new(label)
+                .size(10.5)
+                .color(if redo { design::TEXT_DIM } else { design::TEXT }),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                RichText::new(format_bytes(bytes))
+                    .size(9.0)
+                    .family(fonts::display())
+                    .color(design::TEXT_DIM),
+            );
+        });
+    });
+}
+
 /// The navigator used to paint the thumbnail into the whole slot, so a tall or wide document
 /// was stretched, and its framing box was computed in a different space than the image it sat
 /// on. Both now use this rect.
@@ -396,6 +442,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 state.pending_file_action = Some(PendingFileAction::SaveProjectAs);
                                 ui.close_menu();
                             }
+                            ui.separator();
+                            if ui.button("⚙ Preferences... (Ctrl+,)").clicked() {
+                                state.open_preferences();
+                                ui.close_menu();
+                            }
+                            ui.separator();
                             if !state.recent_files.is_empty() {
                                 ui.menu_button("🕘 Recent Projects", |ui| {
                                     let recents = state.recent_files.clone();
@@ -743,6 +795,9 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 ui.close_menu();
                             }
                             if ui.checkbox(&mut state.show_ref_window, "🖼 Reference Viewer").clicked() {
+                                ui.close_menu();
+                            }
+                            if ui.checkbox(&mut state.show_history_panel, "🕘 History Panel").clicked() {
                                 ui.close_menu();
                             }
                             if ui.checkbox(&mut state.timeline.is_enabled, "🎞 Animation Timeline Strip").clicked() {
@@ -1157,7 +1212,25 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                     ui.separator();
 
                     // Tool-specific properties
-                    ui.label(RichText::new("TOOL PROPERTIES").size(9.5).strong().color(Color32::from_rgb(158, 146, 110)));
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("TOOL PROPERTIES").size(9.5).strong().color(Color32::from_rgb(158, 146, 110)));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .small_button("↺ Brush")
+                                .on_hover_text("Reset shared brush size, opacity, hardness, spacing and dynamics")
+                                .clicked()
+                            {
+                                state.reset_brush_settings();
+                            }
+                            if ui
+                                .small_button("↺ Tool")
+                                .on_hover_text("Reset the active tool's settings to their defaults")
+                                .clicked()
+                            {
+                                state.reset_current_tool_settings();
+                            }
+                        });
+                    });
 
                     match state.brush.tool {
                         ToolType::Text => {
@@ -2451,6 +2524,76 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                     ui.add_space(8.0);
                     ui.separator();
+
+                    // ── 🕘 HISTORY (#38) ──
+                    // Read-only by design: it consumes `undo_entries` / `redo_entries` and the
+                    // byte counters, and never exposes or mutates the stacks themselves.
+                    if state.show_history_panel {
+                        ui.horizontal(|ui| {
+                            let (tick, _) = ui.allocate_exact_size(egui::vec2(2.0, 11.0), egui::Sense::hover());
+                            ui.painter().rect_filled(tick, 1.0, design::GOLD.linear_multiply(0.85));
+                            ui.add_space(1.0);
+                            ui.label(
+                                RichText::new(design::spaced("history"))
+                                    .size(10.0)
+                                    .family(fonts::display())
+                                    .color(design::CAPTION),
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} / {}",
+                                        format_bytes(state.history.total_retained_bytes()),
+                                        format_bytes(state.history.max_bytes())
+                                    ))
+                                    .size(9.5)
+                                    .family(fonts::display())
+                                    .color(design::TEXT_MUTED),
+                                )
+                                .on_hover_text(format!(
+                                    "{} undoable step(s), {} redoable; limits: {} steps, {} bytes",
+                                    state.history.undo_entries().len(),
+                                    state.history.redo_entries().len(),
+                                    state.history.max_history(),
+                                    state.history.max_bytes()
+                                ));
+                            });
+                        });
+                        ui.add_space(2.0);
+
+                        let undo_entries = state.history.undo_entries();
+                        let redo_entries = state.history.redo_entries();
+                        if undo_entries.is_empty() && redo_entries.is_empty() {
+                            ui.label(
+                                RichText::new("No edit history yet")
+                                    .size(10.0)
+                                    .italics()
+                                    .color(design::TEXT_DIM),
+                            );
+                        } else {
+                            ScrollArea::vertical()
+                                .id_source("history_entries")
+                                .max_height(190.0)
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    for (index, entry) in undo_entries.iter().enumerate() {
+                                        history_row(ui, index + 1, entry.label, entry.bytes, false);
+                                    }
+                                    // The current document state sits between undo and redo.
+                                    ui.label(
+                                        RichText::new("▶ current state")
+                                            .size(10.0)
+                                            .strong()
+                                            .color(accent_c32),
+                                    );
+                                    for entry in &redo_entries {
+                                        history_row(ui, 0, entry.label, entry.bytes, true);
+                                    }
+                                });
+                        }
+                        ui.add_space(8.0);
+                        ui.separator();
+                    }
 
                     // ── REAL-TIME CANVAS OPERATIONS ──
                     design::section(ui, "CANVAS OPERATIONS");
@@ -4726,6 +4869,111 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
             });
     }
 
+    // ── 11b. PREFERENCES (#37) ──
+    if state.show_preferences_dialog {
+        egui::Window::new("⚙ Preferences")
+            .fixed_size(Vec2::new(400.0, 340.0))
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                let draft = &mut state.preferences_draft;
+                ui.label(RichText::new("GENERAL").size(9.5).strong().color(accent_c32));
+                ui.checkbox(&mut draft.autosave_enabled, "Autosave documents periodically");
+                ui.horizontal(|ui| {
+                    ui.add_enabled_ui(draft.autosave_enabled, |ui| {
+                        ui.label("Interval");
+                        ui.add(
+                            egui::DragValue::new(&mut draft.autosave_interval_secs)
+                                .range(
+                                    crate::state::AUTOSAVE_INTERVAL_RANGE.0
+                                        ..=crate::state::AUTOSAVE_INTERVAL_RANGE.1,
+                                )
+                                .suffix(" s"),
+                        );
+                    });
+                });
+                ui.add_space(6.0);
+
+                ui.label(RichText::new("HISTORY").size(9.5).strong().color(accent_c32));
+                ui.horizontal(|ui| {
+                    ui.label("Undo budget");
+                    ui.add(
+                        egui::DragValue::new(&mut draft.undo_budget_mb)
+                            .range(
+                                crate::state::UNDO_BUDGET_MB_RANGE.0
+                                    ..=crate::state::UNDO_BUDGET_MB_RANGE.1,
+                            )
+                            .suffix(" MiB"),
+                    )
+                    .on_hover_text("Memory ceiling for undo history; the newest step always survives");
+                });
+                ui.label(
+                    RichText::new(format!(
+                        "Currently using {} of {} in {} step(s)",
+                        format_bytes(state.history.total_retained_bytes()),
+                        format_bytes(state.history.max_bytes()),
+                        state.history.undo_entries().len() + state.history.redo_entries().len()
+                    ))
+                    .size(9.0)
+                    .color(design::TEXT_MUTED),
+                );
+                ui.add_space(6.0);
+
+                ui.label(RichText::new("EXPORT").size(9.5).strong().color(accent_c32));
+                ui.horizontal(|ui| {
+                    ui.label("JPEG quality");
+                    ui.add(egui::Slider::new(&mut draft.jpeg_quality, 1..=100));
+                });
+                ui.add_space(6.0);
+
+                ui.label(RichText::new("APPEARANCE").size(9.5).strong().color(accent_c32));
+                ui.horizontal(|ui| {
+                    for (theme, label) in [
+                        (aurelia_core::color::ThemeMode::Dawn, "Dawn"),
+                        (aurelia_core::color::ThemeMode::Dusk, "Dusk"),
+                        (aurelia_core::color::ThemeMode::Ember, "Ember"),
+                    ] {
+                        if ui.selectable_label(draft.theme == theme, label).clicked() {
+                            draft.theme = theme;
+                        }
+                    }
+                });
+
+                if let Some(error) = &state.preferences_error {
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(error)
+                            .size(10.0)
+                            .color(Color32::from_rgb(224, 112, 92)),
+                    );
+                }
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Reset to Defaults").clicked() {
+                        state.preferences_draft =
+                            crate::state::PreferencesDraft::default();
+                        state.preferences_error = None;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Save").clicked() {
+                            match state.apply_preferences() {
+                                Ok(()) => {
+                                    state.show_preferences_dialog = false;
+                                    state.set_status("Preferences saved");
+                                }
+                                Err(message) => state.preferences_error = Some(message),
+                            }
+                        }
+                        if ui.button("Cancel").clicked() {
+                            state.show_preferences_dialog = false;
+                            state.preferences_error = None;
+                        }
+                    });
+                });
+            });
+    }
     // ── 12. HELP & SHORTCUTS MODAL ──
     if state.show_help {
         egui::Window::new("Aurelia Studio · Shortcuts & Help")

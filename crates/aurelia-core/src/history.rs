@@ -345,12 +345,23 @@ impl Command for FullDocumentSnapshotCommand {
     }
 }
 
+/// One retained step, as the read-only History panel sees it.
+///
+/// The label is the same string undo/redo report in the status bar, so the panel and the
+/// command that produced it cannot disagree. `bytes` is the command's own accounted cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryEntry {
+    pub label: &'static str,
+    pub bytes: usize,
+}
+
 pub struct HistoryStack {
     undo_stack: Vec<Box<dyn Command>>,
     redo_stack: Vec<Box<dyn Command>>,
     max_history: usize,
     max_bytes: usize,
     undo_bytes: usize,
+    redo_bytes: usize,
     generation: u64,
 }
 
@@ -374,6 +385,7 @@ impl HistoryStack {
             max_history: max_history.max(4),
             max_bytes: max_bytes.max(1),
             undo_bytes: 0,
+            redo_bytes: 0,
             generation: 0,
         }
     }
@@ -383,6 +395,15 @@ impl HistoryStack {
         self.undo_bytes = self.undo_bytes.saturating_add(cmd.cost());
         self.undo_stack.push(cmd);
         self.redo_stack.clear();
+        self.redo_bytes = 0;
+        self.evict_to_budget();
+    }
+
+    /// Drops the oldest steps until both the count and the byte budget fit.
+    ///
+    /// The newest step is always kept, so a single edit larger than the whole budget stays
+    /// undoable rather than being silently discarded.
+    fn evict_to_budget(&mut self) {
         while self.undo_stack.len() > 1
             && (self.undo_stack.len() > self.max_history || self.undo_bytes > self.max_bytes)
         {
@@ -394,9 +415,11 @@ impl HistoryStack {
     pub fn undo(&mut self, doc: &mut Document) -> Option<&'static str> {
         let mut cmd = self.undo_stack.pop()?;
         self.generation = self.generation.saturating_add(1);
-        self.undo_bytes = self.undo_bytes.saturating_sub(cmd.cost());
+        let cost = cmd.cost();
+        self.undo_bytes = self.undo_bytes.saturating_sub(cost);
         cmd.undo(doc);
         let name = cmd.name();
+        self.redo_bytes = self.redo_bytes.saturating_add(cost);
         self.redo_stack.push(cmd);
         Some(name)
     }
@@ -404,7 +427,9 @@ impl HistoryStack {
     pub fn redo(&mut self, doc: &mut Document) -> Option<&'static str> {
         let mut cmd = self.redo_stack.pop()?;
         self.generation = self.generation.saturating_add(1);
-        self.undo_bytes = self.undo_bytes.saturating_add(cmd.cost());
+        let cost = cmd.cost();
+        self.redo_bytes = self.redo_bytes.saturating_sub(cost);
+        self.undo_bytes = self.undo_bytes.saturating_add(cost);
         cmd.redo(doc);
         let name = cmd.name();
         self.undo_stack.push(cmd);
@@ -433,8 +458,58 @@ impl HistoryStack {
         self.undo_bytes
     }
 
+    /// Bytes retained by steps that are currently redoable.
+    pub fn redo_retained_bytes(&self) -> usize {
+        self.redo_bytes
+    }
+
+    /// Total bytes retained by the history, undoable and redoable alike.
+    pub fn total_retained_bytes(&self) -> usize {
+        self.undo_bytes.saturating_add(self.redo_bytes)
+    }
+
     pub fn max_bytes(&self) -> usize {
         self.max_bytes
+    }
+
+    pub fn max_history(&self) -> usize {
+        self.max_history
+    }
+
+    /// Changes the retained-memory ceiling and evicts immediately if the new budget is
+    /// smaller. Used by the Preferences dialog; the newest step always survives.
+    pub fn set_max_bytes(&mut self, max_bytes: usize) {
+        self.max_bytes = max_bytes.max(1);
+        self.evict_to_budget();
+    }
+
+    /// Changes the step-count ceiling and evicts immediately if the new limit is smaller.
+    pub fn set_max_history(&mut self, max_history: usize) {
+        self.max_history = max_history.max(1);
+        self.evict_to_budget();
+    }
+
+    /// Retained undoable steps, oldest first. Read-only: the panel never mutates history.
+    pub fn undo_entries(&self) -> Vec<HistoryEntry> {
+        self.undo_stack
+            .iter()
+            .map(|cmd| HistoryEntry {
+                label: cmd.name(),
+                bytes: cmd.cost(),
+            })
+            .collect()
+    }
+
+    /// Retained redoable steps, nearest redo first (the order redo would replay them in).
+    pub fn redo_entries(&self) -> Vec<HistoryEntry> {
+        self.redo_stack
+            .iter()
+            .rev()
+            .map(|cmd| HistoryEntry {
+                label: cmd.name(),
+                bytes: cmd.cost(),
+            })
+            .collect()
     }
 
     /// Monotonic edit counter. Every push/undo/redo bumps it, so callers can
@@ -447,6 +522,7 @@ impl HistoryStack {
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.undo_bytes = 0;
+        self.redo_bytes = 0;
         self.generation = self.generation.saturating_add(1);
     }
 }
@@ -771,5 +847,92 @@ mod tests {
         assert_eq!(doc.get_layer(layer_id).expect("layer").storage_bytes(), before_bytes);
         single.redo(&mut doc);
         assert_eq!(doc.get_layer(layer_id).expect("layer").storage_bytes(), after_bytes);
+    }
+
+    /// The History panel reads labels and costs through the read-only API only. Entry order is
+    /// the order the user thinks in: oldest undo first, nearest redo first, and the byte totals
+    /// must follow commands as they cross between the two stacks.
+    #[test]
+    fn history_entries_report_order_labels_and_memory() {
+        let mut doc = Document::new(16, 16);
+        let layer_id = doc.active_layer_id;
+        let mut stack = HistoryStack::with_budget(64, usize::MAX);
+
+        let mut expected_bytes = 0usize;
+        for step in 0..3u8 {
+            let before = pixels_of(&doc, layer_id);
+            paint_square(&mut doc, layer_id, step as u32 * 4, 0, 3, 40 + step);
+            let after = pixels_of(&doc, layer_id);
+            let command = LayerPixelsDeltaCommand::new(
+                layer_id,
+                if step == 0 { "Stroke" } else { "Fill" },
+                before,
+                after,
+            );
+            expected_bytes += command.cost();
+            stack.push(Box::new(command));
+        }
+
+        let entries = stack.undo_entries();
+        assert_eq!(entries.iter().map(|e| e.label).collect::<Vec<_>>(), vec!["Stroke", "Fill", "Fill"]);
+        assert_eq!(stack.total_retained_bytes(), expected_bytes, "undo bytes account every step");
+        assert!(entries.iter().all(|e| e.bytes > 0));
+
+        // Undo moves a step to the redo stack and the totals must not double-count it.
+        stack.undo(&mut doc);
+        let undo_bytes = expected_bytes - entries[2].bytes;
+        assert_eq!(stack.retained_bytes(), undo_bytes);
+        assert_eq!(stack.redo_retained_bytes(), entries[2].bytes);
+        assert_eq!(stack.total_retained_bytes(), expected_bytes);
+        assert_eq!(stack.redo_entries()[0].label, "Fill");
+        assert_eq!(stack.redo_entries().len(), 1);
+
+        // A push clears redo, and its memory with it.
+        let before = pixels_of(&doc, layer_id);
+        paint_square(&mut doc, layer_id, 1, 1, 2, 200);
+        let after = pixels_of(&doc, layer_id);
+        stack.push(Box::new(LayerPixelsDeltaCommand::new(layer_id, "Dab", before, after)));
+        assert_eq!(stack.redo_retained_bytes(), 0);
+        assert!(stack.redo_entries().is_empty());
+
+        // A smaller budget evicts from the oldest end immediately, never the newest step.
+        stack.set_max_history(2);
+        assert_eq!(stack.undo_entries().len(), 2);
+        assert_eq!(stack.undo_entries().last().map(|e| e.label), Some("Dab"));
+        assert_eq!(
+            stack.retained_bytes(),
+            stack.undo_entries().iter().map(|e| e.bytes).sum::<usize>(),
+            "eviction must subtract exactly what it dropped"
+        );
+
+        stack.set_max_bytes(1);
+        assert_eq!(stack.undo_entries().len(), 1, "one oversized step always survives");
+        stack.clear();
+        assert_eq!(stack.total_retained_bytes(), 0);
+        assert!(stack.undo_entries().is_empty() && stack.redo_entries().is_empty());
+    }
+
+    /// The panel must not be able to mutate history: reading it twice is stable and does not
+    /// change the generation counter undo/redo and dirty tracking rely on.
+    #[test]
+    fn history_inspection_is_side_effect_free() {
+        let mut doc = Document::new(8, 8);
+        let layer_id = doc.active_layer_id;
+        let before = pixels_of(&doc, layer_id);
+        paint_square(&mut doc, layer_id, 0, 0, 2, 77);
+        let after = pixels_of(&doc, layer_id);
+        let mut stack = HistoryStack::new(16);
+        stack.push(Box::new(LayerPixelsDeltaCommand::new(layer_id, "Dab", before, after)));
+        stack.undo(&mut doc);
+
+        let generation = stack.generation();
+        let total = stack.total_retained_bytes();
+        let a = stack.undo_entries();
+        let b = stack.undo_entries();
+        let c = stack.redo_entries();
+        assert_eq!(a, b);
+        assert!(a.is_empty() && c.len() == 1);
+        assert_eq!(stack.generation(), generation);
+        assert_eq!(stack.total_retained_bytes(), total);
     }
 }
