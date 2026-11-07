@@ -127,6 +127,34 @@ def _current_versions_problem(ctx: Context) -> list[str]:
     return problems
 
 
+_MOJIBAKE_MARKERS = (
+    "\u00e2\u20ac",  # cp1252 decoding of a UTF-8 en/em dash or quote
+    "\u00e2\u2020",  # the same, for arrows
+    "\u00c3\u2014",  # a times sign that was already double-encoded
+    "\ufffd",        # replacement character: bytes were lost, not just misread
+)
+
+
+def notes_encoding_problem(text: str) -> str | None:
+    """Return a human-readable encoding defect, or None for clean UTF-8 notes.
+
+    The release notes are authored outside the repository and were twice round-tripped
+    through Windows PowerShell 5.1, whose `Get-Content` defaults to the ANSI code page:
+    UTF-8 bytes are decoded as cp1252 and written back as UTF-8, so every arrow, dash and
+    emoji on the published release page renders as cp1252 garbage. Checking here makes
+    that a preflight failure instead of something readers discover after publication.
+    """
+    if text.startswith("\ufeff"):
+        return "starts with a UTF-8 BOM; write release notes without a BOM"
+    for marker in _MOJIBAKE_MARKERS:
+        if marker in text:
+            return (
+                f"contains mojibake ({marker!r}); write release notes as UTF-8 "
+                "and do not round-trip them through Windows PowerShell 5.1"
+            )
+    return None
+
+
 def _preflight(ctx: Context) -> dict[str, Any]:
     git = ctx.git
     if not git.is_worktree():
@@ -188,6 +216,15 @@ def _preflight(ctx: Context) -> dict[str, Any]:
             raise PreflightError(
                 f"release notes are missing: release-notes/{ctx.tag}.md"
             )
+        try:
+            notes_text = notes.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise PreflightError(
+                f"release-notes/{ctx.tag}.md is not valid UTF-8: {exc}"
+            ) from exc
+        problem = notes_encoding_problem(notes_text)
+        if problem:
+            raise PreflightError(f"release-notes/{ctx.tag}.md {problem}")
 
     problems = _current_versions_problem(ctx)
     if problems:
