@@ -1272,7 +1272,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             false
                         };
                         if !saved {
-                            return 0; // cancel dialog or write failure Ã¢â‚¬â€ keep the window open
+                            return 0; // cancel dialog or write failure: keep the window open
                         }
                     }
                     _ => {} // No: discard changes
@@ -2660,7 +2660,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                             app.state.document.resize_canvas(w, h, -(min_x as i32), -(min_y as i32));
                             app.state.crop_box = None;
                             app.state.brush.tool = ToolType::Brush;
-                            app.state.set_status(format!("Cropped canvas to {}Ãƒâ€”{}", w, h));
+                            app.state.set_status(format!("Cropped canvas to {} x {}", w, h));
                         }
                     }
                 }
@@ -3088,7 +3088,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.state.mark_saved();
                         app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
                         app.state.set_status(format!(
-                            "New canvas created: {} Ãƒâ€” {} px ({})",
+                            "New canvas created: {} x {} px ({})",
                             spec.width,
                             spec.height,
                             app.state.document_format_label()
@@ -3215,7 +3215,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     app.state.document_path = None;
                     app.state.mark_saved();
                     app.state.reset_view_centered(app.win_w as f32, app.win_h as f32);
-                    app.state.set_status(format!("Opened image: {} ({} Ãƒâ€” {} px)", path.display(), w, h));
+                    app.state.set_status(format!("Opened image: {} ({} x {} px)", path.display(), w, h));
                 }
             }
             DragFinish(hdrop);
@@ -3427,7 +3427,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         layer.set_pixels(rgba.into_raw());
                     }
                     let mut s = AppState::from_document(doc);
-                    s.set_status(format!("Opened image: {} ({} Ãƒâ€” {} px)", initial_file.display(), w, h));
+                    s.set_status(format!("Opened image: {} ({} x {} px)", initial_file.display(), w, h));
                     s
                 }
                 Err(img_err) => {
@@ -3477,7 +3477,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         app_state.mark_dirty();
                         app_state.note_recent_file(&recovery_path);
                         app_state
-                            .set_status("Recovered autosave snapshot Ã¢â‚¬â€ use Save As to keep it");
+                            .set_status("Recovered autosave snapshot - use Save As to keep it");
                     }
                     Err(e) => eprintln!("Failed to restore autosave snapshot: {}", e),
                 }
