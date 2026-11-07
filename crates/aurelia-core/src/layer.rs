@@ -406,6 +406,9 @@ impl LayerMask {
     /// interpolation toward the paint value instead of an additive coverage. Working in the
     /// mask's own 8-bit domain keeps a 16-bit document's mask independent of its pixel
     /// precision, which is the documented mask-storage rule.
+    // The argument list mirrors the pixel brush's public geometry (radius, hardness, opacity,
+    // target, selection); a builder struct here would force every call site to construct one.
+    #[allow(clippy::too_many_arguments)]
     pub fn paint_dab(
         &mut self,
         center: glam::Vec2,
@@ -470,6 +473,7 @@ impl LayerMask {
     ///
     /// The spacing matches the pixel brush's dab cadence closely enough that a mask stroke
     /// feels like a pixel stroke; it does not re-implement the pixel brush itself.
+    #[allow(clippy::too_many_arguments)]
     pub fn paint_segment(
         &mut self,
         from: glam::Vec2,
