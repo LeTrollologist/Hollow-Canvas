@@ -1805,25 +1805,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         app.state.wand_contiguous,
                         app.state.wand_sample_all_layers,
                     );
-                    if is_shift {
-                        if let Some(existing) = &mut app.state.selection {
-                            existing.union(&mask);
-                        } else if mask.has_selection() {
-                            app.state.selection = Some(mask);
-                        }
-                        app.state.set_status("Added to selection (Magic Wand)");
-                    } else if is_alt {
-                        if let Some(existing) = &mut app.state.selection {
-                            existing.subtract(&mask);
-                            if !existing.has_selection() {
-                                app.state.selection = None;
-                            }
-                        }
-                        app.state.set_status("Subtracted from selection (Magic Wand)");
-                    } else {
-                        app.state.selection = Some(mask);
-                        app.state.set_status("Magic Wand selection active");
-                    }
+                    let mode = app.state.effective_selection_mode(is_shift, is_alt);
+                    app.state.commit_selection(mask, mode);
                 }
             } else if tool == ToolType::Fill {
                 if let Some(layer) = app.state.document.active_layer() {
@@ -2056,25 +2039,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
 
                 if pts.len() >= 3 {
                     let new_mask = SelectionMask::from_polygon(app.state.document.width, app.state.document.height, &pts);
-                    if is_shift {
-                        if let Some(existing) = &mut app.state.selection {
-                            existing.union(&new_mask);
-                        } else if new_mask.has_selection() {
-                            app.state.selection = Some(new_mask);
-                        }
-                        app.state.set_status("Added to selection (Lasso)");
-                    } else if is_alt {
-                        if let Some(existing) = &mut app.state.selection {
-                            existing.subtract(&new_mask);
-                            if !existing.has_selection() {
-                                app.state.selection = None;
-                            }
-                        }
-                        app.state.set_status("Subtracted from selection (Lasso)");
-                    } else if new_mask.has_selection() {
-                        app.state.selection = Some(new_mask);
-                        app.state.set_status("Lasso selection created");
-                    }
+                    let mode = app.state.effective_selection_mode(is_shift, is_alt);
+                    app.state.commit_selection(new_mask, mode);
                 }
             }
 
@@ -2111,25 +2077,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         let end = app.snap_point(canvas_pos);
                         if start.distance(end) >= 3.0 {
                             let mask = SelectionMask::from_rect(app.state.document.width, app.state.document.height, start, end);
-                            if is_shift {
-                                if let Some(existing) = &mut app.state.selection {
-                                    existing.union(&mask);
-                                } else if mask.has_selection() {
-                                    app.state.selection = Some(mask);
-                                }
-                                app.state.set_status("Added to selection (Marquee)");
-                            } else if is_alt {
-                                if let Some(existing) = &mut app.state.selection {
-                                    existing.subtract(&mask);
-                                    if !existing.has_selection() {
-                                        app.state.selection = None;
-                                    }
-                                }
-                                app.state.set_status("Subtracted from selection (Marquee)");
-                            } else if mask.has_selection() {
-                                app.state.selection = Some(mask);
-                                app.state.set_status("Selected area");
-                            }
+                            let mode = app.state.effective_selection_mode(is_shift, is_alt);
+                            app.state.commit_selection(mask, mode);
                         }
                     }
                     ToolType::Crop => {
@@ -2408,17 +2357,17 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
                 0x5A if is_ctrl => { // Ctrl+Z
                     if is_shift {
-                        if let Some(action) = app.state.history.redo(&mut app.state.document) {
+                        if let Some(action) = app.state.redo_action() {
                             app.state.set_status(format!("Redo: {}", action));
                         }
                     } else {
-                        if let Some(action) = app.state.history.undo(&mut app.state.document) {
+                        if let Some(action) = app.state.undo_action() {
                             app.state.set_status(format!("Undo: {}", action));
                         }
                     }
                 }
                 0x59 if is_ctrl => { // Ctrl+Y
-                    if let Some(action) = app.state.history.redo(&mut app.state.document) {
+                    if let Some(action) = app.state.redo_action() {
                         app.state.set_status(format!("Redo: {}", action));
                     }
                 }
@@ -2818,7 +2767,17 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                 }
 
                 // 4. Render live shape / tool drag preview overlays
-                let accent_color = 0xFF5CE0D8; // Bright cyan overlay
+                let mut accent_color = 0xFF5CE0D8; // Bright cyan overlay
+                if app.state.brush.tool == ToolType::Marquee {
+                    // The drag rectangle previews how the region will combine: green adds,
+                    // red subtracts, violet intersects, cyan replaces.
+                    accent_color = match app.state.selection_mode {
+                        aurelia_core::selection::SelectionCombineMode::Union => 0xFF6ED66E,
+                        aurelia_core::selection::SelectionCombineMode::Subtract => 0xFFE06E6E,
+                        aurelia_core::selection::SelectionCombineMode::Intersect => 0xFFC98BE8,
+                        aurelia_core::selection::SelectionCombineMode::Replace => 0xFF5CE0D8,
+                    };
+                }
                 if let Some(start) = app.state.drag_start_canvas_pos {
                     let cur = app.state.cursor_canvas_pos;
                     let p0 = app.state.canvas_to_screen(start, app.win_w as f32, app.win_h as f32);

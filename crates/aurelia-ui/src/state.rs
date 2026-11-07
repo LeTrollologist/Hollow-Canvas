@@ -9,12 +9,19 @@ use aurelia_core::document::{
 };
 use aurelia_core::history::HistoryStack;
 use aurelia_core::layer::{Layer, LayerBuffer, PixelFormat};
-use aurelia_core::selection::{SelectionMask, StrokePosition};
+use aurelia_core::selection::{SelectionCombineMode, SelectionMask, StrokePosition};
 use aurelia_core::symmetry::SymmetryConfig;
 use aurelia_core::transform::{
     AffineTransform2D, InterpolationMode, MeshWarpGrid, PerspectiveQuadTransform, RenderMode,
     ThinPlateSpline2D, TransformMode, TransformPatch,
 };
+
+/// One committed selection change, retained so Ctrl+Z can restore the previous mask (#36).
+#[derive(Debug, Clone)]
+pub struct SelectionEdit {
+    pub before: Option<SelectionMask>,
+    pub after: Option<SelectionMask>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransformHandle {
@@ -309,6 +316,18 @@ pub struct AppState {
     pub brush: BrushSettings,
     pub symmetry: SymmetryConfig,
     pub selection: Option<SelectionMask>,
+    /// How the next selection region combines with the existing one (#36).
+    pub selection_mode: SelectionCombineMode,
+    /// Committed selection edits, newest last, so Ctrl+Z can restore the previous mask.
+    pub selection_undo: Vec<SelectionEdit>,
+    pub selection_redo: Vec<SelectionEdit>,
+    /// True while the newest un-done action is a selection change; Ctrl+Z then targets it.
+    pub selection_pending: bool,
+    /// True while the newest undone action is a selection change; Ctrl+Y then replays it.
+    pub selection_redo_pending: bool,
+    /// Document history depth when the newest selection edit was committed. A document edit
+    /// pushes past it; undoing back to it makes the selection edit the newest action again.
+    pub selection_doc_depth: usize,
     pub color_slot_is_secondary: bool,
     pub color_history: Vec<Color>,
     pub pan: Vec2,
@@ -579,6 +598,12 @@ impl AppState {
             brush: BrushSettings::default(),
             symmetry: SymmetryConfig::default(),
             selection: None,
+            selection_mode: SelectionCombineMode::Replace,
+            selection_undo: Vec::new(),
+            selection_redo: Vec::new(),
+            selection_pending: false,
+            selection_redo_pending: false,
+            selection_doc_depth: 0,
             color_slot_is_secondary: false,
             color_history,
             pan: Vec2::ZERO,
@@ -1745,6 +1770,127 @@ impl AppState {
             mask.contract(radius);
             self.set_status(format!("Contracted selection ({}px)", radius));
         }
+    }
+
+    /// The mode a pointer gesture uses: an explicit Shift/Alt modifier overrides the menu
+    /// mode for that gesture only, and the menu mode is the sticky default.
+    pub fn effective_selection_mode(
+        &self,
+        shift: bool,
+        alt: bool,
+    ) -> SelectionCombineMode {
+        match (shift, alt) {
+            (true, true) => SelectionCombineMode::Intersect,
+            (true, false) => SelectionCombineMode::Union,
+            (false, true) => SelectionCombineMode::Subtract,
+            (false, false) => self.selection_mode,
+        }
+    }
+
+    /// Applies a newly drawn selection region under `mode` (#36).
+    ///
+    /// The resulting mask is exactly what [`SelectionMask::combined`] produces, which is also
+    /// what any preview uses. An empty result clears the selection rather than leaving a
+    /// zero-coverage mask behind, and a no-op change records no undo entry.
+    pub fn commit_selection(&mut self, new: SelectionMask, mode: SelectionCombineMode) {
+        let before = self.selection.clone();
+        let after = match (&before, mode) {
+            (_, SelectionCombineMode::Replace) => Some(new),
+            (None, _) => Some(new),
+            (Some(existing), _) => {
+                if existing.width != new.width || existing.height != new.height {
+                    self.set_status("Selection size does not match the canvas");
+                    return;
+                }
+                Some(existing.combined(&new, mode))
+            }
+        };
+        let after = after.filter(|mask| mask.has_selection());
+
+        let unchanged = match (&before, &after) {
+            (None, None) => true,
+            (Some(old), Some(new)) => old.same_coverage(new),
+            _ => false,
+        };
+        if unchanged {
+            self.set_status(format!(
+                "Selection unchanged ({})",
+                mode.short_label()
+            ));
+            return;
+        }
+
+        if let Some(edit_source) = &after {
+            if let Some(previous) = &before {
+                // Keep the coverage change visible in the status: "3 px selected" is the only
+                // confirmation that a Subtract did not remove everything.
+                let before_px = previous.mask.iter().filter(|&&v| v > 0).count();
+                let after_px = edit_source.mask.iter().filter(|&&v| v > 0).count();
+                self.set_status(format!(
+                    "Selection {} ({} → {} px selected)",
+                    mode.short_label(),
+                    before_px,
+                    after_px
+                ));
+            } else {
+                let count = edit_source.mask.iter().filter(|&&v| v > 0).count();
+                self.set_status(format!("Selection {} ({} px selected)", mode.short_label(), count));
+            }
+        } else if mode == SelectionCombineMode::Subtract {
+            self.set_status("Selection removed (Subtract)");
+        }
+
+        self.selection = after.clone();
+        self.selection_undo.push(SelectionEdit { before, after });
+        self.selection_redo.clear();
+        self.selection_redo_pending = false;
+        self.selection_pending = true;
+        self.selection_doc_depth = self.history.len();
+    }
+
+    /// Ctrl+Z target when the newest action was a selection edit.
+    fn undo_selection_edit(&mut self) -> Option<&'static str> {
+        let edit = self.selection_undo.pop()?;
+        self.selection = edit.before.clone();
+        self.selection_redo.push(edit);
+        self.selection_pending = false;
+        self.selection_redo_pending = true;
+        Some("Selection")
+    }
+
+    fn redo_selection_edit(&mut self) -> Option<&'static str> {
+        let edit = self.selection_redo.pop()?;
+        self.selection = edit.after.clone();
+        self.selection_undo.push(edit);
+        self.selection_redo_pending = false;
+        self.selection_pending = true;
+        Some("Selection")
+    }
+
+    /// Unified undo: a selection change whose document-history depth is still current is
+    /// undone first, then document history takes over.
+    ///
+    /// Depth, not generation, is the ordering key: a document edit pushes past the recorded
+    /// depth, and undoing back to it makes the selection edit the newest action again. Undo
+    /// does not discard the selection stack, so the ordering survives a document undo.
+    pub fn undo_action(&mut self) -> Option<&'static str> {
+        if self.selection_pending
+            && !self.selection_undo.is_empty()
+            && self.history.len() == self.selection_doc_depth
+        {
+            return self.undo_selection_edit();
+        }
+        self.history.undo(&mut self.document)
+    }
+
+    pub fn redo_action(&mut self) -> Option<&'static str> {
+        if self.selection_redo_pending
+            && !self.selection_redo.is_empty()
+            && self.history.len() == self.selection_doc_depth
+        {
+            return self.redo_selection_edit();
+        }
+        self.history.redo(&mut self.document)
     }
 
     pub fn fill_selection_active_layer(&mut self) {
@@ -3004,3 +3150,96 @@ mod preferences_dialog {
         );
     }
 }
+
+#[cfg(test)]
+mod selection_modes {
+    use super::{AppState, SelectionCombineMode, SelectionMask};
+
+    fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> SelectionMask {
+        SelectionMask::from_rect(16, 16, glam::Vec2::new(x0, y0), glam::Vec2::new(x1, y1))
+    }
+
+    fn state() -> AppState {
+        AppState::new(16, 16)
+    }
+
+    #[test]
+    fn modifiers_override_the_sticky_mode_for_one_gesture() {
+        let mut s = state();
+        s.selection_mode = SelectionCombineMode::Replace;
+        assert_eq!(s.effective_selection_mode(false, false), SelectionCombineMode::Replace);
+        assert_eq!(s.effective_selection_mode(true, false), SelectionCombineMode::Union);
+        assert_eq!(s.effective_selection_mode(false, true), SelectionCombineMode::Subtract);
+        assert_eq!(s.effective_selection_mode(true, true), SelectionCombineMode::Intersect);
+        s.selection_mode = SelectionCombineMode::Intersect;
+        assert_eq!(s.effective_selection_mode(false, false), SelectionCombineMode::Intersect);
+    }
+
+    #[test]
+    fn committed_modes_change_the_selection_the_way_the_core_does() {
+        let mut s = state();
+        s.commit_selection(rect(0.0, 0.0, 8.0, 8.0), SelectionCombineMode::Replace);
+        assert!(s.selection.is_some());
+
+        s.commit_selection(rect(8.0, 0.0, 16.0, 8.0), SelectionCombineMode::Union);
+        let union = s.selection.clone().expect("union");
+        assert_eq!(union.mask.iter().filter(|&&v| v > 0).count(), 16 * 8, "two halves make a full band");
+
+        s.commit_selection(rect(8.0, 0.0, 16.0, 8.0), SelectionCombineMode::Subtract);
+        let subtracted = s.selection.clone().expect("subtracted");
+        assert_eq!(subtracted.mask.iter().filter(|&&v| v > 0).count(), 8 * 8);
+
+        s.commit_selection(rect(0.0, 0.0, 4.0, 4.0), SelectionCombineMode::Intersect);
+        let intersected = s.selection.clone().expect("intersected");
+        assert_eq!(intersected.mask.iter().filter(|&&v| v > 0).count(), 4 * 4);
+    }
+
+    #[test]
+    fn subtract_everything_clears_the_selection_and_is_undoable() {
+        let mut s = state();
+        s.commit_selection(rect(0.0, 0.0, 8.0, 8.0), SelectionCombineMode::Replace);
+        let before = s.selection.clone().expect("initial selection");
+        s.commit_selection(rect(0.0, 0.0, 16.0, 16.0), SelectionCombineMode::Subtract);
+        assert!(s.selection.is_none(), "an empty result must clear the selection");
+
+        assert_eq!(s.undo_action(), Some("Selection"));
+        let restored = s.selection.clone().expect("undo restores the mask");
+        assert!(restored.same_coverage(&before));
+
+        assert_eq!(s.redo_action(), Some("Selection"));
+        assert!(s.selection.is_none(), "redo re-applies the subtraction");
+    }
+
+    #[test]
+    fn a_no_op_commit_records_no_history_entry() {
+        let mut s = state();
+        s.commit_selection(rect(0.0, 0.0, 8.0, 8.0), SelectionCombineMode::Replace);
+        let depth = s.selection_undo.len();
+        s.commit_selection(rect(0.0, 0.0, 8.0, 8.0), SelectionCombineMode::Union);
+        assert_eq!(s.selection_undo.len(), depth, "unchanged coverage must not add an undo step");
+    }
+
+    #[test]
+    fn document_undo_takes_over_when_a_document_edit_is_newer() {
+        use aurelia_core::history::Command;
+
+        #[derive(Debug)]
+        struct Noop;
+        impl Command for Noop {
+            fn name(&self) -> &'static str {
+                "Noop"
+            }
+            fn undo(&mut self, _doc: &mut aurelia_core::document::Document) {}
+            fn redo(&mut self, _doc: &mut aurelia_core::document::Document) {}
+        }
+
+        let mut s = state();
+        s.commit_selection(rect(0.0, 0.0, 4.0, 4.0), SelectionCombineMode::Replace);
+        s.history.push(Box::new(Noop));
+
+        // The document edit is newer, so the first undo must go to the document, not the mask.
+        assert_eq!(s.undo_action(), Some("Noop"));
+        assert!(s.selection.is_some(), "the selection edit is not undone by a document undo");
+    }
+}
+

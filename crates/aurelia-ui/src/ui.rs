@@ -510,13 +510,13 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                         ui.menu_button("Edit", |ui| {
                             if ui.button("↶ Undo (Ctrl+Z)").clicked() {
-                                if let Some(desc) = state.history.undo(&mut state.document) {
+                                if let Some(desc) = state.undo_action() {
                                     state.set_status(format!("Undo: {}", desc));
                                 }
                                 ui.close_menu();
                             }
                             if ui.button("↷ Redo (Ctrl+Y)").clicked() {
-                                if let Some(desc) = state.history.redo(&mut state.document) {
+                                if let Some(desc) = state.redo_action() {
                                     state.set_status(format!("Redo: {}", desc));
                                 }
                                 ui.close_menu();
@@ -535,6 +535,34 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         });
 
                         ui.menu_button("Select", |ui| {
+                            // Combination mode (#36): the sticky default for pointer gestures.
+                            // Shift / Alt / Shift+Alt override it for one gesture.
+                            ui.menu_button(
+                                format!(
+                                    "{} Combination Mode: {}",
+                                    state.selection_mode.icon(),
+                                    state.selection_mode.label()
+                                ),
+                                |ui| {
+                                    for mode in aurelia_core::selection::SelectionCombineMode::ALL {
+                                        if ui
+                                            .selectable_label(state.selection_mode == mode, format!("{} {}", mode.icon(), mode.label()))
+                                            .clicked()
+                                        {
+                                            state.selection_mode = mode;
+                                            state.set_status(format!("Selection mode: {}", mode.label()));
+                                            ui.close_menu();
+                                        }
+                                    }
+                                    ui.separator();
+                                    ui.label(
+                                        RichText::new("Shift: Add · Alt: Subtract · Shift+Alt: Intersect")
+                                            .size(9.0)
+                                            .color(design::TEXT_MUTED),
+                                    );
+                                },
+                            );
+                            ui.separator();
                             if ui.button("Select All (Ctrl+A)").clicked() {
                                 state.selection = Some(SelectionMask::select_all(state.document.width, state.document.height));
                                 state.set_status("Selected All");
@@ -3948,6 +3976,25 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("✦ SELECTION").size(10.5).strong().color(Color32::from_rgb(236, 167, 19)));
+                                    ui.separator();
+                                    // Sticky combine mode, editable where the selection lives (#36).
+                                    egui::ComboBox::from_id_source("selection_combine_mode")
+                                        .selected_text(format!(
+                                            "{} {}",
+                                            state.selection_mode.icon(),
+                                            state.selection_mode.short_label()
+                                        ))
+                                        .width(96.0)
+                                        .show_ui(ui, |ui| {
+                                            for mode in aurelia_core::selection::SelectionCombineMode::ALL {
+                                                if ui
+                                                    .selectable_label(state.selection_mode == mode, mode.label())
+                                                    .clicked()
+                                                {
+                                                    state.selection_mode = mode;
+                                                }
+                                            }
+                                        });
                                     ui.separator();
                                     if ui.button(RichText::new("Fill").strong().color(Color32::from_rgb(117, 223, 209))).clicked() {
                                         state.fill_selection_active_layer();

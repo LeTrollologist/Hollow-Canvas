@@ -8,6 +8,57 @@ pub enum StrokePosition {
     Outside,
 }
 
+/// How a newly created selection region is combined with the existing one (#36).
+///
+/// `Replace` is the default and the historical behaviour: a new selection replaces the old
+/// one. The other three are the standard boolean modes, each with a stable label so the menu,
+/// the status bar and the release notes describe them the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SelectionCombineMode {
+    #[default]
+    Replace,
+    Union,
+    Subtract,
+    Intersect,
+}
+
+impl SelectionCombineMode {
+    pub const ALL: [SelectionCombineMode; 4] = [
+        SelectionCombineMode::Replace,
+        SelectionCombineMode::Union,
+        SelectionCombineMode::Subtract,
+        SelectionCombineMode::Intersect,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Replace => "Replace",
+            Self::Union => "Union (Add)",
+            Self::Subtract => "Subtract",
+            Self::Intersect => "Intersect",
+        }
+    }
+
+    /// Short form for the status line and compact indicators.
+    pub fn short_label(&self) -> &'static str {
+        match self {
+            Self::Replace => "Replace",
+            Self::Union => "Add",
+            Self::Subtract => "Subtract",
+            Self::Intersect => "Intersect",
+        }
+    }
+
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Self::Replace => "◻",
+            Self::Union => "⊔",
+            Self::Subtract => "⊖",
+            Self::Intersect => "⊓",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelectionMask {
     pub width: u32,
@@ -307,6 +358,43 @@ impl SelectionMask {
             *a = ((*a as u16 * b as u16) / 255) as u8;
         }
         self.recompute_metadata();
+    }
+
+    /// Combines `self` with `other` under an explicit mode, leaving `self` untouched.
+    ///
+    /// This is the single implementation the commit path and any preview use, so a preview
+    /// cannot show something the commit will not produce. An empty result stays empty rather
+    /// than being dropped here; the caller decides whether "no pixels" means "no selection".
+    pub fn combined(&self, other: &SelectionMask, mode: SelectionCombineMode) -> SelectionMask {
+        let mut result = self.clone();
+        result.combine(other, mode);
+        result
+    }
+
+    /// Applies one boolean mode in place.
+    pub fn combine(&mut self, other: &SelectionMask, mode: SelectionCombineMode) {
+        match mode {
+            SelectionCombineMode::Replace => {
+                if self.width == other.width && self.height == other.height {
+                    self.mask.copy_from_slice(&other.mask);
+                    self.recompute_metadata();
+                }
+            }
+            SelectionCombineMode::Union => self.union(other),
+            SelectionCombineMode::Subtract => self.subtract(other),
+            SelectionCombineMode::Intersect => self.intersect(other),
+        }
+    }
+
+    /// True when both masks cover exactly the same pixels with the same coverage.
+    ///
+    /// The cached boundary is not part of selection identity: it is derived, and two masks
+    /// built by different routes can have the same coverage but different caches.
+    pub fn same_coverage(&self, other: &SelectionMask) -> bool {
+        self.width == other.width
+            && self.height == other.height
+            && self.has_active_selection == other.has_active_selection
+            && self.mask == other.mask
     }
 
     /// Builds a selection from a layer's alpha channel (`pixels` is tightly packed RGBA8).
@@ -721,3 +809,101 @@ impl SelectionMask {
         }
     }
 }
+
+#[cfg(test)]
+mod combine_tests {
+    use super::{SelectionCombineMode, SelectionMask};
+
+    fn mask(values: &[u8]) -> SelectionMask {
+        SelectionMask::from_mask_vec(4, 1, values.to_vec())
+    }
+
+    /// Each mode must reproduce its boolean definition on the raw coverage values, because
+    /// selection coverage is fractional and an all-or-nothing implementation would destroy
+    /// every antialiased edge.
+    #[test]
+    fn each_mode_applies_its_boolean_definition_to_fractional_coverage() {
+        let base = mask(&[0, 40, 200, 255]);
+        let incoming = mask(&[255, 100, 100, 0]);
+
+        assert_eq!(
+            base.combined(&incoming, SelectionCombineMode::Replace).mask,
+            vec![255, 100, 100, 0]
+        );
+        assert_eq!(
+            base.combined(&incoming, SelectionCombineMode::Union).mask,
+            vec![255, 100, 200, 255]
+        );
+        assert_eq!(
+            base.combined(&incoming, SelectionCombineMode::Subtract).mask,
+            vec![0, 0, 100, 255]
+        );
+        assert_eq!(
+            base.combined(&incoming, SelectionCombineMode::Intersect).mask,
+            vec![0, 15, 78, 0]
+        );
+    }
+
+    /// A preview built with `combined` must be exactly what `combine` commits, or the user
+    /// sees one thing and gets another.
+    #[test]
+    fn preview_and_commit_agree() {
+        let base = mask(&[0, 40, 200, 255]);
+        let incoming = mask(&[255, 100, 100, 0]);
+        for mode in SelectionCombineMode::ALL {
+            let preview = base.combined(&incoming, mode);
+            let mut committed = base.clone();
+            committed.combine(&incoming, mode);
+            assert!(preview.same_coverage(&committed), "{mode:?}");
+        }
+    }
+
+    /// Empty and full results are legal outcomes, and the mask must report them honestly so
+    /// the caller can clear the selection instead of keeping a zero-coverage mask.
+    #[test]
+    fn empty_and_full_results_are_reported() {
+        let nowhere = mask(&[0, 0, 0, 0]);
+        let everywhere = mask(&[255, 255, 255, 255]);
+
+        assert!(!nowhere.combined(&nowhere, SelectionCombineMode::Union).has_selection());
+        assert!(!everywhere.combined(&everywhere, SelectionCombineMode::Subtract).has_selection());
+        assert!(!mask(&[255, 0, 0, 0]).combined(&mask(&[0, 255, 0, 0]), SelectionCombineMode::Intersect).has_selection());
+        assert!(nowhere.combined(&everywhere, SelectionCombineMode::Union).has_selection());
+        assert!(everywhere.combined(&nowhere, SelectionCombineMode::Union).has_selection());
+
+        let full = everywhere.combined(&everywhere, SelectionCombineMode::Intersect);
+        assert!(full.has_selection());
+        assert_eq!(full.mask, vec![255, 255, 255, 255], "full ∩ full is full");
+
+        // Intersecting with zero coverage clears, even against a full mask.
+        let none = everywhere.combined(&mask(&[0, 0, 0, 0]), SelectionCombineMode::Intersect);
+        assert!(!none.has_selection());
+    }
+
+    /// Union, Intersect and Replace with a full-coverage mask are the algebraic identity each
+    /// mode promises; Subtract of itself is empty; a size mismatch cannot corrupt the target.
+    #[test]
+    fn identity_cases_and_size_mismatch_are_safe() {
+        let base = mask(&[0, 255, 255, 255]);
+        assert!(base.combined(&base, SelectionCombineMode::Union).same_coverage(&base));
+        assert!(base.combined(&base, SelectionCombineMode::Intersect).same_coverage(&base));
+        assert!(!base.combined(&base, SelectionCombineMode::Subtract).has_selection());
+        assert!(base.combined(&base, SelectionCombineMode::Replace).same_coverage(&base));
+
+        // Fractional coverage is not an idempotent lattice for multiply: intersect with itself
+        // can only lower a value, never raise it, and exact endpoints stay exact.
+        let fractional = mask(&[0, 40, 200, 255]);
+        let doubled = fractional.combined(&fractional, SelectionCombineMode::Intersect);
+        for (after, before) in doubled.mask.iter().zip(fractional.mask.iter()) {
+            assert!(after <= before, "{after} must not exceed {before}");
+        }
+        assert_eq!(doubled.mask[3], 255, "255 is the fixed point of the multiply");
+        assert_eq!(doubled.mask[1], 6, "40 * 40 / 255 floors to 6, as the in-place op does");
+
+        let mut target = base.clone();
+        let wrong_size = SelectionMask::from_mask_vec(2, 1, vec![255, 255]);
+        target.combine(&wrong_size, SelectionCombineMode::Union);
+        assert!(target.same_coverage(&base), "a mismatched mask must change nothing");
+    }
+}
+
