@@ -517,9 +517,9 @@ writes native channels. That is a deliberate asymmetry, documented rather than i
 matching in 8-bit is what keeps region boundaries unchanged, and writing natively is what
 keeps the filled values from being quantised.
 
-Still 8-bit only: `flood_fill` and its write path, `rasterize_magic_wand`'s buffer sampling,
-and text. `flood_fill` gets the same treatment next, with the seed-comparison contract above
-pinned by a test before and after the change.
+Native now: `flood_fill`, magic-wand sampling (an 8-bit matching view) and text. Layer masks
+stay 8-bit by design: a mask stroke blends in the mask's own domain and leaves a 16-bit layer's
+storage untouched.
 
 ### Step 2 closed
 
@@ -699,6 +699,15 @@ them in `state.rs`:
 
 The 8-bit path is still byte-identical: the digest gate and the renderer tests were the
 acceptance condition for the core commits, and this session change does not alter a renderer.
+
+### Layer masks stay 8-bit by design
+
+Mask storage is one byte per pixel regardless of document format (`LayerMask::pixels`). Painting
+on a mask in a 16-bit document therefore writes mask alpha only: `LayerMask::paint_dab` and
+`paint_segment` blend in the mask's own 0..=255 domain, the layer's `Srgb16` buffer is never
+converted and is never touched, and undo records the mask bytes through `MaskPixelsCommand`.
+This is the documented mask-storage rule, not a precision limitation of the paint path: masks
+gate alpha, and 8-bit mask coverage is already the representation selections and blending use.
 
 ## Status: three tiers of "16-bit", kept distinct
 

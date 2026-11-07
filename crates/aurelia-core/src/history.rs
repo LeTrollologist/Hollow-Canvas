@@ -990,7 +990,6 @@ mod tests {
 mod mask_history_tests {
     use super::{Command, MaskPixelsCommand};
     use crate::document::Document;
-    use crate::layer::LayerMask;
 
     #[test]
     fn mask_undo_restores_pixels_and_enabled_state() {
@@ -1061,3 +1060,4 @@ mod mask_history_tests {
         assert!(mask.is_all_visible());
     }
 }
+

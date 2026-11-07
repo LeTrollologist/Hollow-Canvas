@@ -97,7 +97,10 @@
 
 - **Layer Raster Masks**: per-layer 8-bit masks created from the selection, with invert /
   enable / remove and persisted in AUR v2/v3. Non-destructive - a mask only scales alpha while
-  compositing, and a masked 4-layer 1080p composite still runs at 92 MPix/s.
+  compositing, and a masked 4-layer 1080p composite still runs at 92 MPix/s. The mask itself is
+  paintable: click its ◐ badge to target it, then brush to reveal (white) or conceal (black) with
+  hardness, opacity and selection gating, a live ruby overlay, and undo that restores the mask
+  bytes exactly. Painting a mask never touches or converts the layer's pixels, including RGBA16.
 - **Tilt-Aware Strokes**: `WM_POINTER` tilt now widens freehand strokes (0 = off), so laying
   the pen flatter behaves like a real brush instead of a constant-width line.
 - **Measured Performance**: `cargo run --release -p aurelia-render --example bench_composite`
@@ -111,7 +114,7 @@
 - 🎨 **Live Interactive Viewport with Real-Time Direct Drawing**:
   - **Direct Viewport Interaction**: Drawing, brushing, and erasing happen directly on the canvas, which is composited and drawn by the CPU software renderer (`aurelia-render`) into the window framebuffer every frame, with the `egui` panels rasterised on top. All view geometry (`pan`, `zoom`, viewport clip) is in physical pixels; `egui` layout and pointer input are converted to and from points at the `pixels_per_point` boundary.
   - **Live Navigator Thumbnail**: The Navigator shows a downscaled copy of the same composite (`SoftwareRenderer::navigator_thumbnail`) as an `egui` texture, so it follows your strokes without a second full-document composite.
-  - **Dynamic Viewport Rulers & Overlays**: Real-time pixel rulers with tracking cursor ticks, configurable canvas grid with a movable origin, persisted horizontal/vertical measurement guides, a movable/rotatable/stretchable straight-edge ruler with an optional draw-along-ruler constraint, Move-tool Selected/Full modes, guide and layer snapping, and symmetry guide axes.
+  - **Dynamic Viewport Rulers & Overlays**: Real-time pixel rulers with tracking cursor ticks, configurable canvas grid with a movable origin, persisted horizontal/vertical measurement guides, a movable/rotatable/stretchable straight-edge ruler with an optional draw-along-ruler constraint, Move-tool Selected/Full modes, guide, layer and angled-ruler snapping (including exact ruler/guide intersections), and symmetry guide axes. Guides and the ruler stay draggable, lockable and snap-active with any tool selected.
   - **Perspective Snapping Engine (<kbd>Ctrl+Shift+P</kbd>)**: 1, 2, and 3-point vanishing point rays and constraint projection.
 - ⛶ **Free Transform & Mesh Warp (<kbd>Ctrl+T</kbd>)**: Studio-grade non-destructive pixel deformation supporting 4 operational modes:
   - **Affine 2D**: Scale, rotate, skew, translate, flip, custom pivot with interactive bounding box and rotation stalk.
@@ -125,6 +128,9 @@
 - ⚡ **Subpixel-Antialiased High-Frequency Engine**: Guaranteed physical sub-pixel antialiasing transition bands across all hardness levels, with true Catmull-Rom spline tangent curvature and S-Level Global Stroke Stabilization (S-0 through S-7 Lazy Rope).
 - 📁 **Nested Layer Groups (Folders)**: Hierarchical folder management with collapsible trees, ancestor visibility/opacity inheritance, and one-click group duplication/ungrouping.
 - 🖌️ **Selection Brush & Eraser**: Direct 8-bit alpha mask painting and erasing with brush dynamics, hardness falloff, and live ruby quick-mask overlay.
+- ➕ **Selection Combine Modes**: Replace / Union / Subtract / Intersect as a sticky Select-menu mode, with <kbd>Shift</kbd>, <kbd>Alt</kbd> and <kbd>Shift</kbd>+<kbd>Alt</kbd> overriding one gesture. Combination keeps fractional coverage, clears honestly when nothing is left, and committed selection edits undo ahead of document steps.
+- 🕘 **History Panel & Preferences**: the right dock lists retained undo/redo steps with their memory cost against the configured budget, and *File → Preferences* exposes autosave interval, undo budget, default JPEG quality and theme, validated and persisted to the existing preferences file.
+- ↺ **Tool & Brush Reset**: one click restores the active tool's own parameters or the shared brush shape/dynamics, without touching colours, the other tools' settings or the document.
 - 🎨 **Modern Studio Toolset**: Brush, Pencil, Watercolor (wet edge/falloff simulation), Chalk (grain dispersion), Spray (stochastic scatter), Smudge (directional velocity smear), Linear & Radial Gradients, Magic Wand fuzzy selection, Eraser modes (Soft, Hard 1-Bit, Color-Target), Dual-Color Vector Shapes, and Reference-layer Flood Fill.
 - 🔤 **Custom Typography & Text Engine**: Text layers rendered through `ab_glyph` with the full system font list plus direct `.ttf`/`.otf` file import, real-time font size, line spacing and letter tracking, Left/Center/Right alignment, subpixel-antialiased rasterization, and on-canvas placement/editing with per-edit undo snapshots.
 - 🧅 **Frame Animation Timeline**: Multi-frame timeline with play/pause preview, adjustable FPS and loop playback, frame add/duplicate/delete/reorder, ghost onion skinning (configurable previous/next frame counts and opacity), and <kbd>[</kbd> / <kbd>]</kbd> frame stepping.
@@ -319,6 +325,7 @@ If you prefer building from source with full compiler optimizations:
 | **Open Project / Image** | <kbd>Ctrl</kbd> + <kbd>O</kbd> |
 | **Save Project** | <kbd>Ctrl</kbd> + <kbd>S</kbd> |
 | **Save Project As** | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd> |
+| **Preferences** | <kbd>Ctrl</kbd> + <kbd>,</kbd> |
 | **Export Image (PNG / JPEG / WebP)** | <kbd>Ctrl</kbd> + <kbd>E</kbd> |
 | **Select All** | <kbd>Ctrl</kbd> + <kbd>A</kbd> |
 | **Deselect** | <kbd>Ctrl</kbd> + <kbd>D</kbd> or <kbd>Esc</kbd> |

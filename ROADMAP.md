@@ -1,8 +1,10 @@
 # Aurelia · Roadmap
 
-**Status:** v3.5.0 shipped 2026-11-06. Native 16-bit editing, compositing, filters, text,
+**Status:** v3.6.0 shipped 2026-11-07. Native 16-bit editing, compositing, filters, text,
 selection edits and free transform are complete. Measurement guides, the straight-edge ruler,
-Move modes, snapping and persisted editor state are shipped.
+Move modes, snapping and persisted editor state are shipped. v3.6.0 closed the editing-workflow
+gaps: mask painting, selection combine modes, a Preferences interface, a History panel, scoped
+tool/brush reset, and persistent ruler/guide/snap interaction.
 
 The engine is ahead of the product surface. The next work is **viewport truth, project-file
 hardening, release repeatability, and essential editing workflows** — not another engine feature.
@@ -29,21 +31,20 @@ test work is not done.
 
 ## Release baseline
 
-- **v3.5.0** is the current release. Assets, SHA-256 manifests and Ed25519 signatures verify;
+- **v3.6.0** is the current release. Assets, SHA-256 manifests and Ed25519 signatures verify;
   the installer is unsigned by permanent policy.
-- **223 tests pass, 1 ignored**; clippy is clean.
+- **256 tests pass, 1 ignored**; clippy reports no new lints.
 - Sparse 16-bit composite ratio is **0.70** against the **0.60** budget.
 - The bilinear transparent-edge behavior is pinned as an accepted limitation; it is not silently
   changing.
 - The viewport is still an **8-bit presentation** of 16-bit documents. This is a known display
   limitation, not a storage limitation.
-- **Process debt:** v3.5.0 release notes were written after the tag because the pipeline does not
-  require them. The next release must fail preflight when `release-notes/<tag>.md` is absent, and
-  the standard VirusTotal block must be part of that file.
+- **Process debt closed:** v3.6.0 release notes were written before the tag, and preflight now
+  fails when `release-notes/<tag>.md` is absent.
 
 ---
 
-## Now — Phase 0: v3.5.1 viewport and file-trust hardening
+## Shipped — Phase 0: v3.5.1/v3.5.2 viewport and file-trust hardening
 
 **Goal:** no new editing features. Make the canvas trustworthy and make crafted project files
 safe to open.
@@ -94,7 +95,10 @@ safe to open.
 
 ---
 
-## Next — Phase 1: v3.6.0 editing workflows
+## Shipped — Phase 1: v3.6.0 editing workflows
+
+**Status: shipped 2026-11-07.** All five workstreams plus the two follow-ups (#39, #42) landed
+with tests; see `release-notes/v3.6.0.md` for the per-issue record.
 
 **Goal:** close the workflow gaps that make the editor feel incomplete without changing the
 rendering architecture.
@@ -115,7 +119,7 @@ rendering architecture.
 
 ---
 
-## Next — Phase 2: v3.7.0 viewport fidelity
+## Now — Phase 2: v3.7.0 viewport fidelity
 
 **Goal:** decide and, only if justified, implement a higher-fidelity display path.
 
@@ -209,6 +213,7 @@ stable fixtures; timing tests need paired rounds and recorded machine/build cont
 | Project-file safety | Text-content allocation bound; oversized save rejection |
 | Release engineering | Journaled release tool, Ed25519 signatures, SHA-256, VirusTotal advisory scan, installer + portable zip |
 | Platform | Windows 10/11 x86-64, per-monitor V2 DPI, Win32 + GDI |
+| Editing workflows (v3.6.0) | Mask painting, selection combine modes, Preferences, History panel, tool/brush reset, persistent ruler/guide snapping |
 
 Detailed measurements are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md); the 16-bit record is in
 [docs/16bit-plan.md](docs/16bit-plan.md); release mechanics and the production gate are in
@@ -228,3 +233,4 @@ Detailed measurements are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md); the 16-
    downconvert behind the user's back.
 5. **Unsigned is disclosed, not hidden.** Every release states the unsigned status and the
    verification path.
+

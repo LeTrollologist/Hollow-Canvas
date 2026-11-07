@@ -2475,6 +2475,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     0x4E if is_ctrl => { // Ctrl+N: New Canvas
                         app.state.show_new_canvas_dialog = true;
                     }
+                    0xBC if is_ctrl => { // Ctrl+, : Preferences
+                        app.state.open_preferences();
+                    }
                     0x4F if is_ctrl => { // Ctrl+O: Open Project
                         app.state.pending_file_action = Some(PendingFileAction::OpenProject);
                     }
@@ -2525,6 +2528,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     } else {
                         PendingFileAction::SaveProject
                     });
+                }
+                0xBC if is_ctrl => { // Ctrl+, : Preferences
+                    app.state.open_preferences();
                 }
                 0x4F if is_ctrl => { // Ctrl+O
                     app.state.pending_file_action = Some(PendingFileAction::OpenProject);
