@@ -3373,7 +3373,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("==========================================");
             return Ok(());
         } else if args[1] == "--help" || args[1] == "-h" {
-            println!("Aurelia Ã‚Â· Native Windows Graphics Application");
+            println!("Aurelia · Native Windows Graphics Application");
             println!();
             println!("Usage: aurelia [FILE]");
             println!("       aurelia --register-shell     (Register Windows Explorer context menu)");
@@ -3384,7 +3384,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("=== AURELIA Ã‚Â· ILLUSTRATION & ANIMATION STUDIO ===");
+    println!("=== AURELIA · ILLUSTRATION & ANIMATION STUDIO ===");
 
     // Opt into per-monitor V2 DPI awareness before any window exists, so GDI
     // surfaces are not bitmap-stretched on scaled displays. Failure is harmless
@@ -3460,7 +3460,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "A crash-recovery snapshot was found:\n{}\n\nRestore it?\n\nYes = open the snapshot\nNo = discard it and keep the saved file",
                 recovery_path.display()
             ));
-            let caption = to_wide("Aurelia Ã‚Â· Recover artwork");
+            let caption = to_wide("Aurelia · Recover artwork");
             let answer = unsafe {
                 MessageBoxW(
                     std::ptr::null_mut(),
@@ -3549,7 +3549,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let h_instance = GetModuleHandleW(std::ptr::null());
         let class_name = to_wide("AureliaStudio");
-        let title = to_wide("Aurelia Ã‚Â· Illustration & Animation Studio");
+        let title = to_wide("Aurelia · Illustration & Animation Studio");
 
         let idc_arrow = 32512 as usize as *const u16;
         let h_cursor = LoadCursorW(std::ptr::null_mut(), idc_arrow);
@@ -3635,7 +3635,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let app_ptr = GLOBAL_APP_PTR;
             if !app_ptr.is_null() {
                 let app = &mut *app_ptr;
-                let title = format!("Aurelia Ã‚Â· {}", app.state.document_title());
+                let title = format!("Aurelia · {}", app.state.document_title());
                 if title != app.last_window_title {
                     app.last_window_title = title.clone();
                     let wide = to_wide(&title);
