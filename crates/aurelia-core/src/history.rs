@@ -156,8 +156,57 @@ impl PixelDelta {
     }
 }
 
-/// A layer edit stored as the regions that actually changed.
+/// A brush edit to a layer mask (#35).
 ///
+/// Masks are one byte per pixel, so a whole-buffer snapshot is cheap enough to be the
+/// documented unit of undo: there are no colour channels to diff and the mask is never
+/// reinterpreted. `enabled` travels with the pixels because undo must restore the state the
+/// user saw, not just the bytes.
+#[derive(Debug)]
+pub struct MaskPixelsCommand {
+    pub layer_id: u64,
+    pub description: &'static str,
+    pub before_pixels: Vec<u8>,
+    pub after_pixels: Vec<u8>,
+    pub before_enabled: bool,
+    pub after_enabled: bool,
+}
+
+impl Command for MaskPixelsCommand {
+    fn name(&self) -> &'static str {
+        self.description
+    }
+
+    fn cost(&self) -> usize {
+        self.before_pixels.len() + self.after_pixels.len()
+    }
+
+    fn undo(&mut self, doc: &mut Document) {
+        if let Some(mask) = doc
+            .get_layer_mut(self.layer_id)
+            .and_then(|layer| layer.mask.as_mut())
+        {
+            if mask.pixels.len() == self.before_pixels.len() {
+                mask.pixels.copy_from_slice(&self.before_pixels);
+                mask.enabled = self.before_enabled;
+            }
+        }
+    }
+
+    fn redo(&mut self, doc: &mut Document) {
+        if let Some(mask) = doc
+            .get_layer_mut(self.layer_id)
+            .and_then(|layer| layer.mask.as_mut())
+        {
+            if mask.pixels.len() == self.after_pixels.len() {
+                mask.pixels.copy_from_slice(&self.after_pixels);
+                mask.enabled = self.after_enabled;
+            }
+        }
+    }
+}
+
+/// A layer edit stored as the regions that actually changed.///
 /// This is the command ordinary edits push. The buffers are consumed at construction and
 /// dropped: what survives is the diff, whose size follows the edit rather than the canvas.
 /// Undo and redo replay the stored spans, so the result is byte-identical to the buffers the
@@ -934,5 +983,81 @@ mod tests {
         assert!(a.is_empty() && c.len() == 1);
         assert_eq!(stack.generation(), generation);
         assert_eq!(stack.total_retained_bytes(), total);
+    }
+}
+
+#[cfg(test)]
+mod mask_history_tests {
+    use super::{Command, MaskPixelsCommand};
+    use crate::document::Document;
+    use crate::layer::LayerMask;
+
+    #[test]
+    fn mask_undo_restores_pixels_and_enabled_state() {
+        let mut doc = Document::new(8, 8);
+        let layer_id = doc.active_layer_id;
+        doc.add_layer_mask(layer_id, None);
+        let before = doc
+            .get_layer(layer_id)
+            .and_then(|layer| layer.mask.as_ref())
+            .map(|mask| mask.pixels.clone())
+            .expect("mask");
+
+        if let Some(mask) = doc.get_layer_mut(layer_id).and_then(|l| l.mask.as_mut()) {
+            mask.paint_dab(glam::Vec2::new(4.0, 4.0), 3.0, 1.0, 1.0, 0, None);
+            mask.enabled = false;
+        }
+        let after = doc
+            .get_layer(layer_id)
+            .and_then(|layer| layer.mask.as_ref())
+            .map(|mask| mask.pixels.clone())
+            .expect("mask");
+
+        let mut command = MaskPixelsCommand {
+            layer_id,
+            description: "Mask stroke",
+            before_pixels: before.clone(),
+            after_pixels: after.clone(),
+            before_enabled: true,
+            after_enabled: false,
+        };
+        assert_eq!(command.cost(), before.len() + after.len());
+        assert_ne!(before, after, "the fixture must change the mask");
+
+        command.undo(&mut doc);
+        let restored = doc.get_layer(layer_id).and_then(|l| l.mask.as_ref()).expect("mask");
+        assert_eq!(restored.pixels, before);
+        assert!(restored.enabled, "disabled state is part of the undone state");
+
+        command.redo(&mut doc);
+        let reapplied = doc.get_layer(layer_id).and_then(|l| l.mask.as_ref()).expect("mask");
+        assert_eq!(reapplied.pixels, after);
+        assert!(!reapplied.enabled);
+
+        // A missing mask is not resurrected by undo, and must not panic.
+        doc.remove_layer_mask(layer_id);
+        command.undo(&mut doc);
+        assert!(doc.get_layer(layer_id).and_then(|l| l.mask.as_ref()).is_none());
+    }
+
+    /// LayerMask is the mask type the command guards against; a size change (for example after
+    /// a canvas resize) must be ignored rather than panicking on a slice length mismatch.
+    #[test]
+    fn mask_undo_ignores_a_size_mismatch() {
+        let mut doc = Document::new(8, 8);
+        let layer_id = doc.active_layer_id;
+        doc.add_layer_mask(layer_id, None);
+        let mut command = MaskPixelsCommand {
+            layer_id,
+            description: "Mask stroke",
+            before_pixels: vec![0u8; 4],
+            after_pixels: vec![255u8; 4],
+            before_enabled: true,
+            after_enabled: true,
+        };
+        command.undo(&mut doc);
+        let mask = doc.get_layer(layer_id).and_then(|l| l.mask.as_ref()).expect("mask");
+        assert_eq!(mask.pixels.len(), 64, "the mismatched snapshot must not resize the mask");
+        assert!(mask.is_all_visible());
     }
 }

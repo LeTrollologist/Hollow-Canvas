@@ -397,6 +397,97 @@ impl LayerMask {
     pub fn is_all_visible(&self) -> bool {
         self.pixels.iter().all(|&p| p == 255)
     }
+
+    /// Paints one brush dab into the mask, moving covered pixels toward `target`
+    /// (`255` reveals, `0` conceals).
+    ///
+    /// This is the mask equivalent of a pixel dab: the same radius, hardness falloff, opacity
+    /// and selection gating as [`SelectionMask::paint_circle`], but the blend is a scalar
+    /// interpolation toward the paint value instead of an additive coverage. Working in the
+    /// mask's own 8-bit domain keeps a 16-bit document's mask independent of its pixel
+    /// precision, which is the documented mask-storage rule.
+    pub fn paint_dab(
+        &mut self,
+        center: glam::Vec2,
+        radius: f32,
+        hardness: f32,
+        opacity: f32,
+        target: u8,
+        selection: Option<&crate::selection::SelectionMask>,
+    ) {
+        if radius <= 0.0 || opacity <= 0.0 || self.width == 0 || self.height == 0 {
+            return;
+        }
+        let r_ceil = (radius + 1.0).ceil() as i32;
+        let cx = center.x.round() as i32;
+        let cy = center.y.round() as i32;
+        let min_x = (cx - r_ceil).max(0) as u32;
+        let max_x = ((cx + r_ceil + 1).max(0) as u32).min(self.width);
+        let min_y = (cy - r_ceil).max(0) as u32;
+        let max_y = ((cy + r_ceil + 1).max(0) as u32).min(self.height);
+
+        let r_sq = radius * radius;
+        let h = hardness.clamp(0.05, 1.0);
+        let inner_r = radius * h;
+        let inner_r_sq = inner_r * inner_r;
+        let inv_falloff = 1.0 / (radius - inner_r).max(0.001);
+        let target = target as f32;
+
+        for y in min_y..max_y {
+            let dy = y as f32 + 0.5 - center.y;
+            let dy_sq = dy * dy;
+            for x in min_x..max_x {
+                let dx = x as f32 + 0.5 - center.x;
+                let d_sq = dx * dx + dy_sq;
+                if d_sq > r_sq {
+                    continue;
+                }
+                let factor = if d_sq <= inner_r_sq {
+                    1.0
+                } else {
+                    let d = d_sq.sqrt();
+                    (1.0 - (d - inner_r) * inv_falloff).clamp(0.0, 1.0)
+                };
+                let selected = selection
+                    .map(|mask| mask.get_value(x, y) as f32 / 255.0)
+                    .unwrap_or(1.0);
+                let coverage = (factor * opacity * selected).clamp(0.0, 1.0);
+                if coverage <= 0.0 {
+                    continue;
+                }
+                let idx = (y as usize) * (self.width as usize) + (x as usize);
+                if let Some(pixel) = self.pixels.get_mut(idx) {
+                    let current = *pixel as f32;
+                    *pixel = (current + (target - current) * coverage)
+                        .round()
+                        .clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+    }
+
+    /// Paints a straight dab run between two points, spaced by a quarter of the radius.
+    ///
+    /// The spacing matches the pixel brush's dab cadence closely enough that a mask stroke
+    /// feels like a pixel stroke; it does not re-implement the pixel brush itself.
+    pub fn paint_segment(
+        &mut self,
+        from: glam::Vec2,
+        to: glam::Vec2,
+        radius: f32,
+        hardness: f32,
+        opacity: f32,
+        target: u8,
+        selection: Option<&crate::selection::SelectionMask>,
+    ) {
+        let distance = (to - from).length();
+        let spacing = (radius * 0.25).max(0.5);
+        let steps = ((distance / spacing).ceil() as u32).max(1);
+        for step in 0..=steps {
+            let t = step as f32 / steps as f32;
+            self.paint_dab(from.lerp(to, t), radius, hardness, opacity, target, selection);
+        }
+    }
 }
 
 impl Layer {
@@ -944,3 +1035,83 @@ impl Layer {
         }
     }
 }
+
+#[cfg(test)]
+mod mask_paint_tests {
+    use super::{Layer, LayerBuffer, LayerMask, PixelFormat};
+    use crate::selection::SelectionMask;
+    use glam::Vec2;
+
+    fn mask(width: u32, height: u32, value: u8) -> LayerMask {
+        LayerMask::full(width, height, value)
+    }
+
+    #[test]
+    fn painting_white_reveals_and_black_conceals_with_hardness_falloff() {
+        let mut concealed = mask(9, 9, 0);
+        concealed.paint_dab(Vec2::new(4.5, 4.5), 4.0, 1.0, 1.0, 255, None);
+        assert_eq!(concealed.alpha_at(4, 4), 255, "a hard dab is fully opaque at its centre");
+        assert_eq!(concealed.alpha_at(0, 0), 0, "outside the radius is untouched");
+
+        let mut revealed = mask(9, 9, 255);
+        revealed.paint_dab(Vec2::new(4.5, 4.5), 4.0, 1.0, 1.0, 0, None);
+        assert_eq!(revealed.alpha_at(4, 4), 0);
+
+        // Soft edge: a pixel inside the radius but outside the hard core is partial.
+        let mut soft = mask(9, 9, 0);
+        soft.paint_dab(Vec2::new(4.5, 4.5), 4.0, 0.3, 1.0, 255, None);
+        let edge = soft.alpha_at(7, 4);
+        assert!(edge > 0 && edge < 255, "soft falloff should be partial, got {edge}");
+    }
+
+    #[test]
+    fn opacity_and_selection_both_scale_the_paint() {
+        let mut half = mask(9, 9, 0);
+        half.paint_dab(Vec2::new(4.5, 4.5), 4.0, 1.0, 0.5, 255, None);
+        let centre = half.alpha_at(4, 4);
+        assert!(centre > 100 && centre < 160, "50% opacity should land near half, got {centre}");
+
+        let mut selected = mask(9, 9, 0);
+        let mut selection = SelectionMask::new(9, 9);
+        selection.paint_circle(Vec2::new(4.5, 4.5), 2.0, 1.0, 1.0);
+        selected.paint_dab(Vec2::new(4.5, 4.5), 4.0, 1.0, 1.0, 255, Some(&selection));
+        assert_eq!(selected.alpha_at(4, 4), 255, "inside the selection paints fully");
+        assert_eq!(selected.alpha_at(0, 0), 0);
+        assert_eq!(
+            selected.alpha_at(8, 8),
+            0,
+            "outside the selection nothing is painted even inside the dab"
+        );
+    }
+
+    #[test]
+    fn a_segment_covers_the_whole_run_between_endpoints() {
+        let mut mask = mask(32, 8, 0);
+        mask.paint_segment(Vec2::new(2.0, 4.0), Vec2::new(30.0, 4.0), 3.0, 1.0, 1.0, 255, None);
+        for x in 2..=30 {
+            assert!(mask.alpha_at(x, 4) > 0, "x={x} should be painted");
+        }
+        assert_eq!(mask.alpha_at(30, 0), 0, "the stroke stays within its radius");
+    }
+
+    /// Mask painting must not touch the layer's pixels and must work on a 16-bit layer, whose
+    /// storage is unrelated to the mask's 8-bit domain.
+    #[test]
+    fn mask_painting_is_independent_of_layer_pixel_storage() {
+        let mut layer = Layer::new(1, "Mask test", 8, 8);
+        layer.buffer = LayerBuffer::Srgb16(vec![1234u16; 8 * 8 * 4]);
+        layer.format();
+        let before = layer.storage_bytes();
+        assert_eq!(layer.format(), PixelFormat::Srgb16);
+
+        layer.mask = Some(LayerMask::full(8, 8, 255));
+        if let Some(mask) = layer.mask.as_mut() {
+            mask.paint_dab(Vec2::new(4.0, 4.0), 3.0, 1.0, 1.0, 0, None);
+        }
+        assert_eq!(layer.storage_bytes(), before, "pixels are untouched by mask painting");
+        assert_eq!(layer.format(), PixelFormat::Srgb16);
+        assert_eq!(layer.mask.as_ref().map(|m| m.alpha_at(4, 4)), Some(0));
+    }
+}
+
+

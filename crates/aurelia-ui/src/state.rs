@@ -339,6 +339,15 @@ pub struct AppState {
     pub show_ui_panels: bool, // Zen Mode / Full Canvas toggle
     pub show_gallery: bool,
 
+    // ── Mask editing (#35) ──
+    /// When true, freehand strokes edit the active layer's mask instead of its pixels.
+    pub mask_editing: bool,
+    /// Ruby overlay showing what the mask hides.
+    pub mask_overlay: bool,
+    /// Overlay texture, rebuilt only when the mask changes.
+    pub mask_overlay_texture: Option<egui::TextureHandle>,
+    pub mask_overlay_dirty: bool,
+
     // Overlay Toggles & Viewport
     pub show_grid: bool,
     pub grid_size: u32,
@@ -614,6 +623,10 @@ impl AppState {
             show_about_dialog: false,
             show_ui_panels: true,
             show_gallery: false,
+            mask_editing: false,
+            mask_overlay: true,
+            mask_overlay_texture: None,
+            mask_overlay_dirty: true,
 
             show_grid: false,
             grid_size: 32,
@@ -1294,8 +1307,85 @@ impl AppState {
         }
     }
 
-    pub fn push_color_history(&mut self, color: Color) {
-        if self.color_history.first() == Some(&color) {
+    /// True when the active layer has a mask that freehand strokes can edit.
+    pub fn active_mask_available(&self) -> bool {
+        self.document
+            .active_layer()
+            .and_then(|layer| layer.mask.as_ref())
+            .is_some()
+    }
+
+    /// Toggles mask editing, refusing when there is no mask to edit.
+    pub fn toggle_mask_editing(&mut self) {
+        if self.mask_editing {
+            self.mask_editing = false;
+            self.set_status("Editing layer pixels");
+        } else if self.active_mask_available() {
+            self.mask_editing = true;
+            self.set_status("Editing layer mask — brush strokes write mask alpha");
+        } else {
+            self.set_status("Add a layer mask before painting on it");
+        }
+        self.mask_overlay_dirty = true;
+    }
+
+    /// The grey level a mask stroke paints: white reveals, black conceals, and the eraser
+    /// always conceals regardless of the paint colour.
+    fn mask_paint_value(&self) -> u8 {
+        if self.brush.tool == aurelia_core::brush::ToolType::Eraser {
+            return 0;
+        }
+        let [r, g, b, _] = self.brush.primary_color.to_rgba8();
+        (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).round() as u8
+    }
+
+    fn paint_mask_with(
+        &mut self,
+        paint: impl FnOnce(
+            &mut aurelia_core::layer::LayerMask,
+            f32,
+            f32,
+            f32,
+            u8,
+            Option<&SelectionMask>,
+        ),
+    ) {
+        let target = self.mask_paint_value();
+        let radius = (self.brush.effective_size(1.0) * 0.5).max(0.5);
+        let hardness = self.brush.hardness;
+        let opacity = self.brush.opacity;
+        let Self {
+            document,
+            selection,
+            mask_overlay_dirty,
+            ..
+        } = self;
+        let Some(mask) = document
+            .active_layer_mut()
+            .and_then(|layer| layer.mask.as_mut())
+            .filter(|mask| mask.enabled)
+        else {
+            return;
+        };
+        paint(mask, radius, hardness, opacity, target, selection.as_ref());
+        *mask_overlay_dirty = true;
+    }
+
+    /// Paints one mask dab at `pos` (#35).
+    pub fn paint_mask_dab(&mut self, pos: Vec2) {
+        self.paint_mask_with(move |mask, radius, hardness, opacity, target, selection| {
+            mask.paint_dab(pos, radius, hardness, opacity, target, selection);
+        });
+    }
+
+    /// Paints the mask along a stroke segment (#35), using the same dab cadence as pixels.
+    pub fn paint_mask_segment(&mut self, from: Vec2, to: Vec2) {
+        self.paint_mask_with(move |mask, radius, hardness, opacity, target, selection| {
+            mask.paint_segment(from, to, radius, hardness, opacity, target, selection);
+        });
+    }
+
+    pub fn push_color_history(&mut self, color: Color) {        if self.color_history.first() == Some(&color) {
             return;
         }
         self.color_history.retain(|&c| c != color);
@@ -3240,6 +3330,75 @@ mod selection_modes {
         // The document edit is newer, so the first undo must go to the document, not the mask.
         assert_eq!(s.undo_action(), Some("Noop"));
         assert!(s.selection.is_some(), "the selection edit is not undone by a document undo");
+    }
+}
+
+
+#[cfg(test)]
+mod mask_editing {
+    use super::AppState;
+    use aurelia_core::layer::PixelFormat;
+
+    fn state_with_mask(format: PixelFormat) -> AppState {
+        let mut state = AppState::new(8, 8);
+        if format == PixelFormat::Srgb16 {
+            let id = state.document.active_layer_id;
+            if let Some(layer) = state.document.get_layer_mut(id) {
+                layer.convert_format(PixelFormat::Srgb16);
+            }
+        }
+        let id = state.document.active_layer_id;
+        state.document.add_layer_mask(id, None);
+        state
+    }
+
+    #[test]
+    fn stroke_paints_mask_alpha_without_touching_pixels() {
+        for format in [PixelFormat::Srgb8, PixelFormat::Srgb16] {
+            let mut state = state_with_mask(format);
+            let id = state.document.active_layer_id;
+            let pixels_before = state.document.get_layer(id).expect("layer").storage_bytes();
+            state.mask_editing = true;
+
+            state.paint_mask_dab(glam::Vec2::new(4.0, 4.0));
+            state.paint_mask_segment(glam::Vec2::new(2.0, 6.0), glam::Vec2::new(6.0, 6.0));
+
+            let layer = state.document.get_layer(id).expect("layer");
+            assert_eq!(layer.format(), format, "mask painting must preserve storage format");
+            assert_eq!(layer.storage_bytes(), pixels_before, "pixels must not be touched");
+            let mask = layer.mask.as_ref().expect("mask");
+            assert_ne!(mask.pixels, vec![255u8; 64], "the stroke must change the mask");
+        }
+    }
+
+    #[test]
+    fn toggle_refuses_without_a_mask_and_accepts_with_one() {
+        let mut state = AppState::new(8, 8);
+        state.toggle_mask_editing();
+        assert!(!state.mask_editing, "no mask, nothing to edit");
+        assert!(state.status_message.contains("Add a layer mask"));
+
+        let id = state.document.active_layer_id;
+        state.document.add_layer_mask(id, None);
+        state.toggle_mask_editing();
+        assert!(state.mask_editing);
+        state.toggle_mask_editing();
+        assert!(!state.mask_editing);
+    }
+
+    #[test]
+    fn eraser_conceals_even_with_a_white_primary_colour() {
+        let mut state = state_with_mask(PixelFormat::Srgb8);
+        state.brush.primary_color = aurelia_core::color::Color::WHITE;
+        state.brush.tool = aurelia_core::brush::ToolType::Eraser;
+        state.mask_editing = true;
+        state.paint_mask_dab(glam::Vec2::new(4.0, 4.0));
+        let mask = state
+            .document
+            .active_layer()
+            .and_then(|layer| layer.mask.as_ref())
+            .expect("mask");
+        assert_eq!(mask.alpha_at(4, 4), 0, "the eraser always conceals");
     }
 }
 

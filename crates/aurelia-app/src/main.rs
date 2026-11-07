@@ -377,6 +377,10 @@ struct AureliaDesktopApp {
     before_stroke_pixels: Vec<u8>,
     before_move_offset: (i32, i32),
     active_snapshot_taken: bool,
+    /// Mask bytes before the current mask stroke (#35), and whether one is in progress.
+    before_mask_pixels: Vec<u8>,
+    mask_snapshot_taken: bool,
+    mask_stroke_layer: Option<u64>,
     mouse_pos: egui::Pos2,
     last_point_time: Instant,
     current_velocity: f32,
@@ -1666,6 +1670,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                                     }
                                 }
                             }
+                        } else if app.mask_snapshot_taken {
+                            // Mask stroke: the segment is painted into mask alpha, once per
+                            // event, so the layer buffer is untouched (#35).
+                            if n == 2 {
+                                app.state.paint_mask_segment(app.stroke_points[0].position, app.stroke_points[1].position);
+                            } else if n >= 3 {
+                                app.state.paint_mask_segment(app.stroke_points[n - 2].position, app.stroke_points[n - 1].position);
+                            }
                         } else {
                             let sel = app.state.selection.as_ref();
                             if n == 2 {
@@ -1980,14 +1992,35 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                         }
                     }
                 } else {
-                    if let Some(layer) = app.state.document.active_layer() {
-                        app.before_stroke_pixels = layer.storage_bytes();
-                        app.active_snapshot_taken = true;
+                    let mask_target = app
+                        .state
+                        .mask_editing
+                        .then(|| {
+                            app.state
+                                .document
+                                .active_layer()
+                                .filter(|layer| layer.mask.as_ref().is_some_and(|m| m.enabled))
+                                .map(|layer| (layer.id, layer.mask.as_ref().map(|m| m.pixels.clone())))
+                        })
+                        .flatten();
+                    if let Some((layer_id, before)) = mask_target {
+                        // Mask strokes bypass the pixel rasterizer entirely: they write mask
+                        // alpha, so the layer's pixels are never touched (#35).
+                        app.before_mask_pixels = before.unwrap_or_default();
+                        app.mask_snapshot_taken = true;
+                        app.mask_stroke_layer = Some(layer_id);
+                        app.state.paint_mask_dab(canvas_pos);
+                        app.stroke_dirty = true;
+                    } else {
+                        if let Some(layer) = app.state.document.active_layer() {
+                            app.before_stroke_pixels = layer.storage_bytes();
+                            app.active_snapshot_taken = true;
+                        }
+                        let point = BrushPoint::new(canvas_pos, 1.0);
+                        let sel = app.state.selection.as_ref();
+                        StrokeRasterizer::paint_dot(&mut app.state.document, point, &app.state.brush, &app.state.symmetry, sel);
+                        app.stroke_dirty = true;
                     }
-                    let point = BrushPoint::new(canvas_pos, 1.0);
-                    let sel = app.state.selection.as_ref();
-                    StrokeRasterizer::paint_dot(&mut app.state.document, point, &app.state.brush, &app.state.symmetry, sel);
-                    app.stroke_dirty = true;
                 }
                 app.stabilized_pos = Some(canvas_pos);
             }
@@ -2126,34 +2159,68 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lpa
                     }
 
                     let n = app.stroke_points.len();
-                    let sel = app.state.selection.as_ref();
-                    if n == 2 {
-                        let stroke_brush = app.tilted_brush();
-                        StrokeRasterizer::paint_segment(
-                            &mut app.state.document,
-                            app.stroke_points[0],
-                            app.stroke_points[1],
-                            &stroke_brush,
-                            &app.state.symmetry,
-                            sel,
-                        );
-                    } else if n >= 3 {
-                        let stroke_brush = app.tilted_brush();
-                        StrokeRasterizer::paint_spline(
-                            &mut app.state.document,
-                            app.stroke_points[n - 3],
-                            app.stroke_points[n - 2],
-                            app.stroke_points[n - 1],
-                            app.stroke_points[n - 1],
-                            &stroke_brush,
-                            &app.state.symmetry,
-                            sel,
-                        );
+                    if app.mask_snapshot_taken {
+                        if n >= 2 {
+                            app.state.paint_mask_segment(
+                                app.stroke_points[n - 2].position,
+                                app.stroke_points[n - 1].position,
+                            );
+                        }
+                    } else {
+                        let sel = app.state.selection.as_ref();
+                        if n == 2 {
+                            let stroke_brush = app.tilted_brush();
+                            StrokeRasterizer::paint_segment(
+                                &mut app.state.document,
+                                app.stroke_points[0],
+                                app.stroke_points[1],
+                                &stroke_brush,
+                                &app.state.symmetry,
+                                sel,
+                            );
+                        } else if n >= 3 {
+                            let stroke_brush = app.tilted_brush();
+                            StrokeRasterizer::paint_spline(
+                                &mut app.state.document,
+                                app.stroke_points[n - 3],
+                                app.stroke_points[n - 2],
+                                app.stroke_points[n - 1],
+                                app.stroke_points[n - 1],
+                                &stroke_brush,
+                                &app.state.symmetry,
+                                sel,
+                            );
+                        }
                     }
                 }
                 app.stroke_points.clear();
                 app.stabilized_pos = None;
                 app.stroke_perspective_axis = None;
+            }
+
+            if app.mask_snapshot_taken {
+                let layer_id = app.mask_stroke_layer.take();
+                let after = layer_id
+                    .and_then(|id| app.state.document.get_layer(id))
+                    .and_then(|layer| layer.mask.as_ref())
+                    .map(|mask| (mask.pixels.clone(), mask.enabled));
+                if let (true, Some((after_pixels, enabled)), Some(id)) = (app.stroke_dirty, after, layer_id) {
+                    let before = std::mem::take(&mut app.before_mask_pixels);
+                    if before != after_pixels {
+                        let cmd = Box::new(aurelia_core::history::MaskPixelsCommand {
+                            layer_id: id,
+                            description: app.state.brush.tool.label(),
+                            before_pixels: before,
+                            after_pixels,
+                            before_enabled: enabled,
+                            after_enabled: enabled,
+                        });
+                        app.state.history.push(cmd);
+                    }
+                }
+                app.before_mask_pixels.clear();
+                app.mask_snapshot_taken = false;
+                app.stroke_dirty = false;
             }
 
             if app.active_snapshot_taken {
@@ -3371,6 +3438,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         before_stroke_pixels: Vec::new(),
         before_move_offset: (0, 0),
         active_snapshot_taken: false,
+        before_mask_pixels: Vec::new(),
+        mask_snapshot_taken: false,
+        mask_stroke_layer: None,
         mouse_pos: egui::Pos2::ZERO,
         last_point_time: Instant::now(),
         current_velocity: 0.0,

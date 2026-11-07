@@ -1080,6 +1080,10 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                         };
 
                         metric(ui, format!("{} × {} px", state.document.width, state.document.height), design::TEXT_MUTED);
+                        if state.mask_editing && state.active_mask_available() {
+                            metric(ui, "·".to_string(), design::TEXT_MUTED);
+                            metric(ui, "MASK".to_string(), Color32::from_rgb(232, 110, 110));
+                        }
                         metric(ui, "·".to_string(), design::TEXT_MUTED);
                         metric(
                             ui,
@@ -2256,18 +2260,43 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
 
                                         // Editable Layer/Group Name — takes the space that is left.
                                         {
-                                            let mask = state.document.layers[i].mask.as_ref();
-                                            if let Some(mask) = mask {
-                                                ui.label(
-                                                    RichText::new("\u{25D0}")
-                                                        .size(11.0)
-                                                        .color(if mask.enabled { accent_c32 } else { design::TEXT_MUTED }),
-                                                )
-                                                .on_hover_text(if mask.enabled {
-                                                    "Has a layer mask"
+                                            let mask_state = state.document.layers[i]
+                                                .mask
+                                                .as_ref()
+                                                .map(|mask| mask.enabled);
+                                            if let Some(mask_enabled) = mask_state {
+                                                let active = state.document.active_layer_id == layer_id;
+                                                let editing = active && state.mask_editing;
+                                                let color = if editing {
+                                                    design::GOLD
+                                                } else if mask_enabled {
+                                                    accent_c32
+                                                } else {
+                                                    design::TEXT_MUTED
+                                                };
+                                                let response = ui.add(
+                                                    egui::Button::new(
+                                                        RichText::new("\u{25D0}").size(11.0).color(color),
+                                                    )
+                                                    .frame(false),
+                                                );
+                                                let response = response.on_hover_text(if editing {
+                                                    "Editing this mask — click to paint layer pixels again"
+                                                } else if mask_enabled {
+                                                    "Click to paint on this mask"
                                                 } else {
                                                     "Has a disabled layer mask"
                                                 });
+                                                if response.clicked() {
+                                                    state.document.active_layer_id = layer_id;
+                                                    state.mask_editing = !editing;
+                                                    state.mask_overlay_dirty = true;
+                                                    state.set_status(if editing {
+                                                        "Editing layer pixels"
+                                                    } else {
+                                                        "Editing layer mask — brush strokes write mask alpha"
+                                                    });
+                                                }
                                             }
                                         }
                                         let name_w = (ui.available_width() - 92.0).clamp(48.0, 150.0);
@@ -2524,10 +2553,12 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 // Clone the selection so the document can borrow mutably.
                                 let selection = state.selection.clone();
                                 state.document.add_layer_mask(id, selection.as_ref());
+                                state.mask_overlay_dirty = true;
                                 state.set_status("Layer mask created");
                             }
                             LayerCommand::MaskInvert(id) => {
                                 state.document.invert_layer_mask(id);
+                                state.mask_overlay_dirty = true;
                                 state.set_status("Layer mask inverted");
                             }
                             LayerCommand::MaskToggle(id) => {
@@ -2538,10 +2569,15 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                     .map(|m| m.enabled)
                                     .unwrap_or(false);
                                 state.document.set_layer_mask_enabled(id, next);
+                                state.mask_overlay_dirty = true;
                                 state.set_status(if next { "Layer mask enabled" } else { "Layer mask disabled" });
                             }
                             LayerCommand::MaskRemove(id) => {
                                 state.document.remove_layer_mask(id);
+                                if state.mask_editing {
+                                    state.mask_editing = false;
+                                }
+                                state.mask_overlay_dirty = true;
                                 state.set_status("Layer mask removed");
                             }
                             LayerCommand::RasterizeActiveText => {
@@ -4014,6 +4050,70 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             });
                     });
             }
+        }
+    }
+
+    // ── 9.4b MASK EDITING OVERLAY (#35) ──
+    if state.mask_editing && state.mask_overlay {
+        if state.mask_overlay_dirty {
+            let image = state
+                .document
+                .active_layer()
+                .and_then(|layer| layer.mask.as_ref())
+                .map(|mask| {
+                    let mut rgba = Vec::with_capacity(mask.pixels.len() * 4);
+                    for &value in &mask.pixels {
+                        // Hidden pixels read ruby; visible pixels are transparent, so the
+                        // overlay shows exactly what the mask conceals.
+                        let alpha = ((255 - value) as f32 * 0.42).round() as u8;
+                        rgba.extend_from_slice(&[232, 74, 74, alpha]);
+                    }
+                    (mask.width, mask.height, rgba)
+                });
+            state.mask_overlay_texture = image.map(|(width, height, rgba)| {
+                ctx.load_texture(
+                    "mask_overlay_texture",
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [width as usize, height as usize],
+                        &rgba,
+                    ),
+                    Default::default(),
+                )
+            });
+            state.mask_overlay_dirty = false;
+        }
+        if let Some(texture) = &state.mask_overlay_texture {
+            let (win_w, win_h) = screen_px(ctx);
+            let p0 = state.canvas_to_ui(glam::Vec2::ZERO, win_w, win_h);
+            let p1 = state.canvas_to_ui(
+                glam::Vec2::new(
+                    state.document.width as f32,
+                    state.document.height as f32,
+                ),
+                win_w,
+                win_h,
+            );
+            let [vx0, vy0, vx1, vy1] = state.viewport_rect(win_w as usize, win_h as usize);
+            let ppp = ctx.pixels_per_point().max(0.01);
+            let clip = egui::Rect::from_min_max(
+                egui::pos2(vx0 as f32 / ppp, vy0 as f32 / ppp),
+                egui::pos2(vx1 as f32 / ppp, vy1 as f32 / ppp),
+            );
+            let painter = ctx
+                .layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::new("mask_overlay_layer"),
+                ))
+                .with_clip_rect(clip.intersect(ctx.screen_rect()));
+            painter.image(
+                texture.id(),
+                egui::Rect::from_min_max(
+                    egui::pos2(p0.x, p0.y),
+                    egui::pos2(p1.x, p1.y),
+                ),
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
         }
     }
 
@@ -5629,3 +5729,4 @@ mod layout_tests {
         assert_eq!(letterbox(slot, 0.0), slot);
     }
 }
+
