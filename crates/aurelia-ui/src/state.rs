@@ -301,6 +301,46 @@ impl StraightRuler {
         let along = (point - self.origin).dot(dir).clamp(0.0, self.length);
         self.origin + dir * along
     }
+
+    /// Perpendicular distance from `point` to the ruler's infinite centerline.
+    pub fn distance_to_line(&self, point: Vec2) -> f32 {
+        let dir = Vec2::new(self.angle_rad.cos(), self.angle_rad.sin());
+        let normal = Vec2::new(-dir.y, dir.x);
+        (point - self.origin).dot(normal).abs()
+    }
+
+    /// True when `point` projects inside the ruler's span rather than past an endpoint.
+    pub fn covers_projection(&self, point: Vec2) -> bool {
+        let dir = Vec2::new(self.angle_rad.cos(), self.angle_rad.sin());
+        let along = (point - self.origin).dot(dir);
+        (0.0..=self.length).contains(&along)
+    }
+
+    /// Canvas points where the ruler's span crosses vertical or horizontal guide lines.
+    ///
+    /// Used to snap to an angled ruler/guide intersection exactly: two axis snaps can only
+    /// meet at one point, and that point is usually not on the ruler.
+    pub fn axis_intersections(&self, verticals: &[f32], horizontals: &[f32]) -> Vec<Vec2> {
+        let mut points = Vec::new();
+        let dir = Vec2::new(self.angle_rad.cos(), self.angle_rad.sin());
+        if dir.x.abs() > 1e-6 {
+            for &x in verticals {
+                let t = (x - self.origin.x) / dir.x;
+                if (0.0..=self.length).contains(&t) {
+                    points.push(self.origin + dir * t);
+                }
+            }
+        }
+        if dir.y.abs() > 1e-6 {
+            for &y in horizontals {
+                let t = (y - self.origin.y) / dir.y;
+                if (0.0..=self.length).contains(&t) {
+                    points.push(self.origin + dir * t);
+                }
+            }
+        }
+        points
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -361,7 +401,11 @@ pub struct AppState {
     pub snap_enabled: bool,
     pub snap_to_guides: bool,
     pub snap_to_layers: bool,
+    /// Snap to the straight-edge ruler (any angle), including ruler/guide intersections.
+    pub snap_to_ruler: bool,
     pub snap_markers: Vec<SnapMarker>,
+    /// Canvas point the ruler snapped to this gesture, drawn as a crosshair.
+    pub ruler_snap_marker: Option<Vec2>,
     pub straight_ruler: Option<StraightRuler>,
     /// Freehand strokes are projected onto the straight-edge ruler while enabled.
     pub ruler_draw: bool,
@@ -638,6 +682,8 @@ impl AppState {
             snap_enabled: true,
             snap_to_guides: true,
             snap_to_layers: true,
+            snap_to_ruler: true,
+            ruler_snap_marker: None,
             snap_markers: Vec::new(),
             straight_ruler: None,
             ruler_draw: false,
@@ -1436,6 +1482,22 @@ impl AppState {
         self.straight_ruler = None;
         self.ruler_draw = false;
         self.mark_editor_dirty();
+    }
+
+    /// Applies an angle preset to the straight-edge ruler (#41).
+    ///
+    /// Presets are actions, not toggles: choosing the angle the ruler already has leaves it
+    /// in place rather than deactivating it, and opening a ruler for the first time creates
+    /// one so the preset is never a dead control.
+    pub fn apply_ruler_preset(&mut self, degrees: f32) {
+        if self.straight_ruler.is_none() {
+            self.add_straight_ruler();
+        }
+        if let Some(ruler) = self.straight_ruler.as_mut() {
+            ruler.angle_rad = degrees.to_radians();
+        }
+        self.mark_editor_dirty();
+        self.set_status(format!("Ruler preset: {}°", degrees));
     }
 
     pub fn reset_grid_origin(&mut self) {
@@ -3402,3 +3464,71 @@ mod mask_editing {
     }
 }
 
+
+
+#[cfg(test)]
+mod ruler_snapping {
+    use super::{AppState, StraightRuler};
+    use glam::Vec2;
+
+    fn diagonal() -> StraightRuler {
+        // A 45 degree ruler from (0,0) to (100,100); the line is y = x.
+        StraightRuler {
+            origin: Vec2::ZERO,
+            angle_rad: std::f32::consts::FRAC_PI_4,
+            length: 141.42,
+        }
+    }
+
+    #[test]
+    fn distance_and_projection_follow_the_angled_centerline() {
+        let ruler = diagonal();
+        let point = Vec2::new(20.0, 0.0);
+        let expected = 20.0 / 2.0_f32.sqrt();
+        assert!((ruler.distance_to_line(point) - expected).abs() < 0.01);
+        let projected = ruler.constrain(point);
+        assert!((projected.x - projected.y).abs() < 0.01, "projection lands on y = x");
+        assert!(ruler.covers_projection(point));
+        // Past the far endpoint the projection clamps, but the line distance is unchanged.
+        let beyond = Vec2::new(200.0, 200.0);
+        assert!(!ruler.covers_projection(beyond));
+        assert!(ruler.distance_to_line(beyond) < 0.01);
+    }
+
+    #[test]
+    fn guide_intersections_are_exact_points_on_the_span_only() {
+        let ruler = diagonal();
+        let points = ruler.axis_intersections(&[25.0, -10.0], &[60.0, 500.0]);
+        assert_eq!(points.len(), 2, "one vertical and one horizontal intersect the span");
+        assert!((points[0].x - 25.0).abs() < 0.01 && (points[0].y - 25.0).abs() < 0.01);
+        assert!((points[1].x - 60.0).abs() < 0.01 && (points[1].y - 60.0).abs() < 0.01);
+
+        // A horizontal ruler has no vertical-crossing t value problem, but must still exclude
+        // guides outside its length.
+        let horizontal = StraightRuler {
+            origin: Vec2::new(10.0, 50.0),
+            angle_rad: 0.0,
+            length: 30.0,
+        };
+        let hits = horizontal.axis_intersections(&[20.0, 39.0, 60.0], &[50.0, 10.0]);
+        assert_eq!(hits.len(), 2, "x=20 and x=39 are on the span; x=60 is not");
+        assert!(hits.iter().all(|p| (p.y - 50.0).abs() < 0.01));
+    }
+
+    #[test]
+    fn presets_create_and_apply_without_toggling_off() {
+        let mut state = AppState::new(64, 64);
+        assert!(state.straight_ruler.is_none());
+        state.apply_ruler_preset(45.0);
+        let ruler = state.straight_ruler.expect("preset creates a ruler");
+        assert!((ruler.angle_rad.to_degrees() - 45.0).abs() < 0.01);
+
+        // Re-applying the same preset must keep it, not remove it.
+        state.apply_ruler_preset(45.0);
+        assert!(state.straight_ruler.is_some());
+        assert!((state.straight_ruler.expect("still there").angle_rad.to_degrees() - 45.0).abs() < 0.01);
+
+        state.apply_ruler_preset(90.0);
+        assert!((state.straight_ruler.expect("ruler").angle_rad.to_degrees() - 90.0).abs() < 0.01);
+    }
+}

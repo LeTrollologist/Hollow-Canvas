@@ -816,6 +816,41 @@ impl AureliaDesktopApp {
                 }
             }
         }
+        // Ruler snap (#39): if one of the moved bounds' reference points lies close to an
+        // angled ruler, slide the layer along the ruler's normal instead of by axis. Guides
+        // keep priority when both are within threshold, matching the existing snap order.
+        let mut ruler_shift = Vec2::ZERO;
+        let mut ruler_marker = None;
+        if self.state.snap_to_ruler && best_x.is_none() && best_y.is_none() {
+            if let Some(ruler) = self.state.straight_ruler {
+                let points = [
+                    Vec2::new(x0, y0),
+                    Vec2::new(x1, y0),
+                    Vec2::new(x0, y1),
+                    Vec2::new(x1, y1),
+                    Vec2::new((x0 + x1) * 0.5, (y0 + y1) * 0.5),
+                ];
+                let mut best: Option<(f32, Vec2)> = None;
+                for point in points {
+                    if !ruler.covers_projection(point) {
+                        continue;
+                    }
+                    let distance = ruler.distance_to_line(point);
+                    if distance <= threshold
+                        && best.is_none_or(|(best_distance, _)| distance < best_distance)
+                    {
+                        best = Some((distance, point));
+                    }
+                }
+                if let Some((_, point)) = best {
+                    let dir = Vec2::new(ruler.angle_rad.cos(), ruler.angle_rad.sin());
+                    let normal = Vec2::new(-dir.y, dir.x);
+                    let signed = (point - ruler.origin).dot(normal);
+                    ruler_shift = -normal * signed;
+                    ruler_marker = Some(ruler.constrain(point));
+                }
+            }
+        }
         if let Some(layer) = self.state.document.get_layer_mut(layer_id) {
             if let Some((delta, _)) = best_x {
                 layer.offset_x += delta.round() as i32;
@@ -823,7 +858,12 @@ impl AureliaDesktopApp {
             if let Some((delta, _)) = best_y {
                 layer.offset_y += delta.round() as i32;
             }
+            if ruler_shift != Vec2::ZERO {
+                layer.offset_x += ruler_shift.x.round() as i32;
+                layer.offset_y += ruler_shift.y.round() as i32;
+            }
         }
+        self.state.ruler_snap_marker = ruler_marker;
         if let Some((_, target)) = best_x {
             self.state.snap_markers.push(aurelia_ui::state::SnapMarker {
                 vertical: true,
@@ -841,6 +881,7 @@ impl AureliaDesktopApp {
     /// Snaps a selection point to the cached guide/layer/canvas targets.
     fn snap_point(&mut self, point: Vec2) -> Vec2 {
         self.state.snap_markers.clear();
+        self.state.ruler_snap_marker = None;
         let alt = unsafe { (GetKeyState(0x12) as i32 & 0x8000) != 0 };
         if !self.state.snap_enabled || alt {
             return point;
@@ -861,12 +902,51 @@ impl AureliaDesktopApp {
                 position: target,
             });
         }
+
+        // Ruler snap (#39): an angled ruler is not an x/y candidate, so it is resolved as a
+        // projection. A ruler/guide intersection is an exact point and wins over the line.
+        if self.state.snap_to_ruler {
+            if let Some(ruler) = self.state.straight_ruler {
+                let axis_delta = (snapped - point).length();
+                let mut best: Option<(f32, Vec2)> = None;
+                for intersection in ruler.axis_intersections(&self.snap_x, &self.snap_y) {
+                    let distance = (intersection - point).length();
+                    if distance <= threshold && best.is_none_or(|(current, _)| distance < current) {
+                        best = Some((distance, intersection));
+                    }
+                }
+                if best.is_none() && ruler.covers_projection(point) {
+                    let distance = ruler.distance_to_line(point);
+                    if distance <= threshold {
+                        best = Some((distance, ruler.constrain(point)));
+                    }
+                }
+                if let Some((distance, target)) = best {
+                    // The ruler wins ties, so an angled reference is never shadowed by an
+                    // axis line that happens to be the same distance away.
+                    if distance <= axis_delta {
+                        self.state.snap_markers.clear();
+                        self.state.ruler_snap_marker = Some(target);
+                        snapped = target;
+                    }
+                }
+            }
+        }
         snapped
     }
 
     /// Projects a freehand point onto the straight-edge ruler's centerline when
-    /// "Draw along ruler" is enabled.
+    /// "Draw along ruler" is enabled, or snaps to it within the snap threshold.
     fn constrain_to_ruler(&self, point: Vec2) -> Vec2 {
+        if let Some(ruler) = self.state.straight_ruler {
+            if self.state.snap_enabled && self.state.snap_to_ruler && ruler.covers_projection(point)
+            {
+                let threshold = 6.0 / self.state.zoom.max(0.01);
+                if ruler.distance_to_line(point) <= threshold {
+                    return ruler.constrain(point);
+                }
+            }
+        }
         if !self.state.ruler_draw {
             return point;
         }
@@ -898,10 +978,11 @@ impl AureliaDesktopApp {
 
     /// Starts a drag when the pointer is on an existing guide or the grid-origin handle.
     /// Called after the egui hit test so floating panels and HUDs keep their clicks.
+    ///
+    /// Guide and ruler manipulation is intentionally **not** gated on the Move tool (#41):
+    /// measurement references stay usable while painting or selecting. The hit bands are
+    /// narrow, so an ordinary brush stroke that does not start on a guide is unaffected.
     fn begin_guide_drag(&mut self, screen_pos: Vec2) -> bool {
-        if self.state.brush.tool != ToolType::Move {
-            return false;
-        }
         let win_w = self.win_w as f32;
         let win_h = self.win_h as f32;
         let [vx0, vy0, vx1, vy1] = self.state.viewport_rect(self.win_w, self.win_h);

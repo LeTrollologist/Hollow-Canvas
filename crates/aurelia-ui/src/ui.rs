@@ -1494,59 +1494,11 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                                 MoveMode::FullMove,
                                 "Full move (click a layer)",
                             );
-                            ui.checkbox(&mut state.guides_locked, "Lock guides");
-                            ui.checkbox(&mut state.snap_enabled, "Snap");
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut state.snap_to_guides, "guides");
-                                ui.checkbox(&mut state.snap_to_layers, "layers");
-                            });
                             ui.label(
                                 RichText::new("Space or middle-drag pans in both modes.")
                                     .size(8.5)
                                     .color(Color32::from_rgb(172, 161, 130)),
                             );
-                            ui.separator();
-                            if state.straight_ruler.is_some() {
-                                if ui.button("Remove straight-edge ruler").clicked() {
-                                    state.remove_straight_ruler();
-                                }
-                                ui.checkbox(&mut state.ruler_draw, "Draw along ruler");
-                                ui.label(
-                                    RichText::new("Drag body to move; drag end to rotate/stretch (Shift 15°).")
-                                        .size(8.5)
-                                        .color(Color32::from_rgb(172, 161, 130)),
-                                );
-                                let mut changed = false;
-                                if let Some(ruler) = &mut state.straight_ruler {
-                                    let mut degrees = ruler.angle_rad.to_degrees();
-                                    if ui
-                                        .add(
-                                            egui::DragValue::new(&mut degrees)
-                                                .speed(1.0)
-                                                .suffix("°")
-                                                .prefix("Angle "),
-                                        )
-                                        .changed()
-                                    {
-                                        ruler.angle_rad = degrees.to_radians();
-                                        changed = true;
-                                    }
-                                    changed |= ui
-                                        .add(
-                                            egui::DragValue::new(&mut ruler.length)
-                                                .speed(1.0)
-                                                .suffix(" px")
-                                                .prefix("Length ")
-                                                .range(50.0..=4000.0),
-                                        )
-                                        .changed();
-                                }
-                                if changed {
-                                    state.mark_editor_dirty();
-                                }
-                            } else if ui.button("Add straight-edge ruler").clicked() {
-                                state.add_straight_ruler();
-                            }
                         }
                         ToolType::Transform => {
                             if !state.transform_session.is_active {
@@ -1607,6 +1559,88 @@ pub fn render_ui(ctx: &egui::Context, state: &mut AppState) {
                             }
                         }
                         _ => {}
+                    }
+
+                    // ── GUIDES, RULER & SNAPPING (#39, #41) ──
+                    // Always visible, not nested under Move: snapping and guide locking stay
+                    // available while painting, selecting or transforming.
+                    ui.add_space(6.0);
+                    design::section(ui, "GUIDES & SNAPPING");
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut state.guides_locked, "Lock guides");
+                        ui.checkbox(&mut state.snap_enabled, "Snap");
+                    });
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut state.snap_to_guides, "guides");
+                        ui.checkbox(&mut state.snap_to_layers, "layers");
+                        ui.checkbox(&mut state.snap_to_ruler, "ruler");
+                    });
+
+                    if state.straight_ruler.is_some() {
+                        ui.horizontal(|ui| {
+                            if ui.button("Remove ruler").clicked() {
+                                state.remove_straight_ruler();
+                            }
+                            ui.checkbox(&mut state.ruler_draw, "Draw along ruler");
+                        });
+                        // Presets apply on click and never toggle off: picking the angle you
+                        // already have must be a no-op, not a deactivation (#41).
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset:").size(9.0).color(design::TEXT_MUTED));
+                            for (label, degrees) in [
+                                ("0°", 0.0_f32),
+                                ("30°", 30.0),
+                                ("45°", 45.0),
+                                ("60°", 60.0),
+                                ("90°", 90.0),
+                            ] {
+                                let current = state
+                                    .straight_ruler
+                                    .map(|ruler| {
+                                        (ruler.angle_rad.to_degrees() - degrees).abs() < 0.5
+                                    })
+                                    .unwrap_or(false);
+                                if ui.selectable_label(current, label).clicked() {
+                                    state.apply_ruler_preset(degrees);
+                                }
+                            }
+                        });
+                        let mut changed = false;
+                        if let Some(ruler) = &mut state.straight_ruler {
+                            let mut degrees = ruler.angle_rad.to_degrees();
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut degrees)
+                                        .speed(1.0)
+                                        .suffix("°")
+                                        .prefix("Angle "),
+                                )
+                                .changed()
+                            {
+                                ruler.angle_rad = degrees.to_radians();
+                                changed = true;
+                            }
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut ruler.length)
+                                        .speed(1.0)
+                                        .suffix(" px")
+                                        .prefix("Length ")
+                                        .range(50.0..=4000.0),
+                                )
+                                .changed();
+                        }
+                        if changed {
+                            state.mark_editor_dirty();
+                        }
+                        ui.label(
+                            RichText::new("Drag the body to move, the end handle to rotate/stretch (Shift 15°).")
+                                .size(8.5)
+                                .color(Color32::from_rgb(172, 161, 130)),
+                        );
+                    } else if ui.button("Add straight-edge ruler").clicked() {
+                        state.add_straight_ruler();
+                        state.mark_editor_dirty();
                     }
 
                     ui.add_space(6.0);
@@ -5379,6 +5413,25 @@ fn paint_guides(ctx: &egui::Context, state: &AppState) {
             );
             ruler_painter.circle_stroke(end, 5.0, Stroke::new(1.5, handle_color));
             ruler_painter.circle_stroke(origin, 3.0, Stroke::new(1.0, handle_color));
+        }
+    }
+
+    if let Some(point) = state.ruler_snap_marker {
+        // Angled ruler snap: a crosshair at the projected point plus a short line along the
+        // ruler, so it reads as "locked to this line" rather than "locked to an axis".
+        let snap_color = Color32::from_rgba_unmultiplied(255, 210, 90, 240);
+        let p = state.canvas_to_ui(point, win_w, win_h);
+        let centre = egui::pos2(p.x, p.y);
+        painter.circle_stroke(centre, 5.0, Stroke::new(1.4, snap_color));
+        painter.circle_filled(centre, 1.8, snap_color);
+        if let Some(ruler) = state.straight_ruler {
+            let dir = glam::Vec2::new(ruler.angle_rad.cos(), ruler.angle_rad.sin());
+            let a = state.canvas_to_ui(point - dir * 14.0, win_w, win_h);
+            let b = state.canvas_to_ui(point + dir * 14.0, win_w, win_h);
+            painter.line_segment(
+                [egui::pos2(a.x, a.y), egui::pos2(b.x, b.y)],
+                Stroke::new(1.2, snap_color),
+            );
         }
     }
 
